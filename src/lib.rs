@@ -1,20 +1,24 @@
 pub mod bit_mask;
-mod buffer;
-pub mod components;
-pub mod entities;
-pub mod messages;
+pub mod component;
+pub mod entity;
+pub mod inject;
+pub mod message;
+pub mod query;
+pub mod resource;
+pub mod system;
 pub mod world;
-pub use components::Component;
-pub use components::Components;
-pub use entities::Entities;
-pub use entities::Entity;
-pub use messages::Message;
-pub use messages::Messages;
+pub use component::Component;
+pub use entity::Entity;
+pub use inject::Inject;
+pub use message::Message;
+pub use query::Query;
+pub use resource::Resource;
+pub use system::System;
 pub use world::World;
 
 #[cfg(test)]
 mod tests {
-    use super::components::*;
+    use super::component::*;
     use super::*;
     use ctor::ctor;
     use std::sync::Once;
@@ -22,8 +26,8 @@ mod tests {
     #[test]
     fn create_two_entities() {
         let mut world = World::new();
-        let entity1 = world.create();
-        let entity2 = world.create();
+        let entity1 = world.create_entity();
+        let entity2 = world.create_entity();
         assert_ne!(entity1, entity2)
     }
 
@@ -63,11 +67,16 @@ mod tests {
             static INITIALIZE: Once = Once::new();
             static mut INDEX: usize = 0;
             unsafe {
-                INITIALIZE.call_once(|| INDEX = messages::next_index());
+                INITIALIZE.call_once(|| INDEX = message::next_index());
                 INDEX
             }
         }
     }
+
+    // fn fett(world: &mut World) {
+    //     world.get_all_mut::<Position>();
+    //     world.get_all_mut::<Velocity>();
+    // }
 
     // fn boba() {
     //     let mut world = World::new();

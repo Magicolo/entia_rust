@@ -6,12 +6,6 @@ pub struct Entity {
     pub generation: u32,
 }
 
-pub trait Entities {
-    fn exists(&self, entity: Entity) -> bool;
-    fn create(&mut self) -> Entity;
-    fn destroy(&mut self, entity: Entity) -> bool;
-}
-
 pub(crate) struct Data {
     pub generation: u32,
     pub alive: bool,
@@ -19,60 +13,65 @@ pub(crate) struct Data {
     pub index: u32,
 }
 
+impl Entity {
+    pub const ZERO: Entity = Entity {
+        index: 0,
+        generation: 0,
+    };
+}
+
 impl World {
     #[inline]
     pub(crate) fn get_data(&self, entity: Entity) -> Option<&Data> {
-        self.entities
+        self.data
             .get(entity.index as usize)
             .filter(|data| data.alive && data.generation == entity.generation)
     }
 
     #[inline]
     pub(crate) fn get_data_mut(&mut self, entity: Entity) -> Option<&mut Data> {
-        self.entities
+        self.data
             .get_mut(entity.index as usize)
             .filter(|data| data.alive && data.generation == entity.generation)
     }
-}
 
-impl Entities for World {
     #[inline]
-    fn exists(&self, entity: Entity) -> bool {
+    pub fn has_entity(&self, entity: Entity) -> bool {
         self.get_data(entity).is_some()
     }
 
-    fn create(&mut self) -> Entity {
+    pub fn create_entity(&mut self) -> Entity {
         match self.free_indices.pop() {
             Some(index) => {
-                let data = &mut self.entities[index as usize];
+                let data = &mut self.data[index as usize];
                 let generation = data.generation + 1;
                 *data = Data {
                     generation,
                     alive: true,
-                    segment: todo!(),
-                    index: todo!(),
+                    segment: 0,
+                    index: 0,
                 };
                 Entity { index, generation }
             }
             None => {
-                let index = self.entities.len() as u32;
+                let index = self.data.len() as u32;
                 let generation = 1;
-                self.entities.push(Data {
+                self.data.push(Data {
                     generation,
                     alive: true,
-                    segment: todo!(),
-                    index: todo!(),
+                    segment: 0,
+                    index: 0,
                 });
                 Entity { index, generation }
             }
         }
     }
 
-    fn destroy(&mut self, entity: Entity) -> bool {
+    pub fn destroy_entity(&mut self, entity: Entity) -> bool {
         match self.get_data_mut(entity) {
             Some(data) => {
                 data.alive = false;
-                self.free_indices.push(entity.index);
+                self.frozen_indices.push(entity.index);
                 return true;
             }
             None => false,
