@@ -1,3 +1,4 @@
+use crate::world::Inner;
 use crate::*;
 use once_cell::sync::Lazy;
 use std::any;
@@ -22,7 +23,7 @@ static REGISTRY: Lazy<Mutex<Option<Vec<Metadata>>>> = Lazy::new(|| Mutex::new(So
 impl Metadata {
     /// It is assumed that all calls to 'new' are done before any call to the 'get' functions.
     /// Any further calls will cause a panic.
-    pub fn new<C: Component + 'static>() -> Metadata {
+    pub unsafe fn new<C: Component + 'static>() -> Metadata {
         let mut guard = REGISTRY.lock().unwrap();
         let registry = guard.as_mut().unwrap();
         let meta = Metadata {
@@ -107,6 +108,7 @@ pub struct Segment {
     pub types: Vec<Metadata>,
     pub entities: Vec<Entity>,
     pub stores: Vec<Rc<dyn Any>>,
+    pub storez: Vec<(*mut (), usize, usize)>,
 }
 
 pub trait Component {
@@ -122,22 +124,29 @@ impl Segment {
     }
 }
 
-impl World {
+impl Inner {
     pub fn has_component<C: Component + 'static>(&self, entity: Entity) -> bool {
-        self.get_data(entity)
+        Self::get_entity_data(&self.data, entity)
             .and_then(|data| self.segments[data.segment as usize].get_store::<C>())
             .is_some()
     }
 
-    pub unsafe fn get_component<C: Component + 'static>(&self, entity: Entity) -> Option<&mut C> {
-        self.get_data(entity).and_then(|data| {
-            self.segments[data.segment as usize]
-                .get_store()
-                .map(|store| {
-                    let store = &mut *store.get();
-                    &mut store[data.index as usize]
-                })
-        })
+    pub fn get_component<C: Component + 'static>(&mut self, entity: Entity) -> Option<&mut C> {
+        if let Some(data) = Self::get_data_mut(&mut self.data, entity) {
+            if let Some(store) = self.segments[data.segment as usize].get_store() {
+                let store = unsafe { &mut *store.get() };
+                return Some(&mut store[data.index as usize]);
+            }
+        }
+        None
+        // self.get_data_mut(entity).and_then(|data| {
+        //     self.segments[data.segment as usize]
+        //         .get_store()
+        //         .map(|store| {
+        //             let store = unsafe { &mut *store.get() };
+        //             &mut store[data.index as usize]
+        //         })
+        // })
     }
 
     pub fn set_component<C: Component + 'static>(&mut self, _: Entity, _: C) -> bool {

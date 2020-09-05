@@ -3,59 +3,72 @@ use crate::*;
 pub trait Inject<'a> {
     type State: 'a;
 
-    fn state(world: &mut World) -> Option<Self::State>;
-    fn inject(state: &'a mut Self::State, world: &'a World) -> Self;
-    fn copy(&self) -> Self;
+    fn inject(world: &mut World) -> Option<Self::State>;
+    fn get(state: &'a mut Self::State, world: &'a World) -> Self;
 }
 
 pub struct Group<'a, Q: Query<'a>> {
     pub(crate) segments: Vec<(usize, Q::State)>,
 }
 
+pub struct Components<C: Component> {
+    _stores: Vec<*mut C>,
+}
+impl<C: Component> Components<C> {
+    pub fn get(&self, _: Entity) -> Option<&C> {
+        todo!()
+    }
+
+    pub fn get_mut(&mut self, _: Entity) -> Option<&mut C> {
+        todo!()
+    }
+
+    pub fn set(&mut self, _: Entity, _: C) -> bool {
+        todo!()
+    }
+
+    pub fn remove(&mut self, _: Entity) -> bool {
+        todo!()
+    }
+}
+
 pub struct Entities;
-// impl Entities {
-//     fn has(&self, entity: Entity) {}
-//     fn create(&mut self) -> Entity {
-//         todo!()
-//     }
-//     fn destroy(&mut self, entity: Entity) {}
-// }
+impl Entities {
+    pub fn has(&self, _: Entity) {}
+    pub fn create(&mut self) -> Entity {
+        todo!()
+    }
+    pub fn destroy(&mut self, _: Entity) {}
+}
+
 pub struct Defer;
-// impl Defer {
-//     fn create(&self) -> Entity {
-//         todo!()
-//     }
-//     fn destroy(&self) -> Entity {
-//         todo!()
-//     }
-// }
+impl Defer {
+    pub fn create(&self) -> Entity {
+        todo!()
+    }
+    pub fn destroy(&self) -> Entity {
+        todo!()
+    }
+}
 
 impl<'a> Inject<'a> for &'a Entities {
     type State = ();
 
-    fn state(_: &mut World) -> Option<Self::State> {
+    fn inject(_: &mut World) -> Option<Self::State> {
         todo!()
     }
-    fn inject(_: &mut Self::State, _: &World) -> Self {
-        todo!()
-    }
-    #[inline(always)]
-    fn copy(&self) -> Self {
+    fn get(_: &mut Self::State, _: &World) -> Self {
         todo!()
     }
 }
 
 impl<'a> Inject<'a> for &'a mut Entities {
-    type State = ();
+    type State = Entities;
 
-    fn state(_: &mut World) -> Option<Self::State> {
+    fn inject(_: &mut World) -> Option<Self::State> {
         todo!()
     }
-    fn inject(_: &mut Self::State, _: &World) -> Self {
-        todo!()
-    }
-    #[inline(always)]
-    fn copy(&self) -> Self {
+    fn get(_: &mut Self::State, _: &World) -> Self {
         todo!()
     }
 }
@@ -63,28 +76,31 @@ impl<'a> Inject<'a> for &'a mut Entities {
 impl<'a> Inject<'a> for &'a Defer {
     type State = ();
 
-    fn state(_: &mut World) -> Option<Self::State> {
+    fn inject(_: &mut World) -> Option<Self::State> {
         todo!()
     }
-    fn inject(_: &mut Self::State, _: &World) -> Self {
-        todo!()
-    }
-    #[inline(always)]
-    fn copy(&self) -> Self {
+    fn get(_: &mut Self::State, _: &World) -> Self {
         todo!()
     }
 }
 
 impl<'a> Inject<'a> for &'a mut Defer {
     type State = ();
-    fn state(_: &mut World) -> Option<Self::State> {
+    fn inject(_: &mut World) -> Option<Self::State> {
         todo!()
     }
-    fn inject(_: &mut Self::State, _: &World) -> Self {
+    fn get(_: &mut Self::State, _: &World) -> Self {
         todo!()
     }
-    #[inline(always)]
-    fn copy(&self) -> Self {
+}
+
+impl<'a, C: Component> Inject<'a> for &'a Components<C> {
+    type State = ();
+
+    fn inject(_: &mut World) -> Option<Self::State> {
+        todo!()
+    }
+    fn get(_: &mut Self::State, _: &World) -> Self {
         todo!()
     }
 }
@@ -92,69 +108,53 @@ impl<'a> Inject<'a> for &'a mut Defer {
 impl<'a, R: Resource> Inject<'a> for &'a R {
     type State = Entity;
 
-    fn state(_: &mut World) -> Option<Self::State> {
+    fn inject(_: &mut World) -> Option<Self::State> {
         todo!()
         // returns the resource entity
         // world.resources();
     }
 
-    fn inject(_: &mut Self::State, _: &World) -> Self {
+    fn get(_: &mut Self::State, _: &World) -> Self {
         todo!()
         // unsafe { world.get::<R>(*state).unwrap() }
-    }
-
-    #[inline(always)]
-    fn copy(&self) -> Self {
-        self
     }
 }
 
 impl<'a, R: Resource> Inject<'a> for &'a mut R {
     type State = Entity;
 
-    fn state(_: &mut World) -> Option<Self::State> {
+    fn inject(_: &mut World) -> Option<Self::State> {
         todo!()
         // returns the resource entity
         // world.resources();
     }
 
-    fn inject(_: &mut Self::State, _: &World) -> Self {
+    fn get(_: &mut Self::State, _: &World) -> Self {
         todo!()
         // unsafe { world.get::<R>(*state).unwrap() }
-    }
-
-    #[inline(always)]
-    fn copy(&self) -> Self {
-        unsafe { &mut *(*self as *const R as *mut R) }
     }
 }
 
 impl<'a, Q: Query<'a>> Inject<'a> for &'a Group<'a, Q> {
     type State = (usize, Group<'a, Q>);
 
-    fn state(_: &mut World) -> Option<Self::State> {
-        Some((
-            0,
-            Group {
-                segments: Vec::new(),
-            },
-        ))
+    fn inject(_: &mut World) -> Option<Self::State> {
+        let group = Group {
+            segments: Vec::new(),
+        };
+        Some((0, group))
     }
 
-    fn inject(state: &'a mut Self::State, world: &World) -> Self {
-        let count = world.segments.len();
+    fn get(state: &'a mut Self::State, world: &World) -> Self {
+        let inner = unsafe { world.get() };
+        let count = inner.segments.len();
         for i in state.0..count {
-            if let Some(query) = Q::state(&world.segments[i]) {
+            if let Some(query) = Q::query(&inner.segments[i]) {
                 state.1.segments.push((i, query));
             }
         }
         state.0 = count;
         &state.1
-    }
-
-    #[inline(always)]
-    fn copy(&self) -> Self {
-        self
     }
 }
 
@@ -167,26 +167,21 @@ macro_rules! tuples {
 }
 
 macro_rules! inject {
+    ($i:ident, $s:ident) => {};
     ($($i:ident, $s:ident),+) => {
         impl<'a, $($i: Inject<'a>),+> Inject<'a> for ($($i),+) {
             type State = ($($i::State),+);
 
-            fn state(world: &mut World) -> Option<Self::State> {
-                match ($($i::state(world)),+) {
+            fn inject(world: &mut World) -> Option<Self::State> {
+                match ($($i::inject(world)),+) {
                     ($(Some($s)),+) => Some(($($s),+)),
                     _ => None,
                 }
             }
 
             #[inline(always)]
-            fn inject(($($s),+): &'a mut Self::State, world: &'a World) -> Self {
-                ($($i::inject($s, world)),+)
-            }
-
-            #[inline(always)]
-            fn copy(&self) -> Self {
-                let ($($s),+) = self;
-                (($($s.copy()),+))
+            fn get(($($s),+): &'a mut Self::State, world: &'a World) -> Self {
+                ($($i::get($s, world)),+)
             }
         }
     };

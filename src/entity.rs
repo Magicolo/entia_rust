@@ -1,4 +1,4 @@
-use crate::*;
+use crate::world::Inner;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Entity {
@@ -14,30 +14,34 @@ pub(crate) struct Data {
 }
 
 impl Entity {
-    pub const ZERO: Entity = Entity {
-        index: 0,
-        generation: 0,
-    };
+    pub const ZERO: Self = Self::new(0, 0);
+
+    #[inline]
+    pub const fn new(index: u32, generation: u32) -> Self {
+        Self { index, generation }
+    }
 }
 
-impl World {
+impl Inner {
     #[inline]
-    pub(crate) fn get_data(&self, entity: Entity) -> Option<&Data> {
-        self.data
-            .get(entity.index as usize)
+    pub(crate) fn get_entity_data(data: &Vec<Data>, entity: Entity) -> Option<&Data> {
+        data.get(entity.index as usize)
             .filter(|data| data.alive && data.generation == entity.generation)
     }
 
     #[inline]
-    pub(crate) fn get_data_mut(&mut self, entity: Entity) -> Option<&mut Data> {
-        self.data
-            .get_mut(entity.index as usize)
+    pub(crate) fn get_data_mut(data: &mut Vec<Data>, entity: Entity) -> Option<&mut Data> {
+        data.get_mut(entity.index as usize)
             .filter(|data| data.alive && data.generation == entity.generation)
+    }
+
+    pub fn resolve_entities(&mut self) {
+        self.free_indices.append(&mut self.frozen_indices);
     }
 
     #[inline]
     pub fn has_entity(&self, entity: Entity) -> bool {
-        self.get_data(entity).is_some()
+        Self::get_entity_data(&self.data, entity).is_some()
     }
 
     pub fn create_entity(&mut self) -> Entity {
@@ -68,7 +72,7 @@ impl World {
     }
 
     pub fn destroy_entity(&mut self, entity: Entity) -> bool {
-        match self.get_data_mut(entity) {
+        match Self::get_data_mut(&mut self.data, entity) {
             Some(data) => {
                 data.alive = false;
                 self.frozen_indices.push(entity.index);

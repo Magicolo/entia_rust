@@ -50,34 +50,50 @@ use crossbeam_queue::SegQueue;
 // the component 'Receiver<T>' and enqueue some data on their thread safe queue. Therefore, they can
 // simply be implemented as a 'each' system wrapped in an 'Emitter<T>' module for convenience.
 
+// CAN A RESOURCE BE MUTATED IN A QUERY SYSTEM?
+// Currently, this is disallowed since a query system that also has injectables requires the 'Copy' trait
+// on the injectable.
+// For this restriction to be lifted, the query system would have to be guaranteed to run sequentially when
+// a write access to an injectable is detected.
+// Ideally this would be manageable by the user and enforced by the type system.
+
 pub trait System<'a, P = ()> {
     type State: 'a;
 
-    fn state(world: &mut World) -> Option<Self::State>;
+    fn state(world: &'a mut World) -> Option<Self::State>;
     fn run(&self, state: &'a mut Self::State, world: &'a World);
 }
 
-struct State<'a, P, S: System<'a, P>>(S, S::State);
-
-trait Runner<'a> {
-    fn run(&'a mut self, world: &'a World);
+struct Systems<T> {
+    systems: T,
 }
 
-impl<'a, P, S: System<'a, P>> Runner<'a> for State<'a, P, S> {
-    fn run(&'a mut self, world: &'a world::World) {
-        self.0.run(&mut self.1, world);
+struct Runner<'a, P, S: System<'a, P>> {
+    state: S::State,
+    system: S,
+}
+
+impl Systems<()> {
+    fn new() -> Self {
+        Self { systems: () }
     }
 }
 
-impl World {
-    fn add_system<'a, P, S: System<'a, P>>(&'a mut self, system: S) -> bool {
-        let mut runners: Vec<Box<dyn Runner<'a>>> = Vec::new();
-        if let Some(state) = S::state(self) {
-            runners.push(Box::new(State(system, state)));
-            true
-        } else {
-            false
-        }
+impl<T> Systems<T> {
+    fn add<'a, P, S: System<'a, P>>(self, system: S) -> Systems<(T, S)> {
+        todo!()
+    }
+
+    // fn schedule(self, _: &mut World) -> Runner<'a, P, S> {
+    //     todo!()
+    // }
+}
+
+impl<'a, P, S: System<'a, P>> Runner<'a, P, S> {
+    // Take a 'mut' reference of the world such that this runner is the only thing operating on the world since
+    // there is unsafe code in the implementations of systems that assume that dependencies have been checked.
+    fn run(&'a mut self, world: &'a mut World) {
+        self.system.run(&mut self.state, world);
     }
 }
 
@@ -118,83 +134,105 @@ impl Resource for Physics {}
 pub struct OnKill(Entity);
 
 pub fn test_main(world: &mut World) {
-    loop {
-        world.add_system(|(_, _): (Entity, &Position)| {});
-        world.add_system(|_: &Time, (_, _): (Entity, &Position)| {});
-        world.add_system(|_: &mut Time, _: &Position| {});
-        world.add_system(
-            |(_, _): (&Time, &mut Physics), (position, velocity): (&mut Position, &Velocity)| {
+    Systems::new()
+        .add(|(_, _): (Entity, &Position)| {})
+        .add(|_: &Time, (_, _): (Entity, &Position)| {})
+        .add(|_: &Time, _: &Position| {})
+        .add(
+            |(_, _): (&Time, &Physics), (position, velocity): (&mut Position, &Velocity)| {
                 position.0 += velocity.0;
                 position.1 += velocity.1;
             },
-        );
-        // world.add_system(|group: &Group<(&mut Position, &Velocity)>| {
+        )
+        // .add(|group: &Group<(&mut Position, &Velocity)>| {
         //     // for (position, velocity) in group.iter() {
         //     //     position.0 += velocity.0;
         //     //     position.1 += velocity.1;
         //     // }
-        // });
-        world.add_system(
-            |(_, _): (&Time, &Physics), (_, _, _): (Entity, &Position, Option<&Status>)| {},
-        );
-        world.add_system(|_: &inject::Entities| {});
-        world.add_system(|_: &mut Defer| {});
-
+        // })
+        .add(|(_, _): (&Time, &Physics), (_, _, _): (Entity, &Position, Option<&Status>)| {})
+        .add(|_: &mut Entities| {})
+        .add(|_: &mut Defer| {})
         // Emit system
-        world.add_system(|receiver: &Receiver<OnKill>| {
-            receiver.0.push(OnKill(Entity::ZERO));
-        });
-    }
+        .add(|receiver: &Receiver<OnKill>| receiver.0.push(OnKill(Entity::ZERO)));
+    // .schedule(world);
 }
 
 impl<'a, I: Inject<'a>, F: Fn(I)> System<'a, [I; 0]> for F {
     type State = I::State;
 
-    fn state(world: &mut World) -> Option<Self::State> {
-        I::state(world)
+    fn state(world: &'a mut World) -> Option<Self::State> {
+        I::inject(world)
     }
 
     fn run(&self, state: &'a mut Self::State, world: &'a World) {
-        self(I::inject(state, world));
+        self(I::get(state, world));
     }
 }
 
 impl<'a, Q: Query<'a> + 'a, F: Fn(Q)> System<'a, [Q; 1]> for F {
     type State = <&'a Group<'a, Q> as Inject<'a>>::State;
 
-    fn state(world: &mut World) -> Option<Self::State> {
-        <&Group<Q> as Inject>::state(world)
+    fn state(world: &'a mut World) -> Option<Self::State> {
+        <&Group<Q> as Inject>::inject(world)
     }
 
     fn run(&self, state: &'a mut Self::State, world: &'a World) {
-        let group = <&Group<Q> as Inject>::inject(state, world);
+        let inner = unsafe { world.get() };
+        let group = <&Group<Q> as Inject>::get(state, world);
         for (index, state) in &group.segments {
-            let segment = &world.segments[*index];
+            let segment = &inner.segments[*index];
             for i in 0..segment.entities.len() {
-                self(Q::query(i, state, segment));
+                self(Q::get(i, state, segment));
             }
         }
     }
 }
 
-impl<'a, I: Inject<'a>, Q: Query<'a> + 'a, F: Fn(I, Q)> System<'a, [(I, Q); 2]> for F {
+impl<'a, I: Inject<'a> + Clone, Q: Query<'a> + 'a, F: Fn(I, Q)> System<'a, [(I, Q); 2]> for F {
     type State = (I::State, <&'a Group<'a, Q> as Inject<'a>>::State);
 
-    fn state(world: &mut World) -> Option<Self::State> {
-        match (I::state(world), <&Group<Q> as Inject>::state(world)) {
+    fn state(world: &'a mut World) -> Option<Self::State> {
+        match (I::inject(world), <&Group<Q> as Inject>::inject(world)) {
             (Some(inject), Some(group)) => Some((inject, group)),
             _ => None,
         }
     }
 
     fn run(&self, state: &'a mut Self::State, world: &'a World) {
-        let inject = I::inject(&mut state.0, world);
-        let group = <&Group<Q> as Inject>::inject(&mut state.1, world);
+        let inner = unsafe { world.get() };
+        let inject = I::get(&mut state.0, world);
+        let group = <&Group<Q> as Inject>::get(&mut state.1, world);
         for (index, query) in &group.segments {
-            let segment = &world.segments[*index];
+            let segment = &inner.segments[*index];
             for i in 0..segment.entities.len() {
-                self(inject.copy(), Q::query(i, query, segment));
+                self(inject.clone(), Q::get(i, query, segment));
             }
         }
     }
+}
+
+// impl<'a, P1, P2, S1: System<'a, P1>, S2: System<'a, P2>> System<'a, (P1, P2)> for (S1, S2) {
+//     type State = (S1::State, S2::State);
+
+//     fn state(world: &'a mut World) -> Option<Self::State> {
+//         S1::state(world).zip(S2::state(world))
+//     }
+
+//     fn run(&self, state: &'a mut Self::State, world: &'a World) {
+//         let (system1, system2) = self;
+//         let (state1, state2) = state;
+//         system1.run(state1, world);
+//         system2.run(state2, world);
+//     }
+// }
+
+impl<'a> System<'a, ()> for () {
+    type State = ();
+
+    fn state(_: &mut World) -> Option<Self::State> {
+        Some(())
+    }
+
+    fn run(&self, _: &'a mut Self::State, _: &'a World) {}
 }

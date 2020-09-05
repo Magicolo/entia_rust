@@ -7,6 +7,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-crossbeam-queue = "0.2.3"
-ctor = "0.1.15"
-once_cell = "1.4.0"
+crossbeam = "*"
+crossbeam-queue = "*"
+ctor = "*"
+once_cell = "*"

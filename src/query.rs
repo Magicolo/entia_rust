@@ -6,20 +6,20 @@ use std::rc::Rc;
 pub trait Query<'a> {
     type State: 'a;
 
-    fn state(segment: &Segment) -> Option<Self::State>;
-    fn query(index: usize, state: &'a Self::State, segment: &'a Segment) -> Self;
+    fn query(segment: &Segment) -> Option<Self::State>;
+    fn get(index: usize, state: &'a Self::State, segment: &'a Segment) -> Self;
 }
 
 // Entities can be queried
 impl Query<'_> for Entity {
     type State = ();
 
-    fn state(_: &Segment) -> Option<()> {
+    fn query(_: &Segment) -> Option<()> {
         Some(())
     }
 
     #[inline(always)]
-    fn query(index: usize, _: &Self::State, segment: &Segment) -> Self {
+    fn get(index: usize, _: &Self::State, segment: &Segment) -> Self {
         segment.entities[index]
     }
 }
@@ -28,12 +28,12 @@ impl Query<'_> for Entity {
 impl<'a, C: Component + 'static> Query<'a> for &'a C {
     type State = Rc<UnsafeCell<Vec<C>>>;
 
-    fn state(segment: &Segment) -> Option<Self::State> {
+    fn query(segment: &Segment) -> Option<Self::State> {
         segment.get_store()
     }
 
     #[inline(always)]
-    fn query(index: usize, state: &Self::State, _: &Segment) -> Self {
+    fn get(index: usize, state: &Self::State, _: &Segment) -> Self {
         let store = unsafe { &*state.get() };
         &store[index]
     }
@@ -42,12 +42,12 @@ impl<'a, C: Component + 'static> Query<'a> for &'a C {
 impl<'a, C: Component + 'static> Query<'a> for &'a mut C {
     type State = Rc<UnsafeCell<Vec<C>>>;
 
-    fn state(segment: &Segment) -> Option<Self::State> {
+    fn query(segment: &Segment) -> Option<Self::State> {
         segment.get_store()
     }
 
     #[inline(always)]
-    fn query(index: usize, state: &Self::State, _: &Segment) -> Self {
+    fn get(index: usize, state: &Self::State, _: &Segment) -> Self {
         let store = unsafe { &mut *state.get() };
         &mut store[index]
     }
@@ -57,13 +57,13 @@ impl<'a, C: Component + 'static> Query<'a> for &'a mut C {
 impl<'a, Q: Query<'a>> Query<'a> for Option<Q> {
     type State = Option<Q::State>;
 
-    fn state(segment: &Segment) -> Option<Self::State> {
-        Some(Q::state(segment))
+    fn query(segment: &Segment) -> Option<Self::State> {
+        Some(Q::query(segment))
     }
 
     #[inline(always)]
-    fn query(index: usize, state: &'a Self::State, segment: &'a Segment) -> Self {
-        state.as_ref().map(|state| Q::query(index, state, segment))
+    fn get(index: usize, state: &'a Self::State, segment: &'a Segment) -> Self {
+        state.as_ref().map(|state| Q::get(index, state, segment))
     }
 }
 
@@ -80,16 +80,16 @@ macro_rules! query {
         impl<'a, $($q: Query<'a>),+ > Query<'a> for ($($q),+) {
             type State = ($($q::State),+);
 
-            fn state(segment: &Segment) -> Option<Self::State> {
-                match ($($q::state(segment)),+) {
+            fn query(segment: &Segment) -> Option<Self::State> {
+                match ($($q::query(segment)),+) {
                     ($(Some($s)),+) => Some(($($s),+)),
                     _ => None,
                 }
             }
 
             #[inline(always)]
-            fn query(index: usize, ($($s),+): &'a Self::State, segment: &'a Segment) -> Self {
-                ($($q::query(index, $s, segment)),+)
+            fn get(index: usize, ($($s),+): &'a Self::State, segment: &'a Segment) -> Self {
+                ($($q::get(index, $s, segment)),+)
             }
         }
     };

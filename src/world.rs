@@ -1,22 +1,38 @@
 use crate::component::Segment;
 use crate::entity::Data;
+use std::cell::UnsafeCell;
+use std::sync::Arc;
 
-#[derive(Default)]
+pub(crate) struct Inner {
+    pub data: Vec<Data>,
+    pub free_indices: Vec<u32>,
+    pub frozen_indices: Vec<u32>,
+    pub segments: Vec<Segment>,
+}
+
+// TODO: offer a safe API at the level of the 'World' that will use a 'Mutex' (or 'RWLock'?) to operate safely
+// on the unsafe API (represented by 'Inner')
+#[derive(Clone)]
 pub struct World {
-    pub(crate) data: Vec<Data>,
-    pub(crate) free_indices: Vec<u32>,
-    pub(crate) frozen_indices: Vec<u32>,
-    pub(crate) segments: Vec<Segment>,
+    pub(crate) inner: Arc<UnsafeCell<Inner>>,
 }
 
 impl World {
     #[inline]
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            inner: Arc::new(UnsafeCell::new(Inner {
+                data: Vec::new(),
+                free_indices: Vec::new(),
+                frozen_indices: Vec::new(),
+                segments: Vec::new(),
+            })),
+        }
     }
 
-    pub fn resolve(&mut self) {
-        self.free_indices.append(&mut self.frozen_indices);
+    #[inline]
+    pub(crate) unsafe fn get(&self) -> &mut Inner {
+        &mut *self.inner.get()
     }
 }
 
