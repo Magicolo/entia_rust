@@ -12,6 +12,14 @@ pub trait Depend {
 }
 
 impl Dependency {
+    pub fn read<T: 'static>() -> Dependency {
+        Dependency::Read(TypeId::of::<T>())
+    }
+
+    pub fn write<T: 'static>() -> Dependency {
+        Dependency::Write(TypeId::of::<T>())
+    }
+
     pub fn synchronous(dependencies: &[Dependency]) -> bool {
         use Dependency::*;
 

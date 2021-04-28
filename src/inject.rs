@@ -1,14 +1,16 @@
+use crate::dependency::Dependency;
 use crate::*;
 
 pub trait Inject<'a> {
     type State: 'a;
 
-    fn inject(world: &mut World) -> Option<Self::State>;
-    fn get(state: &'a mut Self::State, world: &'a World) -> Self;
+    fn dependencies() -> Vec<Dependency>;
+    fn inject(world: World) -> Option<Self::State>;
+    fn get(state: &'a mut Self::State) -> Self;
 }
 
 pub struct Group<'a, Q: Query<'a>> {
-    pub(crate) segments: Vec<(usize, Q::State)>,
+    segments: Vec<(usize, Q::State)>,
 }
 
 pub struct Components<C: Component> {
@@ -32,32 +34,41 @@ impl<C: Component> Components<C> {
     }
 }
 
-pub struct Entities;
+pub struct Entities(World);
 impl Entities {
-    pub fn has(&self, _: Entity) {}
+    pub fn has(&self, entity: Entity) -> bool {
+        unsafe { self.0.get() }.get_entity_data(entity).is_some()
+    }
+
     pub fn create(&mut self) -> Entity {
         todo!()
     }
     pub fn destroy(&mut self, _: Entity) {}
 }
 
-pub struct Defer;
-impl Defer {
-    pub fn create(&self) -> Entity {
-        todo!()
-    }
-    pub fn destroy(&self) -> Entity {
-        todo!()
-    }
-}
+// pub struct Defer<'a, I: Inject<'a>>;
+// impl Defer {
+//     pub fn create(&self) -> Entity {
+//         todo!()
+//     }
+//     pub fn destroy(&self, _: Entity) {
+//         todo!()
+//     }
+// }
 
 impl<'a> Inject<'a> for &'a Entities {
     type State = ();
 
-    fn inject(_: &mut World) -> Option<Self::State> {
+    fn dependencies() -> Vec<Dependency> {
+        vec![Dependency::read::<Entity>()]
+    }
+
+    fn inject(_: World) -> Option<Self::State> {
         todo!()
     }
-    fn get(_: &mut Self::State, _: &World) -> Self {
+
+    #[inline(always)]
+    fn get(_: &mut Self::State) -> Self {
         todo!()
     }
 }
@@ -65,96 +76,119 @@ impl<'a> Inject<'a> for &'a Entities {
 impl<'a> Inject<'a> for &'a mut Entities {
     type State = Entities;
 
-    fn inject(_: &mut World) -> Option<Self::State> {
+    fn dependencies() -> Vec<Dependency> {
+        vec![Dependency::write::<Entity>()]
+    }
+
+    fn inject(_: World) -> Option<Self::State> {
         todo!()
     }
-    fn get(_: &mut Self::State, _: &World) -> Self {
+
+    #[inline(always)]
+    fn get(_: &mut Self::State) -> Self {
         todo!()
     }
 }
 
-impl<'a> Inject<'a> for &'a Defer {
+impl<'a, C: Component + 'static> Inject<'a> for &'a Components<C> {
     type State = ();
 
-    fn inject(_: &mut World) -> Option<Self::State> {
+    fn dependencies() -> Vec<Dependency> {
+        vec![Dependency::read::<Entity>(), Dependency::read::<C>()]
+    }
+
+    fn inject(_: World) -> Option<Self::State> {
         todo!()
     }
-    fn get(_: &mut Self::State, _: &World) -> Self {
+
+    #[inline(always)]
+    fn get(_: &mut Self::State) -> Self {
         todo!()
     }
 }
 
-impl<'a> Inject<'a> for &'a mut Defer {
-    type State = ();
-    fn inject(_: &mut World) -> Option<Self::State> {
-        todo!()
-    }
-    fn get(_: &mut Self::State, _: &World) -> Self {
-        todo!()
-    }
-}
-
-impl<'a, C: Component> Inject<'a> for &'a Components<C> {
+impl<'a, C: Component + 'static> Inject<'a> for &'a mut Components<C> {
     type State = ();
 
-    fn inject(_: &mut World) -> Option<Self::State> {
+    fn dependencies() -> Vec<Dependency> {
+        vec![Dependency::read::<Entity>(), Dependency::write::<C>()]
+    }
+
+    fn inject(_: World) -> Option<Self::State> {
         todo!()
     }
-    fn get(_: &mut Self::State, _: &World) -> Self {
+
+    #[inline(always)]
+    fn get(_: &mut Self::State) -> Self {
         todo!()
     }
 }
 
-impl<'a, R: Resource> Inject<'a> for &'a R {
+impl<'a, R: Resource + 'static> Inject<'a> for &'a R {
     type State = Entity;
 
-    fn inject(_: &mut World) -> Option<Self::State> {
+    fn dependencies() -> Vec<Dependency> {
+        vec![Dependency::read::<R>()]
+    }
+
+    fn inject(_: World) -> Option<Self::State> {
         todo!()
         // returns the resource entity
         // world.resources();
     }
 
-    fn get(_: &mut Self::State, _: &World) -> Self {
+    #[inline(always)]
+    fn get(_: &mut Self::State) -> Self {
         todo!()
         // unsafe { world.get::<R>(*state).unwrap() }
     }
 }
 
-impl<'a, R: Resource> Inject<'a> for &'a mut R {
+impl<'a, R: Resource + 'static> Inject<'a> for &'a mut R {
     type State = Entity;
 
-    fn inject(_: &mut World) -> Option<Self::State> {
+    fn dependencies() -> Vec<Dependency> {
+        vec![Dependency::write::<R>()]
+    }
+
+    fn inject(_: World) -> Option<Self::State> {
         todo!()
         // returns the resource entity
         // world.resources();
     }
 
-    fn get(_: &mut Self::State, _: &World) -> Self {
+    #[inline(always)]
+    fn get(_: &mut Self::State) -> Self {
         todo!()
         // unsafe { world.get::<R>(*state).unwrap() }
     }
 }
 
 impl<'a, Q: Query<'a>> Inject<'a> for &'a Group<'a, Q> {
-    type State = (usize, Group<'a, Q>);
+    type State = (usize, World, Group<'a, Q>);
 
-    fn inject(_: &mut World) -> Option<Self::State> {
+    fn dependencies() -> Vec<Dependency> {
+        Q::dependencies()
+    }
+
+    fn inject(world: World) -> Option<Self::State> {
         let group = Group {
             segments: Vec::new(),
         };
-        Some((0, group))
+        Some((0, world, group))
     }
 
-    fn get(state: &'a mut Self::State, world: &World) -> Self {
-        let inner = unsafe { world.get() };
+    #[inline(always)]
+    fn get(state: &'a mut Self::State) -> Self {
+        let inner = unsafe { state.1.get() };
         let count = inner.segments.len();
         for i in state.0..count {
             if let Some(query) = Q::query(&inner.segments[i]) {
-                state.1.segments.push((i, query));
+                state.2.segments.push((i, query));
             }
         }
         state.0 = count;
-        &state.1
+        &state.2
     }
 }
 
@@ -172,16 +206,22 @@ macro_rules! inject {
         impl<'a, $($i: Inject<'a>),+> Inject<'a> for ($($i),+) {
             type State = ($($i::State),+);
 
-            fn inject(world: &mut World) -> Option<Self::State> {
-                match ($($i::inject(world)),+) {
+            fn dependencies() -> Vec<Dependency> {
+                let mut dependencies = Vec::new();
+                $(dependencies.append(&mut $i::dependencies());)+
+                dependencies
+            }
+
+            fn inject(world: World) -> Option<Self::State> {
+                match ($($i::inject(world.clone())),+) {
                     ($(Some($s)),+) => Some(($($s),+)),
                     _ => None,
                 }
             }
 
             #[inline(always)]
-            fn get(($($s),+): &'a mut Self::State, world: &'a World) -> Self {
-                ($($i::get($s, world)),+)
+            fn get(($($s),+): &'a mut Self::State) -> Self {
+                ($($i::get($s)),+)
             }
         }
     };

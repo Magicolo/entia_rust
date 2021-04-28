@@ -17,12 +17,6 @@ pub struct Receiver<T: Message> {
     queue: SegQueue<T>,
 }
 
-impl<T: Message> Component for Receiver<T> {
-    fn metadata() -> &'static Metadata {
-        todo!()
-    }
-}
-
 impl World {
     pub fn emit_message<T: Message + Copy>(&self, _: T) {
         todo!("Iterate over all entities that have the 'Receiver<T>' component and enqueue the message.")

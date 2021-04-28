@@ -106,26 +106,10 @@ pub enum Status {
     Poisoned,
     Invincible,
 }
-impl Component for Position {
-    fn metadata() -> &'static Metadata {
-        todo!()
-    }
-}
-impl Component for Velocity {
-    fn metadata() -> &'static component::Metadata {
-        todo!()
-    }
-}
-impl<T> Component for Receiver<T> {
-    fn metadata() -> &'static component::Metadata {
-        todo!()
-    }
-}
-impl Component for Status {
-    fn metadata() -> &'static component::Metadata {
-        todo!()
-    }
-}
+impl Component for Position {}
+impl Component for Velocity {}
+impl<T> Component for Receiver<T> {}
+impl Component for Status {}
 
 pub struct Time;
 pub struct Physics;
@@ -152,7 +136,7 @@ pub fn test_main(world: &mut World) {
         // })
         .add(|(_, _): (&Time, &Physics), (_, _, _): (Entity, &Position, Option<&Status>)| {})
         .add(|_: &mut Entities| {})
-        .add(|_: &mut Defer| {})
+        // .add(|_: &mut Defer| {})
         // Emit system
         .add(|receiver: &Receiver<OnKill>| receiver.0.push(OnKill(Entity::ZERO)));
     // .schedule(world);
@@ -162,11 +146,12 @@ impl<'a, I: Inject<'a>, F: Fn(I)> System<'a, [I; 0]> for F {
     type State = I::State;
 
     fn state(world: &'a mut World) -> Option<Self::State> {
-        I::inject(world)
+        todo!()
+        // I::inject(world)
     }
 
     fn run(&self, state: &'a mut Self::State, world: &'a World) {
-        self(I::get(state, world));
+        self(I::get(state));
     }
 }
 
@@ -174,18 +159,19 @@ impl<'a, Q: Query<'a> + 'a, F: Fn(Q)> System<'a, [Q; 1]> for F {
     type State = <&'a Group<'a, Q> as Inject<'a>>::State;
 
     fn state(world: &'a mut World) -> Option<Self::State> {
-        <&Group<Q> as Inject>::inject(world)
+        todo!()
+        // <&Group<Q> as Inject>::inject(world)
     }
 
     fn run(&self, state: &'a mut Self::State, world: &'a World) {
-        let inner = unsafe { world.get() };
-        let group = <&Group<Q> as Inject>::get(state, world);
-        for (index, state) in &group.segments {
-            let segment = &inner.segments[*index];
-            for i in 0..segment.entities.len() {
-                self(Q::get(i, state, segment));
-            }
-        }
+        // let inner = unsafe { world.get() };
+        // let group = <&Group<Q> as Inject>::get(state);
+        // for (index, state) in &group.segments {
+        //     let segment = &inner.segments[*index];
+        //     for i in 0..segment.get().entities.len() {
+        //         self(Q::get(i, state, segment));
+        //     }
+        // }
     }
 }
 
@@ -193,22 +179,23 @@ impl<'a, I: Inject<'a> + Clone, Q: Query<'a> + 'a, F: Fn(I, Q)> System<'a, [(I, 
     type State = (I::State, <&'a Group<'a, Q> as Inject<'a>>::State);
 
     fn state(world: &'a mut World) -> Option<Self::State> {
-        match (I::inject(world), <&Group<Q> as Inject>::inject(world)) {
-            (Some(inject), Some(group)) => Some((inject, group)),
-            _ => None,
-        }
+        // match (I::inject(world), <&Group<Q> as Inject>::inject(world)) {
+        //     (Some(inject), Some(group)) => Some((inject, group)),
+        //     _ => None,
+        // }
+        None
     }
 
     fn run(&self, state: &'a mut Self::State, world: &'a World) {
         let inner = unsafe { world.get() };
-        let inject = I::get(&mut state.0, world);
-        let group = <&Group<Q> as Inject>::get(&mut state.1, world);
-        for (index, query) in &group.segments {
-            let segment = &inner.segments[*index];
-            for i in 0..segment.entities.len() {
-                self(inject.clone(), Q::get(i, query, segment));
-            }
-        }
+        let inject = I::get(&mut state.0);
+        let group = <&Group<Q> as Inject>::get(&mut state.1);
+        // for (index, query) in &group.segments {
+        //     let segment = &inner.segments[*index];
+        //     for i in 0..segment.get().entities.len() {
+        //         self(inject.clone(), Q::get(i, query, segment));
+        //     }
+        // }
     }
 }
 

@@ -1,4 +1,5 @@
 use crate::component::Segment;
+use crate::dependency::Dependency;
 use crate::*;
 use std::cell::UnsafeCell;
 use std::rc::Rc;
@@ -6,6 +7,7 @@ use std::rc::Rc;
 pub trait Query<'a> {
     type State: 'a;
 
+    fn dependencies() -> Vec<Dependency>;
     fn query(segment: &Segment) -> Option<Self::State>;
     fn get(index: usize, state: &'a Self::State, segment: &'a Segment) -> Self;
 }
@@ -14,13 +16,17 @@ pub trait Query<'a> {
 impl Query<'_> for Entity {
     type State = ();
 
+    fn dependencies() -> Vec<Dependency> {
+        vec![Dependency::read::<Entity>()]
+    }
+
     fn query(_: &Segment) -> Option<()> {
         Some(())
     }
 
     #[inline(always)]
     fn get(index: usize, _: &Self::State, segment: &Segment) -> Self {
-        segment.entities[index]
+        unsafe { segment.get().entities[index] }
     }
 }
 
@@ -28,8 +34,12 @@ impl Query<'_> for Entity {
 impl<'a, C: Component + 'static> Query<'a> for &'a C {
     type State = Rc<UnsafeCell<Vec<C>>>;
 
+    fn dependencies() -> Vec<Dependency> {
+        vec![Dependency::read::<Entity>(), Dependency::read::<C>()]
+    }
+
     fn query(segment: &Segment) -> Option<Self::State> {
-        segment.get_store()
+        todo!()
     }
 
     #[inline(always)]
@@ -42,8 +52,12 @@ impl<'a, C: Component + 'static> Query<'a> for &'a C {
 impl<'a, C: Component + 'static> Query<'a> for &'a mut C {
     type State = Rc<UnsafeCell<Vec<C>>>;
 
+    fn dependencies() -> Vec<Dependency> {
+        vec![Dependency::read::<Entity>(), Dependency::write::<C>()]
+    }
+
     fn query(segment: &Segment) -> Option<Self::State> {
-        segment.get_store()
+        todo!()
     }
 
     #[inline(always)]
@@ -56,6 +70,10 @@ impl<'a, C: Component + 'static> Query<'a> for &'a mut C {
 // Support for optional queries
 impl<'a, Q: Query<'a>> Query<'a> for Option<Q> {
     type State = Option<Q::State>;
+
+    fn dependencies() -> Vec<Dependency> {
+        Q::dependencies()
+    }
 
     fn query(segment: &Segment) -> Option<Self::State> {
         Some(Q::query(segment))
@@ -79,6 +97,12 @@ macro_rules! query {
     ($($q:ident, $s:ident),+) => {
         impl<'a, $($q: Query<'a>),+ > Query<'a> for ($($q),+) {
             type State = ($($q::State),+);
+
+            fn dependencies() -> Vec<Dependency> {
+                let mut dependencies = Vec::new();
+                $(dependencies.append(&mut $q::dependencies());)+
+                dependencies
+            }
 
             fn query(segment: &Segment) -> Option<Self::State> {
                 match ($($q::query(segment)),+) {

@@ -1,14 +1,37 @@
+use crate::component::Segment;
+use crate::component::Store;
 use crate::dependency::Dependency;
-use crate::Inject;
+use crate::Component;
+use crate::Entity;
 use crate::Resource;
 use crate::World;
 use crossbeam::scope;
-use std::mem::{replace, transmute};
+use std::mem::replace;
+
+fn test(world: World) {
+    struct Time;
+    impl Resource for Time {}
+    struct Position;
+    struct Velocity;
+    impl Component for Position {}
+    impl Component for Velocity {}
+    let mut runner = Scheduler::new()
+        .add(|_: &mut Time| {})
+        .add(|time: &mut Time| |entity: Entity| {})
+        .add(|group: Group<Entity>| for entity in group.into_iter() {})
+        .add(|group: Group<&Position>| for position in group.into_iter() {})
+        .schedule(world);
+
+    loop {
+        runner.run();
+    }
+}
 
 pub type Run = Box<dyn FnMut()>;
-pub struct Runner {
-    run: Run,
-    dependencies: Vec<Dependency>,
+pub enum Runner {
+    System(Run, Vec<Dependency>),
+    Sequence(Vec<Runner>),
+    Parallel(Vec<Runner>),
 }
 
 pub type Schedule = Box<dyn FnOnce(World) -> Runner>;
@@ -16,22 +39,112 @@ pub struct Scheduler {
     schedules: Vec<Schedule>,
 }
 
-pub trait System<'a, P = ()> {
+// Traits 'System', 'Inject' and 'Query' are marked as unsafe because a wrong implementation could cause
+// all sorts of undefined behaviors. An implementor must be aware of the implicit requirements of these traits.
+pub unsafe trait System<P = ()> {
     fn schedule(self, world: World) -> Runner;
 }
 
-impl Runner {
+pub unsafe trait Inject {
+    type State: 'static;
+
+    fn dependencies() -> Vec<Dependency>;
+    fn state(world: World) -> Option<Self::State>;
+    unsafe fn inject(state: &mut Self::State) -> Self;
+}
+
+pub unsafe trait Query {
+    type State: 'static;
+
+    fn dependencies() -> Vec<Dependency>;
+    fn state(segment: Segment, world: World) -> Option<Self::State>;
+    unsafe fn query(state: &Self::State, index: usize) -> Self;
+}
+
+#[derive(Clone)]
+pub struct Group<'a, Q: Query> {
+    states: &'a Vec<(Q::State, usize)>,
+}
+
+pub struct GroupIterator<'a, Q: Query> {
+    indices: (usize, usize),
+    group: &'a Group<'a, Q>,
+}
+
+impl<'a, Q: Query> IntoIterator for &'a Group<'a, Q> {
+    type Item = Q;
+    type IntoIter = GroupIterator<'a, Q>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        GroupIterator {
+            indices: (0, 0),
+            group: self,
+        }
+    }
+}
+
+impl<'a, Q: Query> Iterator for GroupIterator<'a, Q> {
+    type Item = Q;
+
     #[inline]
-    pub fn new<F: FnMut() + 'static>(run: F, dependencies: Vec<Dependency>) -> Self {
-        let run = Box::new(run);
-        Self { run, dependencies }
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some((state, count)) = self.group.states.get(self.indices.0) {
+            let index = self.indices.1;
+            if index < *count {
+                self.indices.1 += 1;
+                return Some(unsafe { Q::query(state, index) });
+            } else {
+                self.indices.0 += 1;
+            }
+        }
+        None
+    }
+}
+
+unsafe impl Sync for Runner {}
+unsafe impl Send for Runner {}
+impl Runner {
+    pub fn optimize(self) -> Self {
+        // - remove empty parallel/sequence
+        // - replace singleton parallel/sequence by the first child
+        // - merge sequence of sequences
+        // - can parallel of parallels can be merged?
+        todo!()
+    }
+
+    pub fn run(&mut self) {
+        match self {
+            Runner::System(run, _) => run(),
+            Runner::Sequence(runners) => {
+                for runner in runners {
+                    runner.run();
+                }
+            }
+            Runner::Parallel(runners) => scope(|scope| {
+                for runner in runners {
+                    scope.spawn(move |_| runner.run());
+                }
+            })
+            .unwrap(),
+        }
+    }
+
+    pub fn dependencies(&self) -> Vec<Dependency> {
+        match self {
+            Runner::System(_, dependencies) => dependencies.clone(),
+            Runner::Sequence(runners) | Runner::Parallel(runners) => runners
+                .iter()
+                .map(|runner| runner.dependencies())
+                .flatten()
+                .collect(),
+        }
     }
 }
 
 impl Default for Runner {
     #[inline]
     fn default() -> Self {
-        Self::new(|| {}, Vec::new())
+        Runner::Sequence(Vec::new())
     }
 }
 
@@ -43,64 +156,17 @@ impl Scheduler {
         }
     }
 
-    pub fn add<'a, P, S: System<'a, P> + 'static>(mut self, system: S) -> Self {
+    pub fn add<P, S: System<P> + 'static>(mut self, system: S) -> Self {
         self.schedules
             .push(Box::new(move |world| system.schedule(world)));
         self
     }
 }
 
-impl<'a> System<'a> for Scheduler {
+unsafe impl System for Scheduler {
     fn schedule(self, world: World) -> Runner {
         fn take<T>(vector: &mut Vec<T>) -> Vec<T> {
             replace(vector, Vec::new())
-        }
-
-        fn unzip(mut runners: Vec<Runner>) -> (Vec<Run>, Vec<Dependency>) {
-            let mut runs = Vec::with_capacity(runners.len());
-            let mut dependencies = Vec::with_capacity(runners.len());
-            for mut runner in runners.drain(..) {
-                runs.push(runner.run);
-                dependencies.append(&mut runner.dependencies);
-            }
-            (runs, dependencies)
-        }
-
-        fn as_sequence(mut runners: Vec<Runner>) -> Option<Runner> {
-            if runners.len() <= 1 {
-                return runners.pop();
-            }
-
-            let (mut runs, dependencies) = unzip(runners);
-            Some(Runner::new(
-                move || {
-                    for run in &mut runs {
-                        run();
-                    }
-                },
-                dependencies,
-            ))
-        }
-
-        fn as_parallel(mut runners: Vec<Runner>) -> Option<Runner> {
-            if runners.len() <= 1 {
-                return runners.pop();
-            }
-
-            let (mut runs, dependencies) = unzip(runners);
-            Some(Runner::new(
-                move || {
-                    // TODO: This is most likely not the most performant way to parallelize systems.
-                    scope(|scope| {
-                        for run in &mut runs {
-                            let run: &mut Box<dyn FnMut() + Send> = unsafe { transmute(run) };
-                            scope.spawn(move |_| run());
-                        }
-                    })
-                    .unwrap();
-                },
-                dependencies,
-            ))
         }
 
         let mut dependencies = Vec::new();
@@ -109,83 +175,199 @@ impl<'a> System<'a> for Scheduler {
         let mut start = 0;
         for schedule in self.schedules {
             let runner = schedule(world.clone());
-            dependencies.extend(runner.dependencies.iter());
+            dependencies.append(&mut runner.dependencies());
             if Dependency::synchronous(&dependencies[start..]) {
                 start = dependencies.len();
-                if let Some(parallel) = as_parallel(take(&mut parallel)) {
-                    sequence.push(parallel);
-                }
+                sequence.push(Runner::Parallel(take(&mut parallel)));
             }
             parallel.push(runner);
         }
+        sequence.push(Runner::Parallel(take(&mut parallel)));
+        Runner::Sequence(take(&mut sequence)).optimize()
+    }
+}
 
-        if let Some(parallel) = as_parallel(take(&mut parallel)) {
-            sequence.push(parallel);
+unsafe impl<'a, Q: Query + 'static> Inject for Group<'a, Q> {
+    type State = (usize, Vec<(Q::State, usize)>, World);
+
+    fn dependencies() -> Vec<Dependency> {
+        Q::dependencies()
+    }
+
+    fn state(world: World) -> Option<Self::State> {
+        Some((0, Vec::new(), world))
+    }
+
+    unsafe fn inject(state: &mut Self::State) -> Self {
+        todo!()
+        // let (index, states, world) = state;
+        // let segments = world.get().segments;
+        // for i in *index..segments.len() {
+        //     let segment = &segments[i];
+        //     if let Some(state) = Q::state(segment.clone(), world.clone()) {
+        //         states.push((state, segment.get().entities.len()));
+        //     }
+        // }
+        // Group { states }
+    }
+}
+
+unsafe impl<R: Resource + 'static> Inject for &R {
+    type State = Store<R>;
+
+    fn dependencies() -> Vec<Dependency> {
+        vec![Dependency::write::<R>()]
+    }
+
+    fn state(world: World) -> Option<Self::State> {
+        unsafe { world.get().get_resource_store() }
+    }
+
+    unsafe fn inject(state: &mut Self::State) -> Self {
+        &(&*state.inner.get())[0]
+    }
+}
+
+unsafe impl<R: Resource + 'static> Inject for &mut R {
+    type State = Store<R>;
+
+    fn dependencies() -> Vec<Dependency> {
+        vec![Dependency::write::<R>()]
+    }
+
+    fn state(world: World) -> Option<Self::State> {
+        unsafe { world.get().get_resource_store() }
+    }
+
+    unsafe fn inject(state: &mut Self::State) -> Self {
+        &mut (&mut *state.inner.get())[0]
+    }
+}
+
+unsafe impl Query for Entity {
+    type State = Segment;
+
+    fn dependencies() -> Vec<Dependency> {
+        vec![Dependency::read::<Entity>()]
+    }
+
+    fn state(segment: Segment, _: World) -> Option<Self::State> {
+        Some(segment)
+    }
+
+    #[inline(always)]
+    unsafe fn query(state: &Self::State, index: usize) -> Self {
+        state.get().entities[index]
+    }
+}
+
+unsafe impl<C: Component + 'static> Query for &C {
+    type State = Store<C>;
+
+    fn dependencies() -> Vec<Dependency> {
+        vec![Dependency::read::<Entity>()]
+    }
+
+    fn state(segment: Segment, _: World) -> Option<Self::State> {
+        segment.get_store().cloned()
+    }
+
+    #[inline(always)]
+    unsafe fn query(state: &Self::State, index: usize) -> Self {
+        &(&*state.inner.get())[index]
+    }
+}
+
+unsafe impl<C: Component + 'static> Query for &mut C {
+    type State = Store<C>;
+
+    fn dependencies() -> Vec<Dependency> {
+        vec![Dependency::read::<Entity>()]
+    }
+
+    fn state(segment: Segment, _: World) -> Option<Self::State> {
+        segment.get_store().cloned()
+    }
+
+    #[inline(always)]
+    unsafe fn query(state: &Self::State, index: usize) -> Self {
+        &mut (&mut *state.inner.get())[index]
+    }
+}
+
+#[inline]
+fn update_inject<I: Inject>(state: &mut Option<I::State>, world: World) -> Option<I> {
+    if state.is_none() {
+        *state = I::state(world);
+    }
+    state.as_mut().map(|state| unsafe { I::inject(state) })
+}
+
+#[inline]
+fn update_queries<Q: Query>(states: &mut Vec<(Q::State, usize)>, index: &mut usize, world: World) {
+    let segments = unsafe { &world.get().segments };
+    for i in *index..segments.len() {
+        let segment = &segments[i];
+        if let Some(state) = Q::state(segment.clone(), world.clone()) {
+            states.push((state, unsafe { segment.get().entities.len() }));
         }
-
-        as_sequence(take(&mut parallel)).unwrap_or_default()
     }
+    *index = segments.len();
 }
 
-fn test(world: World) {
-    struct Time {}
-    impl Resource for Time {}
-    let mut runner = Scheduler::new()
-        .add(|time: &mut Time| {})
-        // .add(|boba: &mut Boba| {})
-        .schedule(world);
-
-    loop {
-        (runner.run)();
-    }
-}
-
-// TODO: implement actual systems
-impl<'a, I: Inject<'a>, F: Fn(I)> System<'a, [I; 1]> for F {
-    fn schedule(self, mut world: World) -> Runner {
-        let a = I::inject(&mut world);
-        Runner::default()
-        // .map(|state| {
-        //     Runner::new(
-        //         move |world| self(I::get(&mut state, world)),
-        //         I::dependencies(),
-        //     )
-        // })
-    }
-}
-
-pub trait Fett<'a> {
-    type State: 'a;
-
-    fn inject(world: World) -> Option<Self::State>;
-    fn get(state: &'a mut Self::State) -> Self;
-}
-
-pub struct Boba(World);
-impl<'a> Fett<'a> for &'a mut Boba {
-    type State = Boba;
-
-    fn inject(world: World) -> Option<Self::State> {
-        Some(Boba(world))
-    }
-
-    fn get(state: &'a mut Self::State) -> Self {
-        state
-    }
-}
-
-impl<'a, R: Resource + 'static> Fett<'a> for &'a mut R {
-    type State = (World, usize, usize);
-
-    fn inject(world: World) -> Option<Self::State> {
-        Some((world, 0, 0))
-    }
-
-    fn get(state: &'a mut Self::State) -> Self {
-        let (world, segment, store) = state;
-        unsafe {
-            let store = world.get().segments[*segment].storez[*store].0 as *mut R;
-            &mut *store
+#[inline]
+fn run_queries<Q: Query, F: Fn(Q)>(run: &F, states: &Vec<(Q::State, usize)>) {
+    for (state, count) in states {
+        for index in 0..*count {
+            run(unsafe { Q::query(state, index) })
         }
+    }
+}
+
+unsafe impl<I: Inject, F: Fn(I) + 'static> System<[(I, ()); 1]> for F {
+    fn schedule<'a>(self, world: World) -> Runner {
+        let mut state = None;
+        Runner::System(
+            Box::new(move || {
+                if let Some(inject) = update_inject(&mut state, world.clone()) {
+                    self(inject);
+                }
+            }),
+            I::dependencies(),
+        )
+    }
+}
+
+unsafe impl<Q: Query, F: Fn(Q) + 'static> System<[((), Q); 2]> for F {
+    fn schedule(self, world: World) -> Runner {
+        let mut states: Vec<(Q::State, usize)> = Vec::new();
+        let mut index = 0;
+        Runner::System(
+            Box::new(move || {
+                update_queries::<Q>(&mut states, &mut index, world.clone());
+                run_queries(&self, &states);
+            }),
+            Q::dependencies(),
+        )
+    }
+}
+
+unsafe impl<I: Inject, Q: Query, FI: Fn(I) -> FQ + 'static, FQ: Fn(Q)> System<[(I, Q); 3]> for FI {
+    fn schedule(self, world: World) -> Runner {
+        let mut state: Option<I::State> = None;
+        let mut states: Vec<(Q::State, usize)> = Vec::new();
+        let mut index = 0;
+        Runner::System(
+            Box::new(move || {
+                if let Some(inject) = update_inject::<I>(&mut state, world.clone()) {
+                    update_queries::<Q>(&mut states, &mut index, world.clone());
+                    run_queries(&self(inject), &states);
+                }
+            }),
+            vec![I::dependencies(), Q::dependencies()]
+                .drain(..)
+                .flatten()
+                .collect(),
+        )
     }
 }

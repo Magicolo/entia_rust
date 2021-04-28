@@ -1,21 +1,17 @@
-use crate::world::Inner;
 use crate::*;
 use once_cell::sync::Lazy;
 use std::any;
 use std::any::{Any, TypeId};
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::Arc;
 use std::sync::Mutex;
-
-pub type CreateStore = dyn Fn() -> Box<dyn Store> + Sync;
 
 #[derive(Copy, Clone)]
 pub struct Metadata {
     pub identifier: TypeId,
     pub name: &'static str,
     pub index: usize,
-    store: &'static CreateStore,
 }
 
 static REGISTRY: Lazy<Mutex<Option<Vec<Metadata>>>> = Lazy::new(|| Mutex::new(Some(Vec::new())));
@@ -30,7 +26,6 @@ impl Metadata {
             identifier: TypeId::of::<C>(),
             name: any::type_name::<C>(),
             index: registry.len(),
-            store: &|| Box::new(Vec::<C>::new()),
         };
         registry.push(meta);
         meta
@@ -71,62 +66,72 @@ impl Metadata {
         &CACHE
     }
 
-    pub fn new_store(&self) -> Box<dyn Store> {
-        (*self.store)()
-    }
+    // pub fn new_store(&self) -> Box<dyn Store> {
+    //     (*self.store)()
+    // }
 }
 
-pub trait Store {
-    fn as_any(&self) -> &dyn Any;
-    fn as_any_mut(&mut self) -> &mut dyn Any;
-    /// Swaps the element at `index` with the last element and moves the swapped
-    /// element to the end of the `target` store.
-    fn swap_to(&mut self, target: &mut dyn Store, index: usize);
+pub(crate) struct Inner {
+    pub index: usize,
+    pub types: Vec<Metadata>,
+    pub entities: Vec<Entity>,
+    pub stores: Vec<Box<dyn Any>>,
 }
 
-impl<T: 'static> Store for Vec<T> {
-    #[inline]
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
+#[derive(Clone)]
+pub struct Segment {
+    inner: Arc<UnsafeCell<Inner>>,
+}
 
-    #[inline]
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    #[inline]
-    fn swap_to(&mut self, target: &mut dyn Store, index: usize) {
-        if let Some(store) = target.as_any_mut().downcast_mut::<Self>() {
-            store.push(self.swap_remove(index));
+// #[derive(Clone)]
+pub struct Store<T> {
+    pub(crate) inner: Arc<UnsafeCell<Vec<T>>>,
+}
+impl<T> Clone for Store<T> {
+    fn clone(&self) -> Self {
+        Store {
+            inner: self.inner.clone(),
         }
     }
 }
 
-pub struct Segment {
-    pub index: usize,
-    pub types: Vec<Metadata>,
-    pub entities: Vec<Entity>,
-    pub stores: Vec<Rc<dyn Any>>,
-    pub storez: Vec<(*mut (), usize, usize)>,
-}
-
-pub trait Component {
-    fn metadata() -> &'static Metadata;
-}
+pub trait Component {}
 
 impl Segment {
     #[inline]
-    pub fn get_store<C: Component + 'static>(&self) -> Option<Rc<UnsafeCell<Vec<C>>>> {
-        self.stores
-            .get(C::metadata().index)
-            .and_then(|store| store.clone().downcast::<UnsafeCell<Vec<C>>>().ok())
+    pub fn get_store<T: 'static>(&self) -> Option<&Store<T>> {
+        todo!()
+        // self.stores
+        //     .get(C::metadata().index)
+        //     .and_then(|store| store.clone().downcast::<UnsafeCell<Vec<C>>>().ok())
+    }
+
+    #[inline]
+    pub(crate) unsafe fn get(&self) -> &mut Inner {
+        &mut *self.inner.get()
+    }
+}
+
+impl<T> Store<T> {
+    #[inline]
+    pub(crate) unsafe fn get(&self) -> &mut Vec<T> {
+        &mut *self.inner.get()
     }
 }
 
 impl Inner {
+    fn get_store<T: 'static>(&mut self) -> Option<&mut Vec<T>> {
+        todo!()
+    }
+
+    fn get_store_at<T: 'static>(&mut self, index: usize) -> Option<&mut T> {
+        self.get_store().and_then(|store| store.get_mut(index))
+    }
+}
+
+impl world::Inner {
     pub fn has_component<C: Component + 'static>(&self, entity: Entity) -> bool {
-        Self::get_entity_data(&self.data, entity)
+        self.get_entity_data(entity)
             .and_then(|data| self.segments[data.segment as usize].get_store::<C>())
             .is_some()
     }

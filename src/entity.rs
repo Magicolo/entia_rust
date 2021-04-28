@@ -1,6 +1,6 @@
 use crate::world::Inner;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Entity {
     pub index: u32,
     pub generation: u32,
@@ -24,8 +24,9 @@ impl Entity {
 
 impl Inner {
     #[inline]
-    pub(crate) fn get_entity_data(data: &Vec<Data>, entity: Entity) -> Option<&Data> {
-        data.get(entity.index as usize)
+    pub(crate) fn get_entity_data(&self, entity: Entity) -> Option<&Data> {
+        self.data
+            .get(entity.index as usize)
             .filter(|data| data.alive && data.generation == entity.generation)
     }
 
@@ -41,7 +42,7 @@ impl Inner {
 
     #[inline]
     pub fn has_entity(&self, entity: Entity) -> bool {
-        Self::get_entity_data(&self.data, entity).is_some()
+        self.get_entity_data(entity).is_some()
     }
 
     pub fn create_entity(&mut self) -> Entity {

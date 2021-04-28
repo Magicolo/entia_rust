@@ -9,6 +9,8 @@ pub mod resource;
 pub mod system;
 pub mod system2;
 pub mod system3;
+pub mod system4;
+pub mod system5;
 pub mod world;
 pub use component::Component;
 pub use entity::Entity;
@@ -45,22 +47,22 @@ mod tests {
 
     struct Position(f32, f32, f32);
     impl Component for Position {
-        #[inline]
-        fn metadata() -> &'static Metadata {
-            #[ctor]
-            static META: Metadata = Metadata::new::<Position>();
-            &META
-        }
+        // #[inline]
+        // fn metadata() -> &'static Metadata {
+        //     #[ctor]
+        //     static META: Metadata = Metadata::new::<Position>();
+        //     &META
+        // }
     }
 
     struct Velocity(f32, f32, f32);
     impl Component for Velocity {
-        #[inline]
-        fn metadata() -> &'static Metadata {
-            #[ctor]
-            static META: Metadata = Metadata::new::<Velocity>();
-            &META
-        }
+        // #[inline]
+        // fn metadata() -> &'static Metadata {
+        //     #[ctor]
+        //     static META: Metadata = Metadata::new::<Velocity>();
+        //     &META
+        // }
     }
 
     #[derive(Debug, Clone, Copy, PartialEq)]
