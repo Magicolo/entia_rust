@@ -1,4 +1,3 @@
-use crate::internal::*;
 use crate::system::*;
 use crate::world::*;
 use crate::*;
@@ -14,8 +13,8 @@ pub trait Inject {
 }
 
 pub struct Group<Q: Query> {
-    inner: Arc<WorldInner>,
     queries: Arc<Vec<(Q::State, Arc<SegmentInner>)>>,
+    world: Arc<WorldInner>,
 }
 pub struct GroupIterator<Q: Query> {
     segment: usize,
@@ -39,7 +38,7 @@ impl<Q: Query> Group<Q> {
 impl<Q: Query> Clone for Group<Q> {
     fn clone(&self) -> Self {
         Group {
-            inner: self.inner.clone(),
+            world: self.world.clone(),
             queries: self.queries.clone(),
         }
     }
@@ -119,44 +118,44 @@ impl Inject for Defer {
 }
 
 impl<R: Resource> Inject for &R {
-    type State = (Arc<SegmentInner>, Arc<Vec<Wrap<R>>>);
+    type State = (Arc<Store<R>>, Arc<SegmentInner>);
 
     fn initialize(world: &World) -> Option<Self::State> {
         let segment = world.find_segment(&[TypeId::of::<R>()])?;
-        let store = segment.inner.stores[0].clone().downcast().ok()?;
-        Some((segment.inner.clone(), store))
+        let store = segment.store()?;
+        Some((store, segment.inner.clone()))
     }
 
-    fn update((segment, _): &mut Self::State) -> Vec<Dependency> {
+    fn update((_, segment): &mut Self::State) -> Vec<Dependency> {
         vec![Dependency::Read(segment.index, TypeId::of::<R>())]
     }
 
     fn resolve(_: &Self::State) {}
 
     #[inline]
-    fn get((_, store): &Self::State) -> Self {
-        unsafe { &*store[0].0.get() }
+    fn get((store, _): &Self::State) -> Self {
+        unsafe { store.get(0) }
     }
 }
 
 impl<R: Resource> Inject for &mut R {
-    type State = (Arc<SegmentInner>, Arc<Vec<Wrap<R>>>);
+    type State = (Arc<Store<R>>, Arc<SegmentInner>);
 
     fn initialize(world: &World) -> Option<Self::State> {
         let segment = world.find_segment(&[TypeId::of::<R>()])?;
-        let store = segment.inner.stores[0].clone().downcast().ok()?;
-        Some((segment.inner.clone(), store))
+        let store = segment.store()?;
+        Some((store, segment.inner.clone()))
     }
 
-    fn update((segment, _): &mut Self::State) -> Vec<Dependency> {
+    fn update((_, segment): &mut Self::State) -> Vec<Dependency> {
         vec![Dependency::Write(segment.index, TypeId::of::<R>())]
     }
 
     fn resolve(_: &Self::State) {}
 
     #[inline]
-    fn get((_, store): &Self::State) -> Self {
-        unsafe { &mut *store[0].0.get() }
+    fn get((store, _): &Self::State) -> Self {
+        unsafe { &mut *store.get(0) }
     }
 }
 
@@ -222,12 +221,12 @@ impl<Q: Query> Inject for Group<Q> {
         Some((0, Arc::new(Vec::new()), world.inner.clone()))
     }
 
-    fn update((index, queries, inner): &mut Self::State) -> Vec<Dependency> {
+    fn update((index, queries, world): &mut Self::State) -> Vec<Dependency> {
         // TODO: Ensure that a user cannot persist a 'Group<Q>' outside of the execution of a system.
         // - Otherwise, 'Arc::get_mut' will fail...
         let mut dependencies = Vec::new();
         if let Some(queries) = Arc::get_mut(queries) {
-            while let Some(segment) = inner.segments.get(*index) {
+            while let Some(segment) = world.segments.get(*index) {
                 if let Some(query) = Q::initialize(&segment) {
                     queries.push((query, segment.inner.clone()))
                 }
@@ -249,10 +248,10 @@ impl<Q: Query> Inject for Group<Q> {
     }
 
     #[inline]
-    fn get((_, queries, inner): &Self::State) -> Self {
+    fn get((_, queries, world): &Self::State) -> Self {
         Group {
-            inner: inner.clone(),
             queries: queries.clone(),
+            world: world.clone(),
         }
     }
 }

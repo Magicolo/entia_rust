@@ -1,8 +1,8 @@
-use crate::internal::*;
 use crate::world::*;
 use crate::*;
 use std::any::type_name;
 use std::any::TypeId;
+use std::cell::UnsafeCell;
 use std::collections::HashSet;
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -77,11 +77,14 @@ impl Scheduler {
         &self,
         system: S,
     ) -> Self {
+        struct Wrap<T>(pub(crate) UnsafeCell<T>);
+        unsafe impl<T> Sync for Wrap<T> {}
+
         let mut scheduler = self.clone();
         let system = Arc::new(system);
         scheduler.schedules.push(Arc::new(move |world| {
             let system = system.clone();
-            let state = Arc::new(Wrap::new(S::initialize(&world)?));
+            let state = Arc::new(Wrap(UnsafeCell::new(S::initialize(&world)?)));
             Some(Run {
                 _name: S::name(),
                 update: {

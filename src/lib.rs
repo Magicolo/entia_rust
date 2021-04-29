@@ -1,7 +1,6 @@
 pub mod call;
 pub mod change;
 pub mod inject;
-pub mod internal;
 pub mod query;
 pub mod system;
 pub mod world;

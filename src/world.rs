@@ -1,5 +1,6 @@
 use std::any::Any;
 use std::any::TypeId;
+use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicPtr;
 use std::sync::atomic::AtomicUsize;
@@ -44,26 +45,30 @@ pub trait Resource: Send + 'static {}
 pub trait Component: Send + 'static {}
 
 #[derive(Default)]
-pub struct WorldInner {
-    _entities: AtomicPtr<Entity>,
-    _last: AtomicUsize,
-    pub(crate) segments: Vec<Segment>,
-}
-#[derive(Default)]
 pub struct World {
     pub(crate) inner: Arc<WorldInner>,
 }
 
-pub struct SegmentInner {
-    pub index: usize,
-    pub types: Vec<TypeId>,
-    pub entities: Vec<Entity>,
-    pub stores: Vec<Arc<dyn Any + Send + Sync + 'static>>,
-    pub indices: HashMap<TypeId, usize>,
-}
 pub struct Segment {
     pub(crate) inner: Arc<SegmentInner>,
 }
+
+#[derive(Default)]
+pub struct WorldInner {
+    pub entities: AtomicPtr<Entity>,
+    pub last: AtomicUsize,
+    pub segments: Vec<Segment>,
+}
+
+#[derive(Default)]
+pub struct SegmentInner {
+    pub index: usize,
+    pub entities: Vec<Entity>,
+    pub stores: HashMap<TypeId, Arc<dyn Any + Send + Sync + 'static>>,
+}
+
+pub struct Store<T>(UnsafeCell<Vec<T>>);
+unsafe impl<T> Sync for Store<T> {}
 
 impl World {
     pub fn new() -> Self {
@@ -72,5 +77,24 @@ impl World {
 
     pub fn find_segment(&self, _types: &[TypeId]) -> Option<Segment> {
         todo!()
+    }
+}
+
+impl Segment {
+    pub fn store<T: Send + 'static>(&self) -> Option<Arc<Store<T>>> {
+        self.inner
+            .stores
+            .get(&TypeId::of::<T>())?
+            .clone()
+            .downcast()
+            .ok()
+    }
+}
+
+impl<T> Store<T> {
+    // TODO: The "<'a>" is highly unsafe. Is there a less unsafe workaround?
+    #[inline]
+    pub unsafe fn get<'a>(&self, index: usize) -> &'a mut T {
+        &mut (&mut *self.0.get())[index]
     }
 }

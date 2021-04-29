@@ -1,4 +1,3 @@
-use crate::internal::*;
 use crate::system::*;
 use crate::world::*;
 use std::any::TypeId;
@@ -30,54 +29,48 @@ impl Query for Entity {
     fn resolve(_: &Self::State) {}
 
     #[inline]
-    fn get(index: usize, inner: &Self::State) -> Self {
-        inner.entities[index]
+    fn get(index: usize, segment: &Self::State) -> Self {
+        segment.entities[index]
     }
 }
 
 impl<C: Component> Query for &C {
-    type State = (Arc<Vec<Wrap<C>>>, Arc<SegmentInner>);
+    type State = (Arc<Store<C>>, Arc<SegmentInner>);
 
     fn initialize(segment: &Segment) -> Option<Self::State> {
-        let inner = segment.inner.clone();
-        let index = inner.indices.get(&TypeId::of::<C>())?;
-        let store = inner.stores.get(*index)?;
-        let store = store.clone().downcast().ok()?;
-        Some((store, inner))
+        let store = segment.store()?;
+        Some((store, segment.inner.clone()))
     }
 
-    fn update((_, inner): &mut Self::State) -> Vec<Dependency> {
-        vec![Dependency::Read(inner.index, TypeId::of::<C>())]
+    fn update((_, segment): &mut Self::State) -> Vec<Dependency> {
+        vec![Dependency::Read(segment.index, TypeId::of::<C>())]
     }
 
     fn resolve(_: &Self::State) {}
 
     #[inline]
     fn get(index: usize, (store, _): &Self::State) -> Self {
-        unsafe { &*store[index].0.get() }
+        unsafe { store.get(index) }
     }
 }
 
 impl<C: Component> Query for &mut C {
-    type State = (Arc<Vec<Wrap<C>>>, Arc<SegmentInner>);
+    type State = (Arc<Store<C>>, Arc<SegmentInner>);
 
     fn initialize(segment: &Segment) -> Option<Self::State> {
-        let inner = segment.inner.clone();
-        let index = inner.indices.get(&TypeId::of::<C>())?;
-        let store = inner.stores.get(*index)?;
-        let store = store.clone().downcast().ok()?;
-        Some((store, inner))
+        let store = segment.store()?;
+        Some((store, segment.inner.clone()))
     }
 
-    fn update((_, inner): &mut Self::State) -> Vec<Dependency> {
-        vec![Dependency::Write(inner.index, TypeId::of::<C>())]
+    fn update((_, segment): &mut Self::State) -> Vec<Dependency> {
+        vec![Dependency::Write(segment.index, TypeId::of::<C>())]
     }
 
     fn resolve(_: &Self::State) {}
 
     #[inline]
     fn get(index: usize, (store, _): &Self::State) -> Self {
-        unsafe { &mut *store[index].0.get() }
+        unsafe { store.get(index) }
     }
 }
 
