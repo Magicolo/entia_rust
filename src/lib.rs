@@ -1,25 +1,16 @@
-pub mod bit_mask;
+pub mod call;
+pub mod change;
 pub mod inject;
-pub mod prelude;
+pub mod internal;
 pub mod query;
 pub mod system;
 pub mod world;
-pub use inject::*;
-pub use prelude::*;
-pub use query::*;
-pub use system::*;
-pub use world::*;
 
-#[macro_export]
-macro_rules! recurse {
-    ($m:ident, $p:ident, $t:ident) => {
-        $m!($p, $t);
-    };
-    ($m:ident, $p:ident, $t:ident, $($ps:ident, $ts:ident),+) => {
-        $m!($p, $t, $($ps, $ts),+);
-        crate::recurse!($m, $($ps, $ts),+);
-    };
-}
+pub use call::*;
+pub use inject::{Defer, Group, Inject};
+pub use query::{And, Not, Query};
+pub use system::{Runner, Scheduler, System};
+pub use world::{Component, Entity, Resource, Template, World};
 
 #[cfg(test)]
 mod test {

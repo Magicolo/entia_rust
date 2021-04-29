@@ -40,8 +40,8 @@ pub struct Entity {
     generation: u32,
 }
 
-pub trait Resource: Send + Sync + 'static {}
-pub trait Component: Send + Sync + 'static {}
+pub trait Resource: Send + 'static {}
+pub trait Component: Send + 'static {}
 
 #[derive(Default)]
 pub struct WorldInner {

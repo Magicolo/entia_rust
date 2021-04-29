@@ -1,3 +1,6 @@
+use crate::internal::*;
+use crate::system::*;
+use crate::world::*;
 use crate::*;
 use std::any::TypeId;
 use std::sync::Arc;
@@ -19,6 +22,8 @@ pub struct GroupIterator<Q: Query> {
     index: usize,
     group: Group<Q>,
 }
+
+pub struct Defer {}
 
 impl<Q: Query> Group<Q> {
     #[inline]
@@ -84,8 +89,6 @@ impl<Q: Query> Iterator for GroupIterator<Q> {
         None
     }
 }
-
-pub struct Defer {}
 
 impl Defer {
     pub fn create<T>(&self, _entities: &mut [Entity], _template: Template<T>) {}
