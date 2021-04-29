@@ -1,97 +1,112 @@
 pub mod bit_mask;
-pub mod component;
-pub mod dependency;
-pub mod entity;
 pub mod inject;
-pub mod message;
+pub mod prelude;
 pub mod query;
-pub mod resource;
 pub mod system;
-pub mod system2;
-pub mod system3;
-pub mod system4;
-pub mod system5;
 pub mod world;
-pub use component::Component;
-pub use entity::Entity;
-pub use inject::Inject;
-pub use message::Message;
-pub use query::Query;
-pub use resource::Resource;
-pub use system::System;
-pub use world::World;
+pub use inject::*;
+pub use prelude::*;
+pub use query::*;
+pub use system::*;
+pub use world::*;
+
+#[macro_export]
+macro_rules! recurse {
+    ($m:ident, $p:ident, $t:ident) => {
+        $m!($p, $t);
+    };
+    ($m:ident, $p:ident, $t:ident, $($ps:ident, $ts:ident),+) => {
+        $m!($p, $t, $($ps, $ts),+);
+        crate::recurse!($m, $($ps, $ts),+);
+    };
+}
 
 #[cfg(test)]
-mod tests {
-    use super::component::*;
+mod test {
     use super::*;
-    use ctor::ctor;
-    use std::sync::Once;
-
-    // #[test]
-    // fn create_two_entities() {
-    //     let world = World::new();
-    //     let entity1 = unsafe { world.create_entity() };
-    //     let entity2 = unsafe { world.create_entity() };
-    //     assert_ne!(entity1, entity2)
-    // }
 
     #[test]
-    fn check_metadata() {
-        let metas = Metadata::get_all();
-        for (index, meta) in metas.iter().enumerate() {
-            assert_eq!(meta.index, index);
+    fn test() {
+        struct Time(f64);
+        struct Physics;
+        struct Position(f64, f64, f64);
+        struct Velocity(f64, f64, f64);
+        impl Resource for Time {}
+        impl Resource for Physics {}
+        impl Component for Position {}
+        impl Component for Velocity {}
+
+        fn physics(scheduler: &Scheduler) -> Scheduler {
+            scheduler.system(|_: ()| {})
         }
-        assert_eq!(metas.len(), 2);
-    }
 
-    struct Position(f32, f32, f32);
-    impl Component for Position {
-        // #[inline]
-        // fn metadata() -> &'static Metadata {
-        //     #[ctor]
-        //     static META: Metadata = Metadata::new::<Position>();
-        //     &META
-        // }
-    }
+        fn ui(scheduler: &Scheduler) -> Scheduler {
+            scheduler.system(|_: ()| {})
+        }
 
-    struct Velocity(f32, f32, f32);
-    impl Component for Velocity {
-        // #[inline]
-        // fn metadata() -> &'static Metadata {
-        //     #[ctor]
-        //     static META: Metadata = Metadata::new::<Velocity>();
-        //     &META
-        // }
-    }
+        let scheduler = Scheduler::default()
+            .pipe(physics)
+            .pipe(ui)
+            .synchronize()
+            .system(|_: &Time| {})
+            .system(|_: (&Time,)| {})
+            .system(|_: &Time, _: &Physics, _: &mut Time, _: &mut Physics| {})
+            .system(|_: (&Time, &Physics)| {})
+            .system(|_: Group<Entity>| {})
+            .system(|(group,): (Group<(Entity, &mut Position)>,)| {
+                for _ in &group {}
+                for _ in group {}
+            })
+            .system(|_: Group<(Entity, And<&Position>)>| {})
+            .system(|_: Group<(Entity, (&Position, &Velocity))>| {})
+            // Must be prevented since it breaks the invariants of Rust.
+            // - will be allowed at compile-time, but will fail to initialize
+            .system(|group: Group<(&mut Position, &mut Position)>| {
+                group.each(|(_1, _2)| {});
+                group.each(|_12| {});
+                for _12 in &group {}
+                for (_1, _2) in group {}
+            })
+            .system(|_: (&Time, &Physics)| {})
+            .system(|_: (&Time, Group<Option<&Position>>)| {})
+            .synchronize()
+            .system(|_: (&Physics, Group<&Velocity>)| {})
+            .system(
+                |(time, (group1, group2)): (
+                    &Time,
+                    (Group<&mut Position>, Group<&mut Velocity>),
+                )| {
+                    group2.each(|velocity| {
+                        velocity.0 += time.0;
+                        velocity.1 += time.0;
+                        velocity.2 += time.0;
 
-    #[derive(Debug, Clone, Copy, PartialEq)]
-    struct OnKill {}
-    impl Message for OnKill {
-        fn index() -> usize {
-            static INITIALIZE: Once = Once::new();
-            static mut INDEX: usize = 0;
-            unsafe {
-                INITIALIZE.call_once(|| INDEX = message::next_index());
-                INDEX
-            }
+                        group1.each(|position| {
+                            position.0 += velocity.0;
+                            position.1 += velocity.1;
+                            position.2 += velocity.2;
+                        });
+                    });
+
+                    for velocity in &group2 {
+                        velocity.0 += time.0;
+                        velocity.1 += time.0;
+                        velocity.2 += time.0;
+
+                        for position in &group1 {
+                            position.0 += velocity.0;
+                            position.1 += velocity.1;
+                            position.2 += velocity.2;
+                        }
+                    }
+                },
+            )
+            .system(|_: (Defer,)| {});
+
+        let world = World::new();
+        let mut runner = scheduler.schedule(&world).unwrap();
+        loop {
+            runner.run();
         }
     }
-
-    // fn fett(world: &mut World) {
-    //     world.get_all_mut::<Position>();
-    //     world.get_all_mut::<Velocity>();
-    // }
-
-    // fn boba() {
-    //     let mut world = World::new();
-    //     let emitter1 = world.emitter::<OnKill>();
-    //     let emitter2 = world.emitter::<OnKill>();
-    //     let receiver = world.receiver::<OnKill>();
-    //     world.emit(OnKill {});
-    //     emitter1.emit(OnKill {});
-    //     emitter2.emit(OnKill {});
-
-    //     while let Some(_) = receiver.receive() {}
-    // }
 }

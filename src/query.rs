@@ -1,125 +1,205 @@
-use crate::component::Segment;
-use crate::dependency::Dependency;
 use crate::*;
-use std::cell::UnsafeCell;
-use std::rc::Rc;
+use std::any::TypeId;
+use std::marker::PhantomData;
+use std::sync::Arc;
 
-pub trait Query<'a> {
-    type State: 'a;
+pub struct And<Q: Query>(PhantomData<Q>);
+pub struct Not<Q: Query>(PhantomData<Q>);
 
-    fn dependencies() -> Vec<Dependency>;
-    fn query(segment: &Segment) -> Option<Self::State>;
-    fn get(index: usize, state: &'a Self::State, segment: &'a Segment) -> Self;
+pub trait Query {
+    type State;
+    fn initialize(segment: &Segment) -> Option<Self::State>;
+    fn update(state: &mut Self::State) -> Vec<Dependency>;
+    fn resolve(state: &Self::State);
+    fn get(index: usize, state: &Self::State) -> Self;
 }
 
-// Entities can be queried
-impl Query<'_> for Entity {
-    type State = ();
+impl Query for Entity {
+    type State = Arc<SegmentInner>;
 
-    fn dependencies() -> Vec<Dependency> {
-        vec![Dependency::read::<Entity>()]
+    fn initialize(segment: &Segment) -> Option<Self::State> {
+        Some(segment.inner.clone())
     }
 
-    fn query(_: &Segment) -> Option<()> {
+    fn update(_: &mut Self::State) -> Vec<Dependency> {
+        Vec::new()
+    }
+
+    fn resolve(_: &Self::State) {}
+
+    #[inline]
+    fn get(index: usize, inner: &Self::State) -> Self {
+        inner.entities[index]
+    }
+}
+
+impl<C: Component> Query for &C {
+    type State = (Arc<Vec<Wrap<C>>>, Arc<SegmentInner>);
+
+    fn initialize(segment: &Segment) -> Option<Self::State> {
+        let inner = segment.inner.clone();
+        let index = inner.indices.get(&TypeId::of::<C>())?;
+        let store = inner.stores.get(*index)?;
+        let store = store.clone().downcast().ok()?;
+        Some((store, inner))
+    }
+
+    fn update((_, inner): &mut Self::State) -> Vec<Dependency> {
+        vec![Dependency::Read(inner.index, TypeId::of::<C>())]
+    }
+
+    fn resolve(_: &Self::State) {}
+
+    #[inline]
+    fn get(index: usize, (store, _): &Self::State) -> Self {
+        unsafe { &*store[index].0.get() }
+    }
+}
+
+impl<C: Component> Query for &mut C {
+    type State = (Arc<Vec<Wrap<C>>>, Arc<SegmentInner>);
+
+    fn initialize(segment: &Segment) -> Option<Self::State> {
+        let inner = segment.inner.clone();
+        let index = inner.indices.get(&TypeId::of::<C>())?;
+        let store = inner.stores.get(*index)?;
+        let store = store.clone().downcast().ok()?;
+        Some((store, inner))
+    }
+
+    fn update((_, inner): &mut Self::State) -> Vec<Dependency> {
+        vec![Dependency::Write(inner.index, TypeId::of::<C>())]
+    }
+
+    fn resolve(_: &Self::State) {}
+
+    #[inline]
+    fn get(index: usize, (store, _): &Self::State) -> Self {
+        unsafe { &mut *store[index].0.get() }
+    }
+}
+
+impl<Q: Query> Query for And<Q> {
+    type State = ();
+
+    fn initialize(segment: &Segment) -> Option<Self::State> {
+        match Q::initialize(segment) {
+            Some(_) => Some(()),
+            None => None,
+        }
+    }
+
+    fn update(_: &mut Self::State) -> Vec<Dependency> {
+        Vec::new()
+    }
+
+    fn resolve(_: &Self::State) {}
+
+    #[inline]
+    fn get(_: usize, _: &Self::State) -> Self {
+        And(PhantomData)
+    }
+}
+
+impl<Q: Query> Query for Not<Q> {
+    type State = ();
+
+    fn initialize(segment: &Segment) -> Option<Self::State> {
+        match Q::initialize(segment) {
+            Some(_) => None,
+            None => Some(()),
+        }
+    }
+
+    fn update(_: &mut Self::State) -> Vec<Dependency> {
+        Vec::new()
+    }
+
+    fn resolve(_: &Self::State) {}
+
+    #[inline]
+    fn get(_: usize, _: &Self::State) -> Self {
+        Not(PhantomData)
+    }
+}
+
+impl<Q: Query> Query for Option<Q> {
+    type State = Option<Q::State>;
+
+    fn initialize(segment: &Segment) -> Option<Self::State> {
+        Some(Q::initialize(segment))
+    }
+
+    fn update(state: &mut Self::State) -> Vec<Dependency> {
+        match state {
+            Some(state) => Q::update(state),
+            None => Vec::new(),
+        }
+    }
+
+    fn resolve(state: &Self::State) {
+        match state {
+            Some(state) => Q::resolve(state),
+            None => {}
+        }
+    }
+
+    #[inline]
+    fn get(index: usize, state: &Self::State) -> Self {
+        match state {
+            Some(state) => Some(Q::get(index, state)),
+            None => None,
+        }
+    }
+}
+
+impl Query for () {
+    type State = ();
+
+    fn initialize(_: &Segment) -> Option<Self::State> {
         Some(())
     }
 
-    #[inline(always)]
-    fn get(index: usize, _: &Self::State, segment: &Segment) -> Self {
-        unsafe { segment.get().entities[index] }
-    }
-}
-
-// Components can be queried
-impl<'a, C: Component + 'static> Query<'a> for &'a C {
-    type State = Rc<UnsafeCell<Vec<C>>>;
-
-    fn dependencies() -> Vec<Dependency> {
-        vec![Dependency::read::<Entity>(), Dependency::read::<C>()]
+    fn update(_: &mut Self::State) -> Vec<Dependency> {
+        Vec::new()
     }
 
-    fn query(segment: &Segment) -> Option<Self::State> {
-        todo!()
+    fn resolve(_: &Self::State) {}
+
+    #[inline]
+    fn get(_: usize, _: &Self::State) -> Self {
+        ()
     }
-
-    #[inline(always)]
-    fn get(index: usize, state: &Self::State, _: &Segment) -> Self {
-        let store = unsafe { &*state.get() };
-        &store[index]
-    }
-}
-
-impl<'a, C: Component + 'static> Query<'a> for &'a mut C {
-    type State = Rc<UnsafeCell<Vec<C>>>;
-
-    fn dependencies() -> Vec<Dependency> {
-        vec![Dependency::read::<Entity>(), Dependency::write::<C>()]
-    }
-
-    fn query(segment: &Segment) -> Option<Self::State> {
-        todo!()
-    }
-
-    #[inline(always)]
-    fn get(index: usize, state: &Self::State, _: &Segment) -> Self {
-        let store = unsafe { &mut *state.get() };
-        &mut store[index]
-    }
-}
-
-// Support for optional queries
-impl<'a, Q: Query<'a>> Query<'a> for Option<Q> {
-    type State = Option<Q::State>;
-
-    fn dependencies() -> Vec<Dependency> {
-        Q::dependencies()
-    }
-
-    fn query(segment: &Segment) -> Option<Self::State> {
-        Some(Q::query(segment))
-    }
-
-    #[inline(always)]
-    fn get(index: usize, state: &'a Self::State, segment: &'a Segment) -> Self {
-        state.as_ref().map(|state| Q::get(index, state, segment))
-    }
-}
-
-macro_rules! tuples {
-    ($m:ident, $p:ident, $s:ident) => {};
-    ($m:ident, $p:ident, $s:ident, $($ps:ident, $ss:ident),+) => {
-        $m!($p, $s, $($ps, $ss),+);
-        tuples!($m, $($ps, $ss),+);
-    };
 }
 
 macro_rules! query {
-    ($($q:ident, $s:ident),+) => {
-        impl<'a, $($q: Query<'a>),+ > Query<'a> for ($($q),+) {
-            type State = ($($q::State),+);
+    ($($p:ident, $t:ident),+) => {
+        impl<$($t: Query),+> Query for ($($t),+,) {
+            type State = ($($t::State),+,);
 
-            fn dependencies() -> Vec<Dependency> {
+            fn initialize(segment: &Segment) -> Option<Self::State> {
+                Some(($($t::initialize(segment)?),+,))
+            }
+
+            fn update(($($p),+,): &mut Self::State) -> Vec<Dependency> {
                 let mut dependencies = Vec::new();
-                $(dependencies.append(&mut $q::dependencies());)+
+                $(dependencies.append(&mut $t::update($p)));+;
                 dependencies
             }
 
-            fn query(segment: &Segment) -> Option<Self::State> {
-                match ($($q::query(segment)),+) {
-                    ($(Some($s)),+) => Some(($($s),+)),
-                    _ => None,
-                }
+            fn resolve(($($p),+,): &Self::State) {
+                $($t::resolve($p));+;
             }
 
-            #[inline(always)]
-            fn get(index: usize, ($($s),+): &'a Self::State, segment: &'a Segment) -> Self {
-                ($($q::get(index, $s, segment)),+)
+            #[inline]
+            fn get(index: usize, ($($p),+,): &Self::State) -> Self {
+                ($($t::get(index, $p)),+,)
             }
         }
     };
 }
 
-tuples!(
-    query, Q0, state0, Q1, state1, Q2, state2, Q3, state3, Q4, state4, Q5, state5, Q6, state6, Q7,
-    state7, Q8, state8, Q9, state9
+crate::recurse!(
+    query, query1, Q1, query2, Q2, query3, Q3, query4, Q4, query5, Q5, query6, Q6, query7, Q7,
+    query8, Q8, query9, Q9, query10, Q10, query11, Q11, query12, Q12
 );

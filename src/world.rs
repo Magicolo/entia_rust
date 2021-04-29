@@ -1,57 +1,76 @@
-use crate::component::Segment;
-use crate::entity::Data;
 use std::any::Any;
 use std::any::TypeId;
-use std::cell::UnsafeCell;
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::atomic::AtomicPtr;
+use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 
-pub(crate) struct Inner {
-    pub data: Vec<Data>,
-    pub free_indices: Vec<u32>,
-    pub frozen_indices: Vec<u32>,
-    pub segments: Vec<Segment>,
+/*
+SYSTEMS
+- Runners must be able to re-initialize and re-schedule all systems when a segment is added.
+- This will happen when the 'Defer' module is resolved which occurs at the next synchronization point.
+- There should not be a significant performance hit since segment addition/removal is expected to be rare and happen mainly
+in the first frames of execution.
+
+RESOURCES
+- There will be 1 segment per resource such that the same segment/dependency system can be used for them.
+- Resource segments should only allocate 1 store with 1 slot with the resource in it.
+- Resource entities must not be query-able (could be accomplished with a simple 'bool' in segments).
+
+DEPENDENCIES
+- Design a contract API that ensures that dependencies are well defined.
+- To gain access to a given resource, a user must provide a corresponding 'Contract' that is provided by a 'Contractor'.
+- The 'Contractor' then stores a copy of each emitted contract to later convert them into corresponding dependencies.
+- Ex: System::initialize(contractor: &mut Contractor, world: &mut World) -> Store<Time> {
+    world.get_resource(contractor.resource(TypeId::of::<Time>()))
+        OR
+    world.get_resource::<Time>(contractor)
+        OR
+    contractor.resource::<Time>(world) // This doesn't require the 'World' to know about the 'Contractor'.
+        OR
+    contractor.resource::<Time>() // The contractor can hold its own reference to the 'World'.
+}
+*/
+
+pub struct Template<T>(T);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Entity {
+    index: u32,
+    generation: u32,
 }
 
-#[derive(Clone)]
+pub trait Resource: Send + Sync + 'static {}
+pub trait Component: Send + Sync + 'static {}
+
+#[derive(Default)]
+pub struct WorldInner {
+    _entities: AtomicPtr<Entity>,
+    _last: AtomicUsize,
+    pub(crate) segments: Vec<Segment>,
+}
+#[derive(Default)]
 pub struct World {
-    pub(crate) inner: Arc<UnsafeCell<Inner>>,
-    pub(crate) states: HashMap<TypeId, Rc<dyn Any>>,
+    pub(crate) inner: Arc<WorldInner>,
 }
 
-pub trait Module {
-    fn new(world: &mut World) -> Self;
+pub struct SegmentInner {
+    pub index: usize,
+    pub types: Vec<TypeId>,
+    pub entities: Vec<Entity>,
+    pub stores: Vec<Arc<dyn Any + Send + Sync + 'static>>,
+    pub indices: HashMap<TypeId, usize>,
+}
+pub struct Segment {
+    pub(crate) inner: Arc<SegmentInner>,
 }
 
 impl World {
-    #[inline]
     pub fn new() -> Self {
-        Self {
-            inner: Arc::new(UnsafeCell::new(Inner {
-                data: Vec::new(),
-                free_indices: Vec::new(),
-                frozen_indices: Vec::new(),
-                segments: Vec::new(),
-            })),
-            states: HashMap::new(),
-        }
+        Self::default()
     }
 
-    pub fn getz<T: 'static + Module>(&mut self) -> Rc<T> {
-        let key = TypeId::of::<T>();
-        match self.states.get(&key) {
-            Some(state) => state.clone().downcast::<T>().unwrap(),
-            None => {
-                let value = Rc::new(T::new(self));
-                self.states.insert(key, value.clone());
-                value
-            }
-        }
-    }
-
-    #[inline]
-    pub(crate) unsafe fn get(&self) -> &mut Inner {
-        &mut *self.inner.get()
+    pub fn find_segment(&self, _types: &[TypeId]) -> Option<Segment> {
+        todo!()
     }
 }
