@@ -4,7 +4,7 @@ use std::any::TypeId;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-pub struct And<Q: Query>(PhantomData<Q>);
+pub struct With<Q: Query>(PhantomData<Q>);
 pub struct Not<Q: Query>(PhantomData<Q>);
 
 pub trait Query {
@@ -74,7 +74,7 @@ impl<C: Component> Query for &mut C {
     }
 }
 
-impl<Q: Query> Query for And<Q> {
+impl<Q: Query> Query for With<Q> {
     type State = ();
 
     fn initialize(segment: &Segment) -> Option<Self::State> {
@@ -92,7 +92,7 @@ impl<Q: Query> Query for And<Q> {
 
     #[inline]
     fn get(_: usize, _: &Self::State) -> Self {
-        And(PhantomData)
+        With(PhantomData)
     }
 }
 

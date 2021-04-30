@@ -7,9 +7,20 @@ pub mod world;
 
 pub use call::*;
 pub use inject::{Defer, Group, Inject};
-pub use query::{And, Not, Query};
+pub use query::{Not, Query, With};
 pub use system::{Runner, Scheduler, System};
 pub use world::{Component, Entity, Resource, Template, World};
+
+#[macro_export]
+macro_rules! recurse {
+    ($m:ident, $p:ident, $t:ident) => {
+        $m!($p, $t);
+    };
+    ($m:ident, $p:ident, $t:ident, $($ps:ident, $ts:ident),+) => {
+        $m!($p, $t, $($ps, $ts),+);
+        crate::recurse!($m, $($ps, $ts),+);
+    };
+}
 
 #[cfg(test)]
 mod test {
@@ -47,7 +58,7 @@ mod test {
                 for _ in &group {}
                 for _ in group {}
             })
-            .system(|_: Group<(Entity, And<&Position>)>| {})
+            .system(|_: Group<(Entity, With<&Position>)>| {})
             .system(|_: Group<(Entity, (&Position, &Velocity))>| {})
             // Must be prevented since it breaks the invariants of Rust.
             // - will be allowed at compile-time, but will fail to initialize
@@ -62,28 +73,25 @@ mod test {
             .synchronize()
             .system(|_: (&Physics, Group<&Velocity>)| {})
             .system(
-                |(time, (group1, group2)): (
-                    &Time,
-                    (Group<&mut Position>, Group<&mut Velocity>),
-                )| {
-                    group2.each(|velocity| {
+                |(time, groups): (&Time, (Group<&mut Position>, Group<&mut Velocity>))| {
+                    groups.1.each(|velocity| {
                         velocity.0 += time.0;
                         velocity.1 += time.0;
                         velocity.2 += time.0;
 
-                        group1.each(|position| {
+                        groups.0.each(|position| {
                             position.0 += velocity.0;
                             position.1 += velocity.1;
                             position.2 += velocity.2;
                         });
                     });
 
-                    for velocity in &group2 {
+                    for velocity in &groups.1 {
                         velocity.0 += time.0;
                         velocity.1 += time.0;
                         velocity.2 += time.0;
 
-                        for position in &group1 {
+                        for position in &groups.0 {
                             position.0 += velocity.0;
                             position.1 += velocity.1;
                             position.2 += velocity.2;
