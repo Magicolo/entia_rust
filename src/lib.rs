@@ -7,7 +7,7 @@ pub mod world;
 
 pub use call::*;
 pub use inject::{Defer, Group, Inject};
-pub use query::{Not, Query, With};
+pub use query::{And, Not, Query};
 pub use system::{Runner, Scheduler, System};
 pub use world::{Component, Entity, Resource, Template, World};
 
@@ -45,6 +45,14 @@ mod test {
             scheduler.system(|_: ()| {})
         }
 
+        fn motion(group: Group<(&mut Position, &Velocity)>) {
+            group.each(|(position, velocity)| {
+                position.0 += velocity.0;
+                position.1 += velocity.1;
+                position.2 += velocity.2;
+            });
+        }
+
         let scheduler = Scheduler::default()
             .pipe(physics)
             .pipe(ui)
@@ -58,7 +66,7 @@ mod test {
                 for _ in &group {}
                 for _ in group {}
             })
-            .system(|_: Group<(Entity, With<&Position>)>| {})
+            .system(|_: Group<(Entity, And<&Position>)>| {})
             .system(|_: Group<(Entity, (&Position, &Velocity))>| {})
             // Must be prevented since it breaks the invariants of Rust.
             // - will be allowed at compile-time, but will fail to initialize
@@ -99,7 +107,8 @@ mod test {
                     }
                 },
             )
-            .system(|_: (Defer,)| {});
+            .system(|_: (Defer,)| {})
+            .system(motion);
 
         let world = World::new();
         let mut runner = scheduler.schedule(&world).unwrap();
