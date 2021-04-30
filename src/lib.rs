@@ -1,15 +1,30 @@
 pub mod call;
 pub mod change;
+mod component;
+mod defer;
+mod entity;
+mod group;
 pub mod inject;
+mod internal;
+pub mod message;
 pub mod query;
+mod resource;
+mod state;
 pub mod system;
 pub mod world;
 
 pub use call::*;
-pub use inject::{Defer, Group, Inject};
+pub use component::Component;
+pub use defer::Defer;
+pub use entity::Entity;
+pub use group::Group;
+pub use inject::Inject;
+pub use message::Message;
 pub use query::{And, Not, Query};
+pub use resource::Resource;
+pub use state::State;
 pub use system::{Runner, Scheduler, System};
-pub use world::{Component, Entity, Resource, Template, World};
+pub use world::{Template, World};
 
 #[macro_export]
 macro_rules! recurse {
@@ -107,13 +122,21 @@ mod test {
                     }
                 },
             )
-            .system(|_: (Defer,)| {})
+            .system({
+                struct Private;
+                impl Resource for Private {}
+                |_: (Defer,), mut state: State<usize>, _: &Private| {
+                    *state += 1;
+                }
+            })
             .system(motion);
 
-        let world = World::new();
-        let mut runner = scheduler.schedule(&world).unwrap();
+        let mut world = World::new();
+        let mut runner1 = scheduler.schedule(&mut world).unwrap();
+        let mut runner2 = scheduler.schedule(&mut world).unwrap();
         loop {
-            runner.run();
+            runner1.run(&mut world);
+            runner2.run(&mut world);
         }
     }
 }

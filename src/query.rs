@@ -1,165 +1,22 @@
 use crate::system::*;
 use crate::world::*;
-use std::any::TypeId;
 use std::marker::PhantomData;
-use std::sync::Arc;
 
 pub struct And<Q: Query>(PhantomData<Q>);
 pub struct Not<Q: Query>(PhantomData<Q>);
 
 pub trait Query {
     type State;
-    fn initialize(segment: &Segment) -> Option<Self::State>;
-    fn update(state: &mut Self::State) -> Vec<Dependency>;
-    fn resolve(state: &Self::State);
+    fn initialize(segment: &Segment) -> Option<(Self::State, Vec<Dependency>)>;
     fn get(index: usize, state: &Self::State) -> Self;
-}
-
-impl Query for Entity {
-    type State = Arc<SegmentInner>;
-
-    fn initialize(segment: &Segment) -> Option<Self::State> {
-        Some(segment.inner.clone())
-    }
-
-    fn update(_: &mut Self::State) -> Vec<Dependency> {
-        Vec::new()
-    }
-
-    fn resolve(_: &Self::State) {}
-
-    #[inline]
-    fn get(index: usize, segment: &Self::State) -> Self {
-        segment.entities[index]
-    }
-}
-
-impl<C: Component> Query for &C {
-    type State = (Arc<Store<C>>, Arc<SegmentInner>);
-
-    fn initialize(segment: &Segment) -> Option<Self::State> {
-        let store = segment.store()?;
-        Some((store, segment.inner.clone()))
-    }
-
-    fn update((_, segment): &mut Self::State) -> Vec<Dependency> {
-        vec![Dependency::Read(segment.index, TypeId::of::<C>())]
-    }
-
-    fn resolve(_: &Self::State) {}
-
-    #[inline]
-    fn get(index: usize, (store, _): &Self::State) -> Self {
-        unsafe { store.get(index) }
-    }
-}
-
-impl<C: Component> Query for &mut C {
-    type State = (Arc<Store<C>>, Arc<SegmentInner>);
-
-    fn initialize(segment: &Segment) -> Option<Self::State> {
-        let store = segment.store()?;
-        Some((store, segment.inner.clone()))
-    }
-
-    fn update((_, segment): &mut Self::State) -> Vec<Dependency> {
-        vec![Dependency::Write(segment.index, TypeId::of::<C>())]
-    }
-
-    fn resolve(_: &Self::State) {}
-
-    #[inline]
-    fn get(index: usize, (store, _): &Self::State) -> Self {
-        unsafe { store.get(index) }
-    }
-}
-
-impl<Q: Query> Query for And<Q> {
-    type State = ();
-
-    fn initialize(segment: &Segment) -> Option<Self::State> {
-        match Q::initialize(segment) {
-            Some(_) => Some(()),
-            None => None,
-        }
-    }
-
-    fn update(_: &mut Self::State) -> Vec<Dependency> {
-        Vec::new()
-    }
-
-    fn resolve(_: &Self::State) {}
-
-    #[inline]
-    fn get(_: usize, _: &Self::State) -> Self {
-        And(PhantomData)
-    }
-}
-
-impl<Q: Query> Query for Not<Q> {
-    type State = ();
-
-    fn initialize(segment: &Segment) -> Option<Self::State> {
-        match Q::initialize(segment) {
-            Some(_) => None,
-            None => Some(()),
-        }
-    }
-
-    fn update(_: &mut Self::State) -> Vec<Dependency> {
-        Vec::new()
-    }
-
-    fn resolve(_: &Self::State) {}
-
-    #[inline]
-    fn get(_: usize, _: &Self::State) -> Self {
-        Not(PhantomData)
-    }
-}
-
-impl<Q: Query> Query for Option<Q> {
-    type State = Option<Q::State>;
-
-    fn initialize(segment: &Segment) -> Option<Self::State> {
-        Some(Q::initialize(segment))
-    }
-
-    fn update(state: &mut Self::State) -> Vec<Dependency> {
-        match state {
-            Some(state) => Q::update(state),
-            None => Vec::new(),
-        }
-    }
-
-    fn resolve(state: &Self::State) {
-        match state {
-            Some(state) => Q::resolve(state),
-            None => {}
-        }
-    }
-
-    #[inline]
-    fn get(index: usize, state: &Self::State) -> Self {
-        match state {
-            Some(state) => Some(Q::get(index, state)),
-            None => None,
-        }
-    }
 }
 
 impl Query for () {
     type State = ();
 
-    fn initialize(_: &Segment) -> Option<Self::State> {
-        Some(())
+    fn initialize(_: &Segment) -> Option<(Self::State, Vec<Dependency>)> {
+        Some(((), Vec::new()))
     }
-
-    fn update(_: &mut Self::State) -> Vec<Dependency> {
-        Vec::new()
-    }
-
-    fn resolve(_: &Self::State) {}
 
     #[inline]
     fn get(_: usize, _: &Self::State) -> Self {
@@ -172,18 +29,11 @@ macro_rules! query {
         impl<$($t: Query),+> Query for ($($t),+,) {
             type State = ($($t::State),+,);
 
-            fn initialize(segment: &Segment) -> Option<Self::State> {
-                Some(($($t::initialize(segment)?),+,))
-            }
-
-            fn update(($($p),+,): &mut Self::State) -> Vec<Dependency> {
+            fn initialize(segment: &Segment) -> Option<(Self::State, Vec<Dependency>)> {
                 let mut dependencies = Vec::new();
-                $(dependencies.append(&mut $t::update($p)));+;
-                dependencies
-            }
-
-            fn resolve(($($p),+,): &Self::State) {
-                $($t::resolve($p));+;
+                $(let mut $p = $t::initialize(segment)?);+;
+                $(dependencies.append(&mut $p.1));+;
+                Some((($($p.0),+,), dependencies))
             }
 
             #[inline]
@@ -198,3 +48,54 @@ crate::recurse!(
     query, query1, Q1, query2, Q2, query3, Q3, query4, Q4, query5, Q5, query6, Q6, query7, Q7,
     query8, Q8, query9, Q9, query10, Q10, query11, Q11, query12, Q12
 );
+
+impl<Q: Query> Query for Option<Q> {
+    type State = Option<Q::State>;
+
+    fn initialize(segment: &Segment) -> Option<(Self::State, Vec<Dependency>)> {
+        Some(match Q::initialize(segment) {
+            Some(pair) => (Some(pair.0), pair.1),
+            None => (None, Vec::new()),
+        })
+    }
+
+    #[inline]
+    fn get(index: usize, state: &Self::State) -> Self {
+        match state {
+            Some(state) => Some(Q::get(index, state)),
+            None => None,
+        }
+    }
+}
+
+impl<Q: Query> Query for And<Q> {
+    type State = ();
+
+    fn initialize(segment: &Segment) -> Option<(Self::State, Vec<Dependency>)> {
+        match Q::initialize(segment) {
+            Some(_) => Some(((), Vec::new())),
+            None => None,
+        }
+    }
+
+    #[inline]
+    fn get(_: usize, _: &Self::State) -> Self {
+        And(PhantomData)
+    }
+}
+
+impl<Q: Query> Query for Not<Q> {
+    type State = ();
+
+    fn initialize(segment: &Segment) -> Option<(Self::State, Vec<Dependency>)> {
+        match Q::initialize(segment) {
+            Some(_) => None,
+            None => Some(((), Vec::new())),
+        }
+    }
+
+    #[inline]
+    fn get(_: usize, _: &Self::State) -> Self {
+        Not(PhantomData)
+    }
+}

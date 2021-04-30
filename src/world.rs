@@ -1,10 +1,11 @@
+use crate::*;
 use std::any::Any;
 use std::any::TypeId;
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
-use std::sync::atomic::AtomicPtr;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 /*
 SYSTEMS
@@ -35,39 +36,30 @@ DEPENDENCIES
 
 pub struct Template<T>(T);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Entity {
+#[derive(Default)]
+pub(crate) struct Datum {
     index: u32,
-    generation: u32,
+    segment: u32,
 }
-
-pub trait Resource: Send + 'static {}
-pub trait Component: Send + 'static {}
 
 #[derive(Default)]
 pub struct World {
-    pub(crate) inner: Arc<WorldInner>,
+    pub(crate) free: Mutex<Vec<Entity>>,
+    pub(crate) last: AtomicUsize,
+    pub(crate) capacity: AtomicUsize,
+    pub(crate) data: Store<Datum>,
+    pub(crate) segments: Vec<Segment>,
 }
 
+#[derive(Default)]
 pub struct Segment {
-    pub(crate) inner: Arc<SegmentInner>,
+    pub(crate) index: usize,
+    pub(crate) entities: Arc<Store<Entity>>,
+    pub(crate) stores: HashMap<TypeId, Arc<dyn Any + Send + Sync + 'static>>,
 }
 
 #[derive(Default)]
-pub struct WorldInner {
-    pub entities: AtomicPtr<Entity>,
-    pub last: AtomicUsize,
-    pub segments: Vec<Segment>,
-}
-
-#[derive(Default)]
-pub struct SegmentInner {
-    pub index: usize,
-    pub entities: Vec<Entity>,
-    pub stores: HashMap<TypeId, Arc<dyn Any + Send + Sync + 'static>>,
-}
-
-pub struct Store<T>(UnsafeCell<Vec<T>>);
+pub struct Store<T>(pub(crate) UnsafeCell<Vec<T>>);
 unsafe impl<T> Sync for Store<T> {}
 
 impl World {
@@ -75,26 +67,52 @@ impl World {
         Self::default()
     }
 
-    pub fn find_segment(&self, _types: &[TypeId]) -> Option<Segment> {
-        todo!()
+    pub fn segment(&mut self, types: &[TypeId]) -> &Segment {
+        let mut index = self.segments.len();
+        for i in 0..self.segments.len() {
+            let segment = &self.segments[i];
+            if segment.stores.len() == types.len()
+                && types
+                    .iter()
+                    .all(|value| segment.stores.get(value).is_some())
+            {
+                index = i;
+                break;
+            }
+        }
+
+        if index == self.segments.len() {
+            self.segments.push(Segment::default());
+        }
+        &self.segments[index]
+    }
+
+    pub fn reserve(&self, entities: &mut [Entity]) {
+        // let mut a = <[Entity; 32]>::default();
+        // self.reserve(&mut a);
+        // let mut b = vec![Entity::default(); 32];
     }
 }
 
 impl Segment {
     pub fn store<T: Send + 'static>(&self) -> Option<Arc<Store<T>>> {
-        self.inner
-            .stores
-            .get(&TypeId::of::<T>())?
-            .clone()
-            .downcast()
-            .ok()
+        self.stores.get(&TypeId::of::<T>())?.clone().downcast().ok()
     }
 }
 
 impl<T> Store<T> {
-    // TODO: The "<'a>" is highly unsafe. Is there a less unsafe workaround?
+    // TODO: The "<'a>" is highly unsafe (could be resolved as 'static). Is there a less unsafe workaround?
     #[inline]
-    pub unsafe fn get<'a>(&self, index: usize) -> &'a mut T {
-        &mut (&mut *self.0.get())[index]
+    pub unsafe fn at<'a>(&self, index: usize) -> &'a mut T {
+        &mut self.get()[index]
+    }
+
+    #[inline]
+    pub unsafe fn get<'a>(&self) -> &'a mut Vec<T> {
+        &mut *self.0.get()
+    }
+
+    pub unsafe fn count(&self) -> usize {
+        self.get().len()
     }
 }

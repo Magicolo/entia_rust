@@ -1,179 +1,29 @@
 use crate::system::*;
 use crate::world::*;
-use crate::*;
-use std::any::TypeId;
-use std::sync::Arc;
 
 pub trait Inject {
     type State;
-    fn initialize(world: &World) -> Option<Self::State>;
-    fn update(state: &mut Self::State) -> Vec<Dependency>;
-    fn resolve(state: &Self::State);
-    fn get(state: &Self::State) -> Self;
-}
-
-pub struct Group<Q: Query> {
-    queries: Arc<Vec<(Q::State, Arc<SegmentInner>)>>,
-    world: Arc<WorldInner>,
-}
-pub struct GroupIterator<Q: Query> {
-    segment: usize,
-    index: usize,
-    group: Group<Q>,
-}
-
-pub struct Defer {}
-
-impl<Q: Query> Group<Q> {
-    #[inline]
-    pub fn each<O>(&self, each: impl Fn(Q) -> O) {
-        for (query, segment) in self.queries.iter() {
-            for i in 0..segment.entities.len() {
-                each(Q::get(i, query));
-            }
-        }
-    }
-}
-
-impl<Q: Query> Clone for Group<Q> {
-    fn clone(&self) -> Self {
-        Group {
-            world: self.world.clone(),
-            queries: self.queries.clone(),
-        }
-    }
-}
-
-impl<Q: Query> IntoIterator for Group<Q> {
-    type Item = Q;
-    type IntoIter = GroupIterator<Q>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        GroupIterator {
-            segment: 0,
-            index: 0,
-            group: self,
-        }
-    }
-}
-
-impl<Q: Query> IntoIterator for &Group<Q> {
-    type Item = Q;
-    type IntoIter = GroupIterator<Q>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        GroupIterator {
-            segment: 0,
-            index: 0,
-            group: self.clone(),
-        }
-    }
-}
-
-impl<Q: Query> Iterator for GroupIterator<Q> {
-    type Item = Q;
-
-    #[inline]
-    fn next(&mut self) -> Option<Self::Item> {
-        while let Some((query, segment)) = self.group.queries.get(self.segment) {
-            if self.index < segment.entities.len() {
-                let query = Q::get(self.index, query);
-                self.index += 1;
-                return Some(query);
-            } else {
-                self.segment += 1;
-                self.index = 0;
-            }
-        }
-        None
-    }
-}
-
-impl Defer {
-    pub fn create<T>(&self, _entities: &mut [Entity], _template: Template<T>) {}
-    pub fn destroy(&self, _entities: &[Entity]) {}
-    pub fn add<C: Component>(&self, _entity: Entity, _component: C) {}
-    pub fn remove<C: Component>(&self, _entity: Entity) {}
-}
-
-impl Inject for Defer {
-    type State = ();
-
-    fn initialize(_: &World) -> Option<Self::State> {
-        Some(())
-    }
-
-    fn update(_: &mut Self::State) -> Vec<Dependency> {
-        Vec::new()
-    }
-
-    fn resolve(_: &Self::State) {
-        todo!()
-    }
-
-    #[inline]
-    fn get(_: &Self::State) -> Self {
-        todo!()
-    }
-}
-
-impl<R: Resource> Inject for &R {
-    type State = (Arc<Store<R>>, Arc<SegmentInner>);
-
-    fn initialize(world: &World) -> Option<Self::State> {
-        let segment = world.find_segment(&[TypeId::of::<R>()])?;
-        let store = segment.store()?;
-        Some((store, segment.inner.clone()))
-    }
-
-    fn update((_, segment): &mut Self::State) -> Vec<Dependency> {
-        vec![Dependency::Read(segment.index, TypeId::of::<R>())]
-    }
-
-    fn resolve(_: &Self::State) {}
-
-    #[inline]
-    fn get((store, _): &Self::State) -> Self {
-        unsafe { store.get(0) }
-    }
-}
-
-impl<R: Resource> Inject for &mut R {
-    type State = (Arc<Store<R>>, Arc<SegmentInner>);
-
-    fn initialize(world: &World) -> Option<Self::State> {
-        let segment = world.find_segment(&[TypeId::of::<R>()])?;
-        let store = segment.store()?;
-        Some((store, segment.inner.clone()))
-    }
-
-    fn update((_, segment): &mut Self::State) -> Vec<Dependency> {
-        vec![Dependency::Write(segment.index, TypeId::of::<R>())]
-    }
-
-    fn resolve(_: &Self::State) {}
-
-    #[inline]
-    fn get((store, _): &Self::State) -> Self {
-        unsafe { &mut *store.get(0) }
-    }
+    fn initialize(world: &mut World) -> Option<Self::State>;
+    fn update(state: &mut Self::State, world: &mut World) -> Vec<Dependency>;
+    fn resolve(state: &Self::State, world: &mut World);
+    fn get(state: &Self::State, world: &World) -> Self;
 }
 
 impl Inject for () {
     type State = ();
 
-    fn initialize(_: &World) -> Option<Self::State> {
+    fn initialize(_: &mut World) -> Option<Self::State> {
         Some(())
     }
 
-    fn update(_: &mut Self::State) -> Vec<Dependency> {
+    fn update(_: &mut Self::State, _: &mut World) -> Vec<Dependency> {
         Vec::new()
     }
 
-    fn resolve(_: &Self::State) {}
+    fn resolve(_: &Self::State, _: &mut World) {}
 
     #[inline]
-    fn get(_: &Self::State) -> Self {
+    fn get(_: &Self::State, _: &World) -> Self {
         ()
     }
 }
@@ -183,23 +33,23 @@ macro_rules! inject {
         impl<$($t: Inject),+> Inject for ($($t),+,) {
             type State = ($($t::State),+,);
 
-            fn initialize(world: &World) -> Option<Self::State> {
+            fn initialize(world: &mut World) -> Option<Self::State> {
                 Some(($($t::initialize(world)?),+,))
             }
 
-            fn update(($($p),+,): &mut Self::State) -> Vec<Dependency> {
+            fn update(($($p),+,): &mut Self::State, world: &mut World) -> Vec<Dependency> {
                 let mut dependencies = Vec::new();
-                $(dependencies.append(&mut $t::update($p)));+;
+                $(dependencies.append(&mut $t::update($p, world)));+;
                 dependencies
             }
 
-            fn resolve(($($p),+,): &Self::State) {
-                $($t::resolve($p));+;
+            fn resolve(($($p),+,): &Self::State, world: &mut World) {
+                $($t::resolve($p, world));+;
             }
 
             #[inline]
-            fn get(($($p),+,): &Self::State) -> Self {
-                ($($t::get($p)),+,)
+            fn get(($($p),+,): &Self::State, world: &World) -> Self {
+                ($($t::get($p, world)),+,)
             }
         }
     };
@@ -209,49 +59,3 @@ crate::recurse!(
     inject, inject1, I1, inject2, I2, inject3, I3, inject4, I4, inject5, I5, inject6, I6, inject7,
     I7, inject8, I8, inject9, I9, inject10, I10, inject11, I11, inject12, I12
 );
-
-impl<Q: Query> Inject for Group<Q> {
-    type State = (
-        usize,
-        Arc<Vec<(Q::State, Arc<SegmentInner>)>>,
-        Arc<WorldInner>,
-    );
-
-    fn initialize(world: &World) -> Option<Self::State> {
-        Some((0, Arc::new(Vec::new()), world.inner.clone()))
-    }
-
-    fn update((index, queries, world): &mut Self::State) -> Vec<Dependency> {
-        // TODO: Ensure that a user cannot persist a 'Group<Q>' outside of the execution of a system.
-        // - Otherwise, 'Arc::get_mut' will fail...
-        let mut dependencies = Vec::new();
-        if let Some(queries) = Arc::get_mut(queries) {
-            while let Some(segment) = world.segments.get(*index) {
-                if let Some(query) = Q::initialize(&segment) {
-                    queries.push((query, segment.inner.clone()))
-                }
-                *index += 1;
-            }
-
-            for (query, segment) in queries {
-                dependencies.push(Dependency::Read(segment.index, TypeId::of::<Entity>()));
-                dependencies.append(&mut Q::update(query));
-            }
-        }
-        dependencies
-    }
-
-    fn resolve((_, queries, _): &Self::State) {
-        for (query, _) in queries.iter() {
-            Q::resolve(query);
-        }
-    }
-
-    #[inline]
-    fn get((_, queries, world): &Self::State) -> Self {
-        Group {
-            queries: queries.clone(),
-            world: world.clone(),
-        }
-    }
-}
