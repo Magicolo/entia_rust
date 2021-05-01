@@ -83,14 +83,14 @@ mod test {
             })
             .system(|_: Group<(Entity, And<&Position>)>| {})
             .system(|_: Group<(Entity, (&Position, &Velocity))>| {})
-            // Must be prevented since it breaks the invariants of Rust.
-            // - will be allowed at compile-time, but will fail to initialize
             .system(|group: Group<(&mut Position, &mut Position)>| {
                 group.each(|(_1, _2)| {});
                 group.each(|_12| {});
                 for _12 in &group {}
                 for (_1, _2) in group {}
             })
+            // FIX: Oh noes...
+            .system(|_: &'static Time| {})
             .system(|_: (&Time, &Physics)| {})
             .system(|_: (&Time, Group<Option<&Position>>)| {})
             .synchronize()

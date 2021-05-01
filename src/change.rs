@@ -13,7 +13,3 @@ impl<T: PartialEq> Change for T {
         }
     }
 }
-
-pub trait Call<I, O> {
-    fn call(&self, input: I) -> O;
-}

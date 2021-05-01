@@ -13,12 +13,106 @@ pub enum Dependency {
     Write(usize, TypeId),
 }
 
-pub struct Runner(Box<dyn FnMut(&mut World)>);
+pub struct Runner(Vec<Vec<Run>>);
+
+impl Runner {
+    pub fn run(&mut self, world: &mut World) {
+        let count = world.segments.len();
+        let mut changed = false;
+        for runs in self.0.iter_mut() {
+            if changed {
+                for run in runs {
+                    (run.update)(&mut run.state, world);
+                    (run.run)(&run.state, world);
+                    (run.resolve)(&mut run.state, world);
+                }
+            } else if runs.len() == 1 {
+                let run = &mut runs[0];
+                (run.run)(&run.state, world);
+                (run.resolve)(&mut run.state, world);
+                changed |= count < world.segments.len();
+            } else {
+                use rayon::prelude::*;
+                runs.par_iter().for_each(|run| (run.run)(&run.state, world));
+                runs.iter_mut()
+                    .for_each(|run| (run.resolve)(&mut run.state, world));
+                changed |= count < world.segments.len();
+            }
+        }
+
+        if changed {
+            self.0 = Self::schedule(self.0.drain(..).flatten(), world).unwrap();
+        }
+    }
+
+    fn conflicts(
+        dependencies: &Vec<Dependency>,
+        reads: &mut HashSet<(usize, TypeId)>,
+        writes: &mut HashSet<(usize, TypeId)>,
+    ) -> bool {
+        for dependency in dependencies {
+            match dependency {
+                Dependency::Unknown => return true,
+                Dependency::Read(segment, store) => {
+                    let pair = (*segment, *store);
+                    if writes.contains(&pair) {
+                        return true;
+                    }
+                    reads.insert(pair);
+                }
+                Dependency::Write(segment, store) => {
+                    let pair = (*segment, *store);
+                    if reads.contains(&pair) || writes.contains(&pair) {
+                        return true;
+                    }
+                    writes.insert(pair);
+                }
+            }
+        }
+        false
+    }
+
+    fn schedule(runs: impl Iterator<Item = Run>, world: &mut World) -> Option<Vec<Vec<Run>>> {
+        let mut pairs = Vec::new();
+        let mut sequence = Vec::new();
+        let mut parallel = Vec::new();
+        let mut reads = HashSet::new();
+        let mut writes = HashSet::new();
+
+        for mut run in runs {
+            let dependencies = (run.update)(&mut run.state, world);
+            if Self::conflicts(&dependencies, &mut reads, &mut writes) {
+                return None;
+            }
+            reads.clear();
+            writes.clear();
+            pairs.push((run, dependencies));
+        }
+
+        for (run, dependencies) in pairs {
+            if Self::conflicts(&dependencies, &mut reads, &mut writes) {
+                if parallel.len() > 0 {
+                    sequence.push(std::mem::replace(&mut parallel, Vec::new()));
+                }
+                reads.clear();
+                writes.clear();
+            } else {
+                parallel.push(run);
+            }
+        }
+
+        if parallel.len() > 0 {
+            sequence.push(parallel);
+        }
+        Some(sequence)
+    }
+}
+
 pub struct Run {
     state: Box<dyn Any>,
-    update: Box<dyn Fn(&mut dyn Any, &mut World) -> Vec<Dependency>>,
-    resolve: Box<dyn Fn(&mut dyn Any, &mut World)>,
-    run: Box<dyn Fn(&dyn Any, &World) + Sync>,
+    update: fn(&mut dyn Any, &mut World) -> Vec<Dependency>,
+    resolve: fn(&mut dyn Any, &mut World),
+    run: fn(&dyn Any, &World),
 }
 
 #[derive(Default, Clone)]
@@ -53,12 +147,6 @@ impl<I: Inject, O, C: Call<I, O>> System<State<I::State, (I, O)>> for C {
 }
 
 unsafe impl Sync for Run {}
-impl Runner {
-    #[inline]
-    pub fn run(&mut self, world: &mut World) {
-        self.0(world)
-    }
-}
 
 impl Scheduler {
     pub fn new() -> Self {
@@ -69,23 +157,27 @@ impl Scheduler {
         pipe(self)
     }
 
-    pub fn system<S: System<impl Send + 'static> + Sync + Send + 'static>(
+    pub fn system<T: Send + 'static, S: System<T> + Sync + Send + 'static>(
         &self,
         system: S,
     ) -> Self {
         let mut scheduler = self.clone();
         let system = Arc::new(system);
         scheduler.schedules.push(Arc::new(move |world| {
-            let system = system.clone();
-            Some(Run {
-                state: Box::new(S::initialize(world)?),
-                update: Box::new(move |state, world| {
-                    S::update(state.downcast_mut().unwrap(), world)
-                }),
-                resolve: Box::new(move |state, world| {
-                    S::resolve(state.downcast_mut().unwrap(), world);
-                }),
-                run: Box::new(move |state, world| system.run(state.downcast_ref().unwrap(), world)),
+            S::initialize(world).map(|state| Run {
+                state: Box::new((system.clone(), state)),
+                update: |state, world| {
+                    let (_, state) = state.downcast_mut::<(Arc<S>, T)>().unwrap();
+                    S::update(state, world)
+                },
+                resolve: |state, world| {
+                    let (_, state) = state.downcast_mut::<(Arc<S>, T)>().unwrap();
+                    S::resolve(state, world)
+                },
+                run: |state, world| {
+                    let (system, state) = state.downcast_ref::<(Arc<S>, T)>().unwrap();
+                    system.run(state, world)
+                },
             })
         }));
         scheduler
@@ -96,110 +188,20 @@ impl Scheduler {
         scheduler.schedules.push(Arc::new(|_| {
             Some(Run {
                 state: Box::new(()),
-                update: Box::new(|_, _| vec![Dependency::Unknown]),
-                run: Box::new(|_, _| {}),
-                resolve: Box::new(|_, _| {}),
+                update: |_, _| vec![Dependency::Unknown],
+                run: |_, _| {},
+                resolve: |_, _| {},
             })
         }));
         scheduler
     }
 
     pub fn schedule(&self, world: &mut World) -> Option<Runner> {
-        fn conflicts(
-            dependencies: &Vec<Dependency>,
-            reads: &mut HashSet<(usize, TypeId)>,
-            writes: &mut HashSet<(usize, TypeId)>,
-        ) -> bool {
-            for dependency in dependencies {
-                match dependency {
-                    Dependency::Unknown => return true,
-                    Dependency::Read(segment, store) => {
-                        let pair = (*segment, *store);
-                        if writes.contains(&pair) {
-                            return true;
-                        }
-                        reads.insert(pair);
-                    }
-                    Dependency::Write(segment, store) => {
-                        let pair = (*segment, *store);
-                        if reads.contains(&pair) || writes.contains(&pair) {
-                            return true;
-                        }
-                        writes.insert(pair);
-                    }
-                }
-            }
-            false
-        }
-
-        fn schedule(runs: impl Iterator<Item = Run>, world: &mut World) -> Option<Vec<Vec<Run>>> {
-            let mut pairs = Vec::new();
-            let mut sequence = Vec::new();
-            let mut parallel = Vec::new();
-            let mut reads = HashSet::new();
-            let mut writes = HashSet::new();
-
-            for mut run in runs {
-                let dependencies = (run.update)(&mut run.state, world);
-                if conflicts(&dependencies, &mut reads, &mut writes) {
-                    return None;
-                }
-                reads.clear();
-                writes.clear();
-                pairs.push((run, dependencies));
-            }
-
-            for (run, dependencies) in pairs {
-                if conflicts(&dependencies, &mut reads, &mut writes) {
-                    if parallel.len() > 0 {
-                        sequence.push(std::mem::replace(&mut parallel, Vec::new()));
-                    }
-                    reads.clear();
-                    writes.clear();
-                } else {
-                    parallel.push(run);
-                }
-            }
-
-            if parallel.len() > 0 {
-                sequence.push(parallel);
-            }
-            Some(sequence)
-        }
-
         let mut runs = Vec::new();
         for schedule in self.schedules.iter() {
             runs.push(schedule(world)?);
         }
-        let mut sequence = schedule(runs.drain(..), world)?;
         // TODO: return a 'Result<Runner<'a>, Error>'
-        Some(Runner(Box::new(move |world| {
-            let count = world.segments.len();
-            let mut changed = false;
-            for runs in sequence.iter_mut() {
-                if changed {
-                    for run in runs {
-                        (run.update)(&mut run.state, world);
-                        (run.run)(&run.state, world);
-                        (run.resolve)(&mut run.state, world);
-                    }
-                } else if runs.len() == 1 {
-                    let run = &mut runs[0];
-                    (run.run)(&run.state, world);
-                    (run.resolve)(&mut run.state, world);
-                    changed |= count < world.segments.len();
-                } else {
-                    use rayon::prelude::*;
-                    runs.par_iter().for_each(|run| (run.run)(&run.state, world));
-                    runs.iter_mut()
-                        .for_each(|run| (run.resolve)(&mut run.state, world));
-                    changed |= count < world.segments.len();
-                }
-            }
-
-            if changed {
-                sequence = schedule(sequence.drain(..).flatten(), world).unwrap();
-            }
-        })))
+        Some(Runner(Runner::schedule(runs.drain(..), world)?))
     }
 }
