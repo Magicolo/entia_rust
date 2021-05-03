@@ -17,7 +17,7 @@ impl Query for Entity {
     }
 
     #[inline]
-    fn get(index: usize, store: &Self::State) -> Self {
+    fn query(index: usize, store: &Self::State) -> Self {
         unsafe { *store.at(index) }
     }
 }

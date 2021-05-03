@@ -3,7 +3,6 @@ use crate::*;
 use std::any::Any;
 use std::any::TypeId;
 use std::collections::HashSet;
-use std::marker::PhantomData;
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -13,35 +12,39 @@ pub enum Dependency {
     Write(usize, TypeId),
 }
 
-pub struct Runner(Vec<Vec<Run>>);
+pub struct Runner(Vec<Vec<System>>, usize);
 
 impl Runner {
     pub fn run(&mut self, world: &mut World) {
         let count = world.segments.len();
+        if count != self.1 {
+            self.0 = Self::schedule(self.0.drain(..).flatten(), world).unwrap();
+            self.1 = count;
+        }
+
         let mut changed = false;
-        for runs in self.0.iter_mut() {
+        for systems in self.0.iter_mut() {
             if changed {
-                for run in runs {
-                    (run.update)(&mut run.state, world);
-                    (run.run)(&run.state, world);
-                    (run.resolve)(&mut run.state, world);
+                for system in systems {
+                    (system.update)(&mut system.state, world);
+                    (system.run)(&system.state, world);
+                    (system.resolve)(&mut system.state, world);
                 }
-            } else if runs.len() == 1 {
-                let run = &mut runs[0];
-                (run.run)(&run.state, world);
-                (run.resolve)(&mut run.state, world);
+            } else if systems.len() == 1 {
+                let system = &mut systems[0];
+                (system.run)(&system.state, world);
+                (system.resolve)(&mut system.state, world);
                 changed |= count < world.segments.len();
             } else {
                 use rayon::prelude::*;
-                runs.par_iter().for_each(|run| (run.run)(&run.state, world));
-                runs.iter_mut()
-                    .for_each(|run| (run.resolve)(&mut run.state, world));
+                systems
+                    .par_iter()
+                    .for_each(|system| (system.run)(&system.state, world));
+                systems
+                    .iter_mut()
+                    .for_each(|system| (system.resolve)(&mut system.state, world));
                 changed |= count < world.segments.len();
             }
-        }
-
-        if changed {
-            self.0 = Self::schedule(self.0.drain(..).flatten(), world).unwrap();
         }
     }
 
@@ -72,24 +75,27 @@ impl Runner {
         false
     }
 
-    fn schedule(runs: impl Iterator<Item = Run>, world: &mut World) -> Option<Vec<Vec<Run>>> {
+    fn schedule(
+        systems: impl Iterator<Item = System>,
+        world: &mut World,
+    ) -> Option<Vec<Vec<System>>> {
         let mut pairs = Vec::new();
         let mut sequence = Vec::new();
         let mut parallel = Vec::new();
         let mut reads = HashSet::new();
         let mut writes = HashSet::new();
 
-        for mut run in runs {
-            let dependencies = (run.update)(&mut run.state, world);
+        for mut system in systems {
+            let dependencies = (system.update)(&mut system.state, world);
             if Self::conflicts(&dependencies, &mut reads, &mut writes) {
                 return None;
             }
             reads.clear();
             writes.clear();
-            pairs.push((run, dependencies));
+            pairs.push((system, dependencies));
         }
 
-        for (run, dependencies) in pairs {
+        for (system, dependencies) in pairs {
             if Self::conflicts(&dependencies, &mut reads, &mut writes) {
                 if parallel.len() > 0 {
                     sequence.push(std::mem::replace(&mut parallel, Vec::new()));
@@ -97,7 +103,7 @@ impl Runner {
                 reads.clear();
                 writes.clear();
             } else {
-                parallel.push(run);
+                parallel.push(system);
             }
         }
 
@@ -108,45 +114,57 @@ impl Runner {
     }
 }
 
-pub struct Run {
+pub struct System {
     state: Box<dyn Any>,
     update: fn(&mut dyn Any, &mut World) -> Vec<Dependency>,
     resolve: fn(&mut dyn Any, &mut World),
     run: fn(&dyn Any, &World),
 }
 
+pub trait IntoSystem<P> {
+    fn system(self, world: &mut World) -> Option<System>;
+}
+
 #[derive(Default, Clone)]
 pub struct Scheduler {
-    schedules: Vec<Arc<dyn Fn(&mut World) -> Option<Run>>>,
+    schedules: Vec<Arc<dyn Fn(&mut World) -> Option<System>>>,
 }
 
-pub trait System<S> {
-    fn initialize(world: &mut World) -> Option<S>;
-    fn update(state: &mut S, world: &mut World) -> Vec<Dependency>;
-    fn resolve(state: &S, world: &mut World);
-    fn run(&self, state: &S, world: &World);
-}
+unsafe impl Sync for System {}
 
-type State<T, P> = (T, PhantomData<&'static P>);
-impl<I: Inject, O, C: Call<I, O>> System<State<I::State, (I, O)>> for C {
-    fn initialize(world: &mut World) -> Option<State<I::State, (I, O)>> {
-        Some((I::initialize(world)?, PhantomData))
-    }
-
-    fn update((state, _): &mut State<I::State, (I, O)>, world: &mut World) -> Vec<Dependency> {
-        I::update(state, world)
-    }
-
-    fn resolve((inject, _): &State<I::State, (I, O)>, world: &mut World) {
-        I::resolve(inject, world);
-    }
-
-    fn run(&self, (state, _): &State<I::State, (I, O)>, world: &World) {
-        self.call(I::get(state, world));
+impl<P> IntoSystem<P> for System {
+    fn system(self, _: &mut World) -> Option<System> {
+        Some(self)
     }
 }
 
-unsafe impl Sync for Run {}
+impl<P, S: IntoSystem<S> + Clone> IntoSystem<P> for &S {
+    fn system(self, world: &mut World) -> Option<System> {
+        self.clone().system(world)
+    }
+}
+
+impl<I: Inject + 'static, O, C: Call<I, O> + 'static> IntoSystem<(I, O)> for Arc<C> {
+    fn system(self, world: &mut World) -> Option<System> {
+        I::initialize(world).map(|state| System {
+            state: Box::new((self, state)),
+            update: |state, world| {
+                let (_, state) = state.downcast_mut::<(Arc<C>, I::State)>().unwrap();
+                I::update(state, world)
+            },
+            resolve: |state, world| {
+                let (_, state) = state.downcast_mut::<(Arc<C>, I::State)>().unwrap();
+                I::resolve(state, world)
+            },
+            run: |state, world| {
+                // let (call, state) =
+                //     unsafe { &*(state as *const dyn Any as *const (Arc<C>, I::State)) };
+                let (call, state) = state.downcast_ref::<(Arc<C>, I::State)>().unwrap();
+                call.call(I::inject(state, world));
+            },
+        })
+    }
+}
 
 impl Scheduler {
     pub fn new() -> Self {
@@ -157,36 +175,22 @@ impl Scheduler {
         pipe(self)
     }
 
-    pub fn system<T: Send + 'static, S: System<T> + Sync + Send + 'static>(
-        &self,
-        system: S,
-    ) -> Self {
+    pub fn system<P, S: 'static>(&self, system: S) -> Self
+    where
+        Arc<S>: IntoSystem<P>,
+    {
         let mut scheduler = self.clone();
         let system = Arc::new(system);
-        scheduler.schedules.push(Arc::new(move |world| {
-            S::initialize(world).map(|state| Run {
-                state: Box::new((system.clone(), state)),
-                update: |state, world| {
-                    let (_, state) = state.downcast_mut::<(Arc<S>, T)>().unwrap();
-                    S::update(state, world)
-                },
-                resolve: |state, world| {
-                    let (_, state) = state.downcast_mut::<(Arc<S>, T)>().unwrap();
-                    S::resolve(state, world)
-                },
-                run: |state, world| {
-                    let (system, state) = state.downcast_ref::<(Arc<S>, T)>().unwrap();
-                    system.run(state, world)
-                },
-            })
-        }));
+        scheduler
+            .schedules
+            .push(Arc::new(move |world| system.clone().system(world)));
         scheduler
     }
 
     pub fn synchronize(&self) -> Self {
         let mut scheduler = self.clone();
         scheduler.schedules.push(Arc::new(|_| {
-            Some(Run {
+            Some(System {
                 state: Box::new(()),
                 update: |_, _| vec![Dependency::Unknown],
                 run: |_, _| {},
@@ -202,6 +206,6 @@ impl Scheduler {
             runs.push(schedule(world)?);
         }
         // TODO: return a 'Result<Runner<'a>, Error>'
-        Some(Runner(Runner::schedule(runs.drain(..), world)?))
+        Some(Runner(Runner::schedule(runs.drain(..), world)?, 0))
     }
 }

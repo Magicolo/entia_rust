@@ -17,7 +17,7 @@ impl<Q: Query> Group<Q> {
     pub fn each<O>(&self, each: impl Fn(Q) -> O) {
         for (query, store) in self.queries.iter() {
             for i in 0..unsafe { store.count() } {
-                each(Q::get(i, query));
+                each(Q::query(i, query));
             }
         }
     }
@@ -64,7 +64,7 @@ impl<Q: Query> Iterator for GroupIterator<Q> {
     fn next(&mut self) -> Option<Self::Item> {
         while let Some((query, store)) = self.group.queries.get(self.segment) {
             if self.index < unsafe { store.count() } {
-                let query = Q::get(self.index, query);
+                let query = Q::query(self.index, query);
                 self.index += 1;
                 return Some(query);
             } else {
@@ -108,7 +108,7 @@ impl<Q: Query> Inject for Group<Q> {
     fn resolve(_: &Self::State, _: &mut World) {}
 
     #[inline]
-    fn get((_, _, queries): &Self::State, _: &World) -> Self {
+    fn inject((_, _, queries): &Self::State, _: &World) -> Self {
         Group {
             queries: queries.clone(),
         }

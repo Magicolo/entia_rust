@@ -15,7 +15,7 @@ impl<M: Message> Inject for Emit<M> {
         todo!()
     }
     fn resolve(state: &Self::State, world: &mut World) {}
-    fn get(state: &Self::State, world: &World) -> Self {
+    fn inject(state: &Self::State, world: &World) -> Self {
         todo!()
     }
 }
@@ -29,7 +29,7 @@ impl<M: Message> Inject for Receive<M> {
         todo!()
     }
     fn resolve(state: &Self::State, world: &mut World) {}
-    fn get(state: &Self::State, world: &World) -> Self {
+    fn inject(state: &Self::State, world: &World) -> Self {
         todo!()
     }
 }

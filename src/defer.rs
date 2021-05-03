@@ -36,7 +36,7 @@ impl Inject for Defer<'_> {
     }
 
     #[inline]
-    fn get(_: &Self::State, world: &World) -> Self {
+    fn inject(_: &Self::State, world: &World) -> Self {
         todo!()
         // Self { world }
     }

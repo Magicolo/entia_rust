@@ -21,7 +21,7 @@ impl<R: Resource> Inject for &R {
     fn resolve(_: &Self::State, _: &mut World) {}
 
     #[inline]
-    fn get((store, _): &Self::State, _: &World) -> Self {
+    fn inject((store, _): &Self::State, _: &World) -> Self {
         unsafe { store.at(0) }
     }
 }
@@ -41,7 +41,7 @@ impl<R: Resource> Inject for &mut R {
     fn resolve(_: &Self::State, _: &mut World) {}
 
     #[inline]
-    fn get((store, _): &Self::State, _: &World) -> Self {
+    fn inject((store, _): &Self::State, _: &World) -> Self {
         unsafe { &mut *store.at(0) }
     }
 }

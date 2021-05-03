@@ -8,7 +8,7 @@ pub struct Not<Q: Query>(PhantomData<Q>);
 pub trait Query {
     type State;
     fn initialize(segment: &Segment) -> Option<(Self::State, Vec<Dependency>)>;
-    fn get(index: usize, state: &Self::State) -> Self;
+    fn query(index: usize, state: &Self::State) -> Self;
 }
 
 impl Query for () {
@@ -19,7 +19,7 @@ impl Query for () {
     }
 
     #[inline]
-    fn get(_: usize, _: &Self::State) -> Self {
+    fn query(_: usize, _: &Self::State) -> Self {
         ()
     }
 }
@@ -37,8 +37,8 @@ macro_rules! query {
             }
 
             #[inline]
-            fn get(index: usize, ($($p),+,): &Self::State) -> Self {
-                ($($t::get(index, $p)),+,)
+            fn query(index: usize, ($($p),+,): &Self::State) -> Self {
+                ($($t::query(index, $p)),+,)
             }
         }
     };
@@ -60,9 +60,9 @@ impl<Q: Query> Query for Option<Q> {
     }
 
     #[inline]
-    fn get(index: usize, state: &Self::State) -> Self {
+    fn query(index: usize, state: &Self::State) -> Self {
         match state {
-            Some(state) => Some(Q::get(index, state)),
+            Some(state) => Some(Q::query(index, state)),
             None => None,
         }
     }
@@ -79,7 +79,7 @@ impl<Q: Query> Query for And<Q> {
     }
 
     #[inline]
-    fn get(_: usize, _: &Self::State) -> Self {
+    fn query(_: usize, _: &Self::State) -> Self {
         And(PhantomData)
     }
 }
@@ -95,7 +95,7 @@ impl<Q: Query> Query for Not<Q> {
     }
 
     #[inline]
-    fn get(_: usize, _: &Self::State) -> Self {
+    fn query(_: usize, _: &Self::State) -> Self {
         Not(PhantomData)
     }
 }

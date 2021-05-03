@@ -17,7 +17,7 @@ impl<C: Component> Query for &C {
     }
 
     #[inline]
-    fn get(index: usize, store: &Self::State) -> Self {
+    fn query(index: usize, store: &Self::State) -> Self {
         unsafe { store.at(index) }
     }
 }
@@ -33,7 +33,7 @@ impl<C: Component> Query for &mut C {
     }
 
     #[inline]
-    fn get(index: usize, store: &Self::State) -> Self {
+    fn query(index: usize, store: &Self::State) -> Self {
         unsafe { store.at(index) }
     }
 }

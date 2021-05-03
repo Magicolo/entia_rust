@@ -23,7 +23,7 @@ pub use message::Message;
 pub use query::{And, Not, Query};
 pub use resource::Resource;
 pub use state::State;
-pub use system::{Runner, Scheduler, System};
+pub use system::{Runner, Scheduler};
 pub use world::{Template, World};
 
 #[macro_export]

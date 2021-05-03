@@ -35,7 +35,7 @@ impl<T: Default> Inject for State<T> {
     fn resolve(_: &Self::State, _: &mut World) {}
 
     #[inline]
-    fn get(state: &Self::State, _: &World) -> Self {
+    fn inject(state: &Self::State, _: &World) -> Self {
         State(state.clone())
     }
 }

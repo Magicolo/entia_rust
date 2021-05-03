@@ -6,7 +6,7 @@ pub trait Inject {
     fn initialize(world: &mut World) -> Option<Self::State>;
     fn update(state: &mut Self::State, world: &mut World) -> Vec<Dependency>;
     fn resolve(state: &Self::State, world: &mut World);
-    fn get(state: &Self::State, world: &World) -> Self;
+    fn inject(state: &Self::State, world: &World) -> Self;
 }
 
 impl Inject for () {
@@ -23,7 +23,7 @@ impl Inject for () {
     fn resolve(_: &Self::State, _: &mut World) {}
 
     #[inline]
-    fn get(_: &Self::State, _: &World) -> Self {
+    fn inject(_: &Self::State, _: &World) -> Self {
         ()
     }
 }
@@ -48,8 +48,8 @@ macro_rules! inject {
             }
 
             #[inline]
-            fn get(($($p),+,): &Self::State, world: &World) -> Self {
-                ($($t::get($p, world)),+,)
+            fn inject(($($p),+,): &Self::State, world: &World) -> Self {
+                ($($t::inject($p, world)),+,)
             }
         }
     };
