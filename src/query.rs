@@ -2,61 +2,39 @@ use crate::system::*;
 use crate::world::*;
 use std::marker::PhantomData;
 
-pub struct And<Q: Query>(PhantomData<Q>);
-pub struct Not<Q: Query>(PhantomData<Q>);
+pub struct And<'a, Q: Query<'a>>(PhantomData<&'a Q>);
+pub struct Not<'a, Q: Query<'a>>(PhantomData<&'a Q>);
 
-pub trait Query {
-    type State;
-    fn initialize(segment: &Segment) -> Option<(Self::State, Vec<Dependency>)>;
+pub trait Query<'a>: 'a {
+    type State: Sync + Send + 'a;
+    fn initialize(segment: &'a Segment, world: &'a World) -> Option<Self::State>;
     fn query(index: usize, state: &Self::State) -> Self;
+    fn dependencies(_: &Self::State) -> Vec<Dependency> {
+        vec![Dependency::Unknown]
+    }
 }
 
-impl Query for () {
+impl<'a, T: 'a> Query<'a> for PhantomData<T> {
     type State = ();
 
-    fn initialize(_: &Segment) -> Option<(Self::State, Vec<Dependency>)> {
-        Some(((), Vec::new()))
+    fn initialize(_: &Segment, _: &World) -> Option<Self::State> {
+        Some(())
     }
 
-    #[inline]
     fn query(_: usize, _: &Self::State) -> Self {
-        ()
+        PhantomData
+    }
+
+    fn dependencies(_: &Self::State) -> Vec<Dependency> {
+        Vec::new()
     }
 }
 
-macro_rules! query {
-    ($($p:ident, $t:ident),+) => {
-        impl<$($t: Query),+> Query for ($($t),+,) {
-            type State = ($($t::State),+,);
-
-            fn initialize(segment: &Segment) -> Option<(Self::State, Vec<Dependency>)> {
-                let mut dependencies = Vec::new();
-                $(let mut $p = $t::initialize(segment)?);+;
-                $(dependencies.append(&mut $p.1));+;
-                Some((($($p.0),+,), dependencies))
-            }
-
-            #[inline]
-            fn query(index: usize, ($($p),+,): &Self::State) -> Self {
-                ($($t::query(index, $p)),+,)
-            }
-        }
-    };
-}
-
-crate::recurse!(
-    query, query1, Q1, query2, Q2, query3, Q3, query4, Q4, query5, Q5, query6, Q6, query7, Q7,
-    query8, Q8, query9, Q9, query10, Q10, query11, Q11, query12, Q12
-);
-
-impl<Q: Query> Query for Option<Q> {
+impl<'a, Q: Query<'a>> Query<'a> for Option<Q> {
     type State = Option<Q::State>;
 
-    fn initialize(segment: &Segment) -> Option<(Self::State, Vec<Dependency>)> {
-        Some(match Q::initialize(segment) {
-            Some(pair) => (Some(pair.0), pair.1),
-            None => (None, Vec::new()),
-        })
+    fn initialize(segment: &'a Segment, world: &'a World) -> Option<Self::State> {
+        Some(Q::initialize(segment, world))
     }
 
     #[inline]
@@ -66,14 +44,21 @@ impl<Q: Query> Query for Option<Q> {
             None => None,
         }
     }
+
+    fn dependencies(state: &Self::State) -> Vec<Dependency> {
+        match state {
+            Some(state) => Q::dependencies(state),
+            None => Vec::new(),
+        }
+    }
 }
 
-impl<Q: Query> Query for And<Q> {
+impl<'a, Q: Query<'a>> Query<'a> for And<'a, Q> {
     type State = ();
 
-    fn initialize(segment: &Segment) -> Option<(Self::State, Vec<Dependency>)> {
-        match Q::initialize(segment) {
-            Some(_) => Some(((), Vec::new())),
+    fn initialize(segment: &'a Segment, world: &'a World) -> Option<Self::State> {
+        match Q::initialize(segment, world) {
+            Some(_) => Some(()),
             None => None,
         }
     }
@@ -82,15 +67,19 @@ impl<Q: Query> Query for And<Q> {
     fn query(_: usize, _: &Self::State) -> Self {
         And(PhantomData)
     }
+
+    fn dependencies(_: &Self::State) -> Vec<Dependency> {
+        Vec::new()
+    }
 }
 
-impl<Q: Query> Query for Not<Q> {
+impl<'a, Q: Query<'a>> Query<'a> for Not<'a, Q> {
     type State = ();
 
-    fn initialize(segment: &Segment) -> Option<(Self::State, Vec<Dependency>)> {
-        match Q::initialize(segment) {
+    fn initialize(segment: &'a Segment, world: &'a World) -> Option<Self::State> {
+        match Q::initialize(segment, world) {
             Some(_) => None,
-            None => Some(((), Vec::new())),
+            None => Some(()),
         }
     }
 
@@ -98,4 +87,36 @@ impl<Q: Query> Query for Not<Q> {
     fn query(_: usize, _: &Self::State) -> Self {
         Not(PhantomData)
     }
+
+    fn dependencies(_: &Self::State) -> Vec<Dependency> {
+        Vec::new()
+    }
 }
+
+macro_rules! query {
+    ($($p:ident, $t:ident),*) => {
+        impl<'a, $($t: Query<'a>,)*> Query<'a> for ($($t,)*) {
+            type State = ($($t::State,)*);
+
+            fn initialize(segment: &'a Segment, world: &'a World) -> Option<Self::State> {
+                Some(($($t::initialize(segment, world)?,)*))
+            }
+
+            #[inline]
+            fn query(index: usize, ($($p,)*): &Self::State) -> Self {
+                ($($t::query(index, $p),)*)
+            }
+
+            fn dependencies(($($p,)*): &Self::State) -> Vec<Dependency> {
+                let mut dependencies = Vec::new();
+                $(dependencies.append(&mut $t::dependencies($p));)*
+                dependencies
+            }
+        }
+    };
+}
+
+crate::recurse!(
+    query, query1, Q1, query2, Q2, query3, Q3, query4, Q4, query5, Q5, query6, Q6, query7, Q7,
+    query8, Q8, query9, Q9, query10, Q10, query11, Q11, query12, Q12
+);

@@ -9,15 +9,19 @@ pub struct Entity {
     generation: u32,
 }
 
-impl Query for Entity {
+impl Query<'_> for Entity {
     type State = Arc<Store<Entity>>;
 
-    fn initialize(segment: &Segment) -> Option<(Self::State, Vec<Dependency>)> {
-        Some((segment.entities.clone(), Vec::new()))
+    fn initialize(segment: &Segment, world: &World) -> Option<Self::State> {
+        Some(segment.entities.clone())
     }
 
     #[inline]
     fn query(index: usize, store: &Self::State) -> Self {
         unsafe { *store.at(index) }
+    }
+
+    fn dependencies(_: &Self::State) -> Vec<Dependency> {
+        Vec::new()
     }
 }

@@ -2,38 +2,39 @@ use crate::system::*;
 use crate::world::*;
 use crate::*;
 use std::any::TypeId;
-use std::sync::Arc;
 
 pub trait Component: Send + 'static {}
 
-impl<C: Component> Query for &C {
-    type State = Arc<Store<C>>;
+impl<'a, C: Component> Query<'a> for &'a C {
+    type State = (&'a Store<C>, usize);
 
-    fn initialize(segment: &Segment) -> Option<(Self::State, Vec<Dependency>)> {
-        Some((
-            segment.store()?,
-            vec![Dependency::Read(segment.index, TypeId::of::<C>())],
-        ))
+    fn initialize(segment: &'a Segment, _: &World) -> Option<Self::State> {
+        Some((segment.store()?, segment.index))
     }
 
     #[inline]
-    fn query(index: usize, store: &Self::State) -> Self {
+    fn query(index: usize, (store, _): &Self::State) -> Self {
         unsafe { store.at(index) }
+    }
+
+    fn dependencies((_, segment): &Self::State) -> Vec<Dependency> {
+        vec![Dependency::Read(*segment, TypeId::of::<C>())]
     }
 }
 
-impl<C: Component> Query for &mut C {
-    type State = Arc<Store<C>>;
+impl<'a, C: Component> Query<'a> for &'a mut C {
+    type State = (&'a Store<C>, usize);
 
-    fn initialize(segment: &Segment) -> Option<(Self::State, Vec<Dependency>)> {
-        Some((
-            segment.store()?,
-            vec![Dependency::Write(segment.index, TypeId::of::<C>())],
-        ))
+    fn initialize(segment: &'a Segment, _: &World) -> Option<Self::State> {
+        Some((segment.store()?, segment.index))
     }
 
     #[inline]
-    fn query(index: usize, store: &Self::State) -> Self {
+    fn query(index: usize, (store, _): &Self::State) -> Self {
         unsafe { store.at(index) }
+    }
+
+    fn dependencies((_, segment): &Self::State) -> Vec<Dependency> {
+        vec![Dependency::Write(*segment, TypeId::of::<C>())]
     }
 }

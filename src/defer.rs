@@ -1,13 +1,15 @@
 use crate::system::*;
+use crate::world::*;
 use crate::*;
 
-pub struct Defer<'a> {
-    world: &'a World,
-}
+pub struct Defer<'a>(&'a World);
 
 impl Defer<'_> {
-    pub fn create<T>(&self, entities: &mut [Entity], template: Template<T>) {
-        todo!()
+    pub fn create<T, const N: usize>(&self, template: Template<T>) -> [Entity; N] {
+        todo!();
+        // use std::mem::MaybeUninit;
+        // let entities = MaybeUninit::uninit_array();
+        // unsafe { MaybeUninit::array_assume_init(entities) }
     }
     pub fn destroy(&self, entities: &[Entity]) {
         todo!()
@@ -20,24 +22,22 @@ impl Defer<'_> {
     }
 }
 
-impl Inject for Defer<'_> {
-    type State = ();
+impl<'a> Inject<'a> for Defer<'a> {
+    type State = &'a World;
 
-    fn initialize(_: &mut World) -> Option<Self::State> {
-        Some(())
+    fn initialize(world: &'a World) -> Option<Self::State> {
+        Some(world)
     }
 
-    fn update(_: &mut Self::State, _: &mut World) -> Vec<Dependency> {
+    fn inject(state: &Self::State) -> Self {
+        Defer(state)
+    }
+
+    fn resolve(_: &mut Self::State) {
+        todo!()
+    }
+
+    fn dependencies(_: &Self::State) -> Vec<Dependency> {
         Vec::new()
-    }
-
-    fn resolve(_: &Self::State, _: &mut World) {
-        todo!()
-    }
-
-    #[inline]
-    fn inject(_: &Self::State, world: &World) -> Self {
-        todo!()
-        // Self { world }
     }
 }

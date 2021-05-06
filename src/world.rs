@@ -43,7 +43,7 @@ pub(crate) struct Datum {
 }
 
 #[derive(Default)]
-pub struct World {
+pub struct WorldInner {
     pub(crate) free: Mutex<Vec<Entity>>,
     pub(crate) last: AtomicUsize,
     pub(crate) capacity: AtomicUsize,
@@ -52,10 +52,13 @@ pub struct World {
 }
 
 #[derive(Default)]
+pub struct World(pub(crate) Arc<WorldInner>);
+
+#[derive(Default)]
 pub struct Segment {
     pub(crate) index: usize,
     pub(crate) entities: Arc<Store<Entity>>,
-    pub(crate) stores: HashMap<TypeId, Arc<dyn Any + Send + Sync + 'static>>,
+    pub(crate) stores: HashMap<TypeId, Box<dyn Any + Send + Sync + 'static>>,
 }
 
 #[derive(Default)]
@@ -67,10 +70,18 @@ impl World {
         Self::default()
     }
 
+    pub fn scheduler(&self) -> Scheduler {
+        Scheduler {
+            schedules: Vec::new(),
+            world: self,
+        }
+    }
+
     pub fn segment(&mut self, types: &[TypeId]) -> &Segment {
-        let mut index = self.segments.len();
-        for i in 0..self.segments.len() {
-            let segment = &self.segments[i];
+        let segments = &self.0.segments;
+        let mut index = segments.len();
+        for i in 0..segments.len() {
+            let segment = &segments[i];
             if segment.stores.len() == types.len()
                 && types
                     .iter()
@@ -81,10 +92,10 @@ impl World {
             }
         }
 
-        if index == self.segments.len() {
-            self.segments.push(Segment::default());
-        }
-        &self.segments[index]
+        // if index == segments.len() {
+        //     segments.push(Segment::default());
+        // }
+        &segments[index]
     }
 
     pub fn reserve(&self, entities: &mut [Entity]) {
@@ -95,20 +106,19 @@ impl World {
 }
 
 impl Segment {
-    pub fn store<T: Send + 'static>(&self) -> Option<Arc<Store<T>>> {
-        self.stores.get(&TypeId::of::<T>())?.clone().downcast().ok()
+    pub fn store<T: Send + 'static>(&self) -> Option<&Store<T>> {
+        self.stores.get(&TypeId::of::<T>())?.downcast_ref()
     }
 }
 
 impl<T> Store<T> {
-    // TODO: The "<'a>" is highly unsafe (could be resolved as 'static). Is there a less unsafe workaround?
     #[inline]
-    pub unsafe fn at<'a>(&self, index: usize) -> &'a mut T {
+    pub unsafe fn at(&self, index: usize) -> &mut T {
         &mut self.get()[index]
     }
 
     #[inline]
-    pub unsafe fn get<'a>(&self) -> &'a mut Vec<T> {
+    pub unsafe fn get(&self) -> &mut Vec<T> {
         &mut *self.0.get()
     }
 
