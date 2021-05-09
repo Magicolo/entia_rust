@@ -2,23 +2,23 @@ use crate::inject::*;
 use crate::system::*;
 use crate::world::*;
 use crate::*;
-use std::sync::Arc;
+use std::rc::Rc;
 
 pub struct Group<'a, Q: Query<'a>> {
-    index: usize,
-    queries: Arc<Vec<(Q::State, &'a Store<Entity>)>>,
+    queries: Rc<Vec<(Q::State, &'a Segment)>>,
 }
+
 pub struct GroupIterator<'a, Q: Query<'a>> {
-    segment: usize,
     index: usize,
+    segment: usize,
     group: Group<'a, Q>,
 }
 
 impl<'a, Q: Query<'a>> Group<'a, Q> {
     #[inline]
-    pub fn each<O>(&self, each: impl Fn(Q) -> O) {
-        for (query, store) in self.queries.iter() {
-            for i in 0..unsafe { store.count() } {
+    pub fn each(&self, mut each: impl FnMut(Q)) {
+        for (query, segment) in self.queries.iter() {
+            for i in 0..segment.count {
                 each(Q::query(i, query));
             }
         }
@@ -28,7 +28,6 @@ impl<'a, Q: Query<'a>> Group<'a, Q> {
 impl<'a, Q: Query<'a>> Clone for Group<'a, Q> {
     fn clone(&self) -> Self {
         Group {
-            index: self.index,
             queries: self.queries.clone(),
         }
     }
@@ -65,8 +64,8 @@ impl<'a, Q: Query<'a>> Iterator for GroupIterator<'a, Q> {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some((query, store)) = self.group.queries.get(self.segment) {
-            if self.index < unsafe { store.count() } {
+        while let Some((query, segment)) = self.group.queries.get(self.segment) {
+            if self.index < segment.count {
                 let query = Q::query(self.index, query);
                 self.index += 1;
                 return Some(query);
@@ -80,30 +79,32 @@ impl<'a, Q: Query<'a>> Iterator for GroupIterator<'a, Q> {
 }
 
 impl<'a, Q: Query<'a>> Inject<'a> for Group<'a, Q> {
-    type State = (usize, Vec<(Q::State, &'a Store<Entity>)>, &'a World);
+    type State = (usize, Rc<Vec<(Q::State, &'a Segment)>>, &'a World);
 
     fn initialize(world: &'a World) -> Option<Self::State> {
-        Some((0, Vec::new(), world))
+        Some((0, Vec::new().into(), world))
     }
 
     fn inject((_, queries, _): &Self::State) -> Self {
-        todo!()
+        Group {
+            queries: queries.clone(),
+        }
     }
 
     fn update((index, queries, world): &mut Self::State) {
-        // TODO: Ensure that a user cannot persist a 'Group<Q>' outside of the execution of a system.
-        // - Otherwise, 'Arc::get_mut' will fail...
-        while let Some(segment) = world.0.segments.get(*index) {
-            if let Some(mut state) = Q::initialize(&segment, world) {
-                queries.push((state, segment.entities.as_ref()));
+        if let Some(queries) = Rc::get_mut(queries) {
+            while let Some(segment) = world.segments.get(*index) {
+                if let Some(state) = Q::initialize(&segment, world) {
+                    queries.push((state, &segment));
+                }
+                *index += 1;
             }
-            *index += 1;
         }
     }
 
     fn dependencies((_, queries, _): &Self::State) -> Vec<Dependency> {
         let mut dependencies = Vec::new();
-        for (state, _) in queries {
+        for (state, _) in queries.iter() {
             dependencies.append(&mut Q::dependencies(state));
         }
         dependencies

@@ -3,8 +3,8 @@ use std::any::Any;
 use std::any::TypeId;
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
+use std::pin::Pin;
 use std::sync::atomic::AtomicUsize;
-use std::sync::Arc;
 use std::sync::Mutex;
 
 /*
@@ -42,32 +42,32 @@ pub(crate) struct Datum {
     segment: u32,
 }
 
-#[derive(Default)]
-pub struct WorldInner {
+pub struct World {
     pub(crate) free: Mutex<Vec<Entity>>,
     pub(crate) last: AtomicUsize,
     pub(crate) capacity: AtomicUsize,
-    pub(crate) data: Store<Datum>,
+    pub(crate) data: Vec<Datum>,
     pub(crate) segments: Vec<Segment>,
 }
 
-#[derive(Default)]
-pub struct World(pub(crate) Arc<WorldInner>);
-
-#[derive(Default)]
 pub struct Segment {
     pub(crate) index: usize,
-    pub(crate) entities: Arc<Store<Entity>>,
-    pub(crate) stores: HashMap<TypeId, Box<dyn Any + Send + Sync + 'static>>,
+    pub(crate) count: usize,
+    pub(crate) indices: HashMap<TypeId, usize>,
+    pub(crate) stores: Box<[Pin<Box<dyn Any>>]>,
 }
 
-#[derive(Default)]
-pub struct Store<T>(pub(crate) UnsafeCell<Vec<T>>);
-unsafe impl<T> Sync for Store<T> {}
+pub struct Store<T>(pub(crate) UnsafeCell<Box<[T]>>);
 
 impl World {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            free: Vec::new().into(),
+            last: 0.into(),
+            capacity: 0.into(),
+            data: Vec::new(),
+            segments: Vec::new(),
+        }
     }
 
     pub fn scheduler(&self) -> Scheduler {
@@ -78,14 +78,14 @@ impl World {
     }
 
     pub fn segment(&mut self, types: &[TypeId]) -> &Segment {
-        let segments = &self.0.segments;
+        let segments = &self.segments;
         let mut index = segments.len();
         for i in 0..segments.len() {
             let segment = &segments[i];
             if segment.stores.len() == types.len()
                 && types
                     .iter()
-                    .all(|value| segment.stores.get(value).is_some())
+                    .all(|value| segment.indices.contains_key(value))
             {
                 index = i;
                 break;
@@ -98,7 +98,7 @@ impl World {
         &segments[index]
     }
 
-    pub fn reserve(&self, entities: &mut [Entity]) {
+    pub fn reserve(&self, _entities: &mut [Entity]) {
         // let mut a = <[Entity; 32]>::default();
         // self.reserve(&mut a);
         // let mut b = vec![Entity::default(); 32];
@@ -107,19 +107,26 @@ impl World {
 
 impl Segment {
     pub fn store<T: Send + 'static>(&self) -> Option<&Store<T>> {
-        self.stores.get(&TypeId::of::<T>())?.downcast_ref()
+        let index = self.indices.get(&TypeId::of::<T>())?;
+        self.stores[*index].downcast_ref()
     }
 }
 
 impl<T> Store<T> {
+    pub fn new(capacity: usize) -> Self {
+        let mut content: Vec<T> = Vec::with_capacity(capacity);
+        unsafe { content.set_len(capacity) };
+        Self(content.into_boxed_slice().into())
+    }
+
     #[inline]
     pub unsafe fn at(&self, index: usize) -> &mut T {
         &mut self.get()[index]
     }
 
     #[inline]
-    pub unsafe fn get(&self) -> &mut Vec<T> {
-        &mut *self.0.get()
+    pub unsafe fn get(&self) -> &mut [T] {
+        (&mut *self.0.get()).as_mut()
     }
 
     pub unsafe fn count(&self) -> usize {

@@ -3,18 +3,33 @@ use crate::system::*;
 use crate::world::*;
 use std::any::TypeId;
 
-pub trait Resource: Send + 'static {}
+pub trait Resource: Default + Send + 'static {}
+impl<T: Default + Send + 'static> Resource for T {}
 
 impl<'a, R: Resource> Inject<'a> for &'a R {
-    type State = (&'a Store<R>, usize);
+    type State = (&'a R, usize);
 
     fn initialize(world: &'a World) -> Option<Self::State> {
-        // let segment = world.segment(&[TypeId::of::<R>()])?
+        /*
+        let types = [TypeId::of::<R>()];
+        match world.get_segment(types) {
+            Some(segment) if segment.entities.len() > 0 {
+                (segment.store()?, segment.index)
+            }
+            None => {
+                let template = Template::new().add(R::default());
+                let entity = world.create_entity(template);
+                let (segment, _index) = world.find_segment(entity)?;
+                (segment.store()?, segment.index)
+            }
+        }
+        */
+
         todo!()
     }
 
     fn inject((store, _): &Self::State) -> Self {
-        unsafe { store.at(0) }
+        unsafe { &**store }
     }
 
     fn dependencies((_, segment): &Self::State) -> Vec<Dependency> {

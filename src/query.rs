@@ -6,7 +6,7 @@ pub struct And<'a, Q: Query<'a>>(PhantomData<&'a Q>);
 pub struct Not<'a, Q: Query<'a>>(PhantomData<&'a Q>);
 
 pub trait Query<'a>: 'a {
-    type State: Sync + Send + 'a;
+    type State: 'a;
     fn initialize(segment: &'a Segment, world: &'a World) -> Option<Self::State>;
     fn query(index: usize, state: &Self::State) -> Self;
     fn dependencies(_: &Self::State) -> Vec<Dependency> {
@@ -98,25 +98,26 @@ macro_rules! query {
         impl<'a, $($t: Query<'a>,)*> Query<'a> for ($($t,)*) {
             type State = ($($t::State,)*);
 
-            fn initialize(segment: &'a Segment, world: &'a World) -> Option<Self::State> {
-                Some(($($t::initialize(segment, world)?,)*))
+            fn initialize(_segment: &'a Segment, _world: &'a World) -> Option<Self::State> {
+                Some(($($t::initialize(_segment, _world)?,)*))
             }
 
             #[inline]
-            fn query(index: usize, ($($p,)*): &Self::State) -> Self {
-                ($($t::query(index, $p),)*)
+            fn query(_index: usize, ($($p,)*): &Self::State) -> Self {
+                ($($t::query(_index, $p),)*)
             }
 
             fn dependencies(($($p,)*): &Self::State) -> Vec<Dependency> {
-                let mut dependencies = Vec::new();
-                $(dependencies.append(&mut $t::dependencies($p));)*
-                dependencies
+                let mut _dependencies = Vec::new();
+                $(_dependencies.append(&mut $t::dependencies($p));)*
+                _dependencies
             }
         }
     };
 }
 
 crate::recurse!(
-    query, query1, Q1, query2, Q2, query3, Q3, query4, Q4, query5, Q5, query6, Q6, query7, Q7,
-    query8, Q8, query9, Q9, query10, Q10, query11, Q11, query12, Q12
+    query, query0, Q0, query1, Q1, query2, Q2, query3, Q3, query4, Q4, query5, Q5, query6, Q6,
+    query7, Q7, query8, Q8, query9, Q9, query10, Q10, query11, Q11, query12, Q12, query13, Q13,
+    query14, Q14, query15, Q15
 );

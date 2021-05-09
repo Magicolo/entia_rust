@@ -4,6 +4,7 @@ use crate::*;
 use std::any::TypeId;
 
 pub trait Component: Send + 'static {}
+impl<T: Send + 'static> Component for T {}
 
 impl<'a, C: Component> Query<'a> for &'a C {
     type State = (&'a Store<C>, usize);

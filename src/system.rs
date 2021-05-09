@@ -4,6 +4,7 @@ use crate::*;
 use std::any::TypeId;
 use std::cell::UnsafeCell;
 use std::collections::HashSet;
+use std::rc::Rc;
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -35,7 +36,7 @@ unsafe impl Send for System<'_> {}
 
 impl<'a> Runner<'a> {
     pub fn run(&mut self) {
-        let count = self.world.0.segments.len();
+        let count = self.world.segments.len();
         if count != self.segments {
             for systems in self.systems.iter_mut() {
                 systems.iter_mut().for_each(|system| (system.update)());
@@ -56,12 +57,12 @@ impl<'a> Runner<'a> {
                 let system = &mut systems[0];
                 (system.run)();
                 (system.resolve)();
-                changed |= count < self.world.0.segments.len();
+                changed |= count < self.world.segments.len();
             } else {
                 use rayon::prelude::*;
                 systems.par_iter_mut().for_each(|system| (system.run)());
                 systems.iter_mut().for_each(|system| (system.resolve)());
-                changed |= count < self.world.0.segments.len();
+                changed |= count < self.world.segments.len();
             }
         }
     }
@@ -138,7 +139,7 @@ impl<'a> System<'a> {
         resolve: fn(&mut T),
         dependencies: fn(&mut T) -> Vec<Dependency>,
     ) -> Self {
-        let state = Arc::new(UnsafeCell::new(state));
+        let state = Rc::new(UnsafeCell::new(state));
         // SAFETY: Since this crate controls the execution of the system's functions, it can guarantee
         // that they are not run in parallel which would allow for races.
         Self {
@@ -167,13 +168,11 @@ impl<'a> Scheduler<'a> {
         pipe(self)
     }
 
-    pub fn system<I: Inject<'a>, O>(mut self, run: impl Call<I, O> + 'a) -> Self {
+    pub fn system<I: Inject<'a>>(mut self, run: impl Call<I, ()> + 'a) -> Self {
         self.schedules.push(I::initialize(self.world).map(|state| {
             System::new(
                 (run, state),
-                |(run, state)| {
-                    run.call(I::inject(state));
-                },
+                |(run, state)| run.call(I::inject(state)),
                 |(_, state)| I::update(state),
                 |(_, state)| I::resolve(state),
                 |(_, state)| I::dependencies(state),
@@ -181,19 +180,6 @@ impl<'a> Scheduler<'a> {
         }));
         self
     }
-
-    // pub fn system<I: Inject<'a>, R: FnMut(I) + 'a>(mut self, run: R) -> Self {
-    //     self.schedules.push(I::initialize(self.world).map(|state| {
-    //         System::new(
-    //             (run, state),
-    //             |(run, state)| run(I::inject(state)),
-    //             |(_, state)| I::update(state),
-    //             |(_, state)| I::resolve(state),
-    //             |(_, state)| I::dependencies(state),
-    //         )
-    //     }));
-    //     self
-    // }
 
     pub fn synchronize(mut self) -> Self {
         self.schedules.push(Some(System::new(

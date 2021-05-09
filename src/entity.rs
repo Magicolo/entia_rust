@@ -1,7 +1,6 @@
 use crate::system::*;
 use crate::world::*;
 use crate::*;
-use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Entity {
@@ -9,11 +8,11 @@ pub struct Entity {
     generation: u32,
 }
 
-impl Query<'_> for Entity {
-    type State = Arc<Store<Entity>>;
+impl<'a> Query<'a> for Entity {
+    type State = &'a Store<Entity>;
 
-    fn initialize(segment: &Segment, world: &World) -> Option<Self::State> {
-        Some(segment.entities.clone())
+    fn initialize(segment: &'a Segment, _: &World) -> Option<Self::State> {
+        segment.store()
     }
 
     #[inline]
