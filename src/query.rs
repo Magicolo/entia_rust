@@ -1,123 +1,116 @@
+use crate::inject::*;
+use crate::item::*;
 use crate::system::*;
 use crate::world::*;
-use std::marker::PhantomData;
+use std::sync::Arc;
 
-pub struct And<'a, Q: Query<'a>>(PhantomData<&'a Q>);
-pub struct Not<'a, Q: Query<'a>>(PhantomData<&'a Q>);
-
-pub trait Query<'a>: 'a {
-    type State: 'a;
-    fn initialize(segment: &'a Segment, world: &'a World) -> Option<Self::State>;
-    fn query(index: usize, state: &Self::State) -> Self;
-    fn dependencies(_: &Self::State) -> Vec<Dependency> {
-        vec![Dependency::Unknown]
-    }
+pub struct Query<'a, I: Item> {
+    states: &'a Vec<(I::State, Arc<Segment>)>,
 }
 
-impl<'a, T: 'a> Query<'a> for PhantomData<T> {
-    type State = ();
+pub struct QueryState<I: Item>(usize, Vec<(I::State, Arc<Segment>)>, Arc<Vec<Segment>>);
 
-    fn initialize(_: &Segment, _: &World) -> Option<Self::State> {
-        Some(())
-    }
-
-    fn query(_: usize, _: &Self::State) -> Self {
-        PhantomData
-    }
-
-    fn dependencies(_: &Self::State) -> Vec<Dependency> {
-        Vec::new()
-    }
+pub struct QueryIterator<'a, I: Item> {
+    index: usize,
+    segment: usize,
+    query: Query<'a, I>,
 }
 
-impl<'a, Q: Query<'a>> Query<'a> for Option<Q> {
-    type State = Option<Q::State>;
-
-    fn initialize(segment: &'a Segment, world: &'a World) -> Option<Self::State> {
-        Some(Q::initialize(segment, world))
-    }
-
+impl<'a, I: Item> Query<'a, I> {
     #[inline]
-    fn query(index: usize, state: &Self::State) -> Self {
-        match state {
-            Some(state) => Some(Q::query(index, state)),
-            None => None,
-        }
-    }
-
-    fn dependencies(state: &Self::State) -> Vec<Dependency> {
-        match state {
-            Some(state) => Q::dependencies(state),
-            None => Vec::new(),
-        }
-    }
-}
-
-impl<'a, Q: Query<'a>> Query<'a> for And<'a, Q> {
-    type State = ();
-
-    fn initialize(segment: &'a Segment, world: &'a World) -> Option<Self::State> {
-        match Q::initialize(segment, world) {
-            Some(_) => Some(()),
-            None => None,
-        }
-    }
-
-    #[inline]
-    fn query(_: usize, _: &Self::State) -> Self {
-        And(PhantomData)
-    }
-
-    fn dependencies(_: &Self::State) -> Vec<Dependency> {
-        Vec::new()
-    }
-}
-
-impl<'a, Q: Query<'a>> Query<'a> for Not<'a, Q> {
-    type State = ();
-
-    fn initialize(segment: &'a Segment, world: &'a World) -> Option<Self::State> {
-        match Q::initialize(segment, world) {
-            Some(_) => None,
-            None => Some(()),
-        }
-    }
-
-    #[inline]
-    fn query(_: usize, _: &Self::State) -> Self {
-        Not(PhantomData)
-    }
-
-    fn dependencies(_: &Self::State) -> Vec<Dependency> {
-        Vec::new()
-    }
-}
-
-macro_rules! query {
-    ($($p:ident, $t:ident),*) => {
-        impl<'a, $($t: Query<'a>,)*> Query<'a> for ($($t,)*) {
-            type State = ($($t::State,)*);
-
-            fn initialize(_segment: &'a Segment, _world: &'a World) -> Option<Self::State> {
-                Some(($($t::initialize(_segment, _world)?,)*))
-            }
-
-            #[inline]
-            fn query(_index: usize, ($($p,)*): &Self::State) -> Self {
-                ($($t::query(_index, $p),)*)
-            }
-
-            fn dependencies(($($p,)*): &Self::State) -> Vec<Dependency> {
-                let mut _dependencies = Vec::new();
-                $(_dependencies.append(&mut $t::dependencies($p));)*
-                _dependencies
+    pub fn each<F: FnMut(<I::State as At>::Item)>(&self, mut each: F) {
+        for (item, segment) in self.states.iter() {
+            for i in 0..segment.count {
+                each(item.at(i));
             }
         }
-    };
+    }
 }
 
-crate::recurse!(
-    query, query0, Q0, query1, Q1, query2, Q2, query3, Q3, query4, Q4, query5, Q5, query6, Q6,
-    query7, Q7, query8, Q8, query9, Q9, query10, Q10, query11, Q11, query12, Q12, query13, Q13,
-    query14, Q14, query15, Q15
-);
+impl<'a, I: Item> Clone for Query<'a, I> {
+    fn clone(&self) -> Self {
+        Query {
+            states: self.states.clone(),
+        }
+    }
+}
+
+impl<'a, I: Item> IntoIterator for Query<'a, I> {
+    type Item = <I::State as At<'a>>::Item;
+    type IntoIter = QueryIterator<'a, I>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        QueryIterator {
+            segment: 0,
+            index: 0,
+            query: self,
+        }
+    }
+}
+
+impl<'a, I: Item> IntoIterator for &Query<'a, I> {
+    type Item = <I::State as At<'a>>::Item;
+    type IntoIter = QueryIterator<'a, I>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        QueryIterator {
+            segment: 0,
+            index: 0,
+            query: self.clone(),
+        }
+    }
+}
+
+impl<'a, I: Item> Iterator for QueryIterator<'a, I> {
+    type Item = <I::State as At<'a>>::Item;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some((item, segment)) = self.query.states.get(self.segment) {
+            if self.index < segment.count {
+                let item = item.at(self.index);
+                self.index += 1;
+                return Some(item);
+            } else {
+                self.segment += 1;
+                self.index = 0;
+            }
+        }
+        None
+    }
+}
+
+impl<'a, I: Item + 'static> Inject for Query<'a, I> {
+    type State = QueryState<I>;
+
+    fn initialize(world: &mut World) -> Option<Self::State> {
+        todo!()
+        // Some(State((0, Vec::new().into(), world)))
+    }
+
+    fn update(state: &mut Self::State, world: &mut World) {
+        while let Some(segment) = world.segments.get(state.0) {
+            if let Some(item) = I::initialize(&segment) {
+                todo!()
+                // state.1.push((item, &segment));
+            }
+            state.0 += 1;
+        }
+    }
+
+    fn dependencies(state: &Self::State, world: &World) -> Vec<Dependency> {
+        let mut dependencies = Vec::new();
+        for (state, _) in state.1.iter() {
+            dependencies.append(&mut I::dependencies(state));
+        }
+        dependencies
+    }
+}
+
+impl<'a, I: Item> Get<'a> for QueryState<I> {
+    type Item = Query<'a, I>;
+
+    fn get(&'a mut self, world: &World) -> Self::Item {
+        Query { states: &self.1 }
+    }
+}

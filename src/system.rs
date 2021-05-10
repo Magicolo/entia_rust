@@ -1,10 +1,9 @@
+use crate::call::*;
 use crate::inject::*;
 use crate::world::*;
-use crate::*;
 use std::any::TypeId;
 use std::cell::UnsafeCell;
 use std::collections::HashSet;
-use std::rc::Rc;
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -14,34 +13,38 @@ pub enum Dependency {
     Write(usize, TypeId),
 }
 
-pub struct Runner<'a> {
-    systems: Vec<Vec<System<'a>>>,
+pub struct Runner {
+    identifier: usize,
+    systems: Vec<Vec<System>>,
     segments: usize,
-    world: &'a World,
 }
 
-pub struct System<'a> {
-    run: Box<dyn Fn() + 'a>,
-    update: Box<dyn FnMut() + 'a>,
-    resolve: Box<dyn FnMut() + 'a>,
-    dependencies: Box<dyn Fn() -> Vec<Dependency> + 'a>,
+pub struct System {
+    run: Box<dyn FnMut(&World)>,
+    update: Box<dyn FnMut(&mut World)>,
+    resolve: Box<dyn FnMut(&mut World)>,
+    dependencies: Box<dyn FnMut(&World) -> Vec<Dependency>>,
 }
 
 pub struct Scheduler<'a> {
-    pub(crate) schedules: Vec<Option<System<'a>>>,
-    pub(crate) world: &'a World,
+    pub(crate) schedules: Vec<Option<System>>,
+    pub(crate) world: &'a mut World,
 }
 
-unsafe impl Send for System<'_> {}
+unsafe impl Send for System {}
 
-impl<'a> Runner<'a> {
-    pub fn run(&mut self) {
-        let count = self.world.segments.len();
+impl Runner {
+    pub fn run(&mut self, world: &mut World) {
+        if self.identifier != world.identifier {
+            panic!();
+        }
+
+        let count = world.segments.len();
         if count != self.segments {
             for systems in self.systems.iter_mut() {
-                systems.iter_mut().for_each(|system| (system.update)());
+                systems.iter_mut().for_each(|system| (system.update)(world));
             }
-            self.systems = Self::schedule(self.systems.drain(..).flatten()).unwrap();
+            self.systems = Self::schedule(self.systems.drain(..).flatten(), world).unwrap();
             self.segments = count;
         }
 
@@ -49,20 +52,24 @@ impl<'a> Runner<'a> {
         for systems in self.systems.iter_mut() {
             if changed {
                 for system in systems {
-                    (system.update)();
-                    (system.run)();
-                    (system.resolve)();
+                    (system.update)(world);
+                    (system.run)(world);
+                    (system.resolve)(world);
                 }
             } else if systems.len() == 1 {
                 let system = &mut systems[0];
-                (system.run)();
-                (system.resolve)();
-                changed |= count < self.world.segments.len();
+                (system.run)(world);
+                (system.resolve)(world);
+                changed |= count < world.segments.len();
             } else {
                 use rayon::prelude::*;
-                systems.par_iter_mut().for_each(|system| (system.run)());
-                systems.iter_mut().for_each(|system| (system.resolve)());
-                changed |= count < self.world.segments.len();
+                systems
+                    .par_iter_mut()
+                    .for_each(|system| (system.run)(world));
+                systems
+                    .iter_mut()
+                    .for_each(|system| (system.resolve)(world));
+                changed |= count < world.segments.len();
             }
         }
     }
@@ -94,15 +101,15 @@ impl<'a> Runner<'a> {
         false
     }
 
-    fn schedule(systems: impl Iterator<Item = System<'a>>) -> Option<Vec<Vec<System<'a>>>> {
+    fn schedule(systems: impl Iterator<Item = System>, world: &World) -> Option<Vec<Vec<System>>> {
         let mut pairs = Vec::new();
         let mut sequence = Vec::new();
         let mut parallel = Vec::new();
         let mut reads = HashSet::new();
         let mut writes = HashSet::new();
 
-        for system in systems {
-            let dependencies = (system.dependencies)();
+        for mut system in systems {
+            let dependencies = (system.dependencies)(world);
             if Self::conflicts(&dependencies, &mut reads, &mut writes) {
                 return None;
             }
@@ -130,34 +137,34 @@ impl<'a> Runner<'a> {
     }
 }
 
-impl<'a> System<'a> {
+impl System {
     #[inline]
-    pub fn new<T: 'a>(
+    pub fn new<'a, T: 'static>(
         state: T,
-        run: fn(&mut T),
-        update: fn(&mut T),
-        resolve: fn(&mut T),
-        dependencies: fn(&mut T) -> Vec<Dependency>,
+        run: fn(&'a mut T, &World),
+        update: fn(&'a mut T, &mut World),
+        resolve: fn(&'a mut T, &mut World),
+        dependencies: fn(&'a mut T, &World) -> Vec<Dependency>,
     ) -> Self {
-        let state = Rc::new(UnsafeCell::new(state));
+        let state = Arc::new(UnsafeCell::new(state));
         // SAFETY: Since this crate controls the execution of the system's functions, it can guarantee
         // that they are not run in parallel which would allow for races.
         Self {
             run: {
                 let state = state.clone();
-                Box::new(move || run(unsafe { &mut *state.get() }))
+                Box::new(move |world| run(unsafe { &mut *state.get() }, world))
             },
             update: {
                 let state = state.clone();
-                Box::new(move || update(unsafe { &mut *state.get() }))
+                Box::new(move |world| update(unsafe { &mut *state.get() }, world))
             },
             resolve: {
                 let state = state.clone();
-                Box::new(move || resolve(unsafe { &mut *state.get() }))
+                Box::new(move |world| resolve(unsafe { &mut *state.get() }, world))
             },
             dependencies: {
                 let state = state.clone();
-                Box::new(move || dependencies(unsafe { &mut *state.get() }))
+                Box::new(move |world| dependencies(unsafe { &mut *state.get() }, world))
             },
         }
     }
@@ -168,14 +175,17 @@ impl<'a> Scheduler<'a> {
         pipe(self)
     }
 
-    pub fn system<I: Inject<'a>>(mut self, run: impl Call<I, ()> + 'a) -> Self {
+    pub fn system<I: Inject, C: Call<I, ()> + Call<<I::State as Get<'a>>::Item, ()> + 'static>(
+        mut self,
+        run: C,
+    ) -> Self {
         self.schedules.push(I::initialize(self.world).map(|state| {
             System::new(
                 (run, state),
-                |(run, state)| run.call(I::inject(state)),
-                |(_, state)| I::update(state),
-                |(_, state)| I::resolve(state),
-                |(_, state)| I::dependencies(state),
+                |(run, state), world| run.call(state.get(world)),
+                |(_, state), world| I::update(state, world),
+                |(_, state), world| I::resolve(state, world),
+                |(_, state), world| I::dependencies(state, world),
             )
         }));
         self
@@ -184,24 +194,24 @@ impl<'a> Scheduler<'a> {
     pub fn synchronize(mut self) -> Self {
         self.schedules.push(Some(System::new(
             (),
-            |_| {},
-            |_| {},
-            |_| {},
-            |_| vec![Dependency::Unknown],
+            |_, _| {},
+            |_, _| {},
+            |_, _| {},
+            |_, _| vec![Dependency::Unknown],
         )));
         self
     }
 
-    pub fn schedule(self) -> Option<Runner<'a>> {
+    pub fn schedule(self) -> Option<Runner> {
         let mut runs = Vec::new();
         for system in self.schedules {
             runs.push(system?);
         }
         // TODO: return a 'Result<Runner<'a>, Error>'
         Some(Runner {
-            systems: Runner::schedule(runs.drain(..))?,
+            identifier: self.world.identifier,
+            systems: Runner::schedule(runs.drain(..), self.world)?,
             segments: 0,
-            world: self.world,
         })
     }
 }

@@ -1,41 +1,55 @@
+use crate::item::*;
 use crate::system::*;
 use crate::world::*;
-use crate::*;
 use std::any::TypeId;
+use std::sync::Arc;
 
 pub trait Component: Send + 'static {}
 impl<T: Send + 'static> Component for T {}
 
-impl<'a, C: Component> Query<'a> for &'a C {
-    type State = (&'a Store<C>, usize);
+pub struct ReadState<C: Component>(Arc<Store<C>>, usize);
+pub struct WriteState<C: Component>(Arc<Store<C>>, usize);
 
-    fn initialize(segment: &'a Segment, _: &World) -> Option<Self::State> {
-        Some((segment.store()?, segment.index))
+impl<C: Component> Item for &C {
+    type State = ReadState<C>;
+
+    fn initialize(segment: &Segment) -> Option<Self::State> {
+        todo!()
+        // Some((segment.store()?, segment.index))
     }
 
-    #[inline]
-    fn query(index: usize, (store, _): &Self::State) -> Self {
-        unsafe { store.at(index) }
-    }
-
-    fn dependencies((_, segment): &Self::State) -> Vec<Dependency> {
-        vec![Dependency::Read(*segment, TypeId::of::<C>())]
+    fn dependencies(state: &Self::State) -> Vec<Dependency> {
+        vec![Dependency::Read(state.1, TypeId::of::<C>())]
     }
 }
 
-impl<'a, C: Component> Query<'a> for &'a mut C {
-    type State = (&'a Store<C>, usize);
-
-    fn initialize(segment: &'a Segment, _: &World) -> Option<Self::State> {
-        Some((segment.store()?, segment.index))
-    }
+impl<'a, C: Component> At<'a> for ReadState<C> {
+    type Item = &'a C;
 
     #[inline]
-    fn query(index: usize, (store, _): &Self::State) -> Self {
-        unsafe { store.at(index) }
+    fn at(&'a self, index: usize) -> Self::Item {
+        unsafe { self.0.at(index) }
+    }
+}
+
+impl<C: Component> Item for &mut C {
+    type State = WriteState<C>;
+
+    fn initialize(segment: &Segment) -> Option<Self::State> {
+        todo!()
+        // Some((segment.store()?, segment.index))
     }
 
-    fn dependencies((_, segment): &Self::State) -> Vec<Dependency> {
-        vec![Dependency::Write(*segment, TypeId::of::<C>())]
+    fn dependencies(state: &Self::State) -> Vec<Dependency> {
+        vec![Dependency::Write(state.1, TypeId::of::<C>())]
+    }
+}
+
+impl<'a, C: Component> At<'a> for WriteState<C> {
+    type Item = &'a mut C;
+
+    #[inline]
+    fn at(&'a self, index: usize) -> Self::Item {
+        unsafe { self.0.at(index) }
     }
 }

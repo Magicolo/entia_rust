@@ -3,8 +3,9 @@ use std::any::Any;
 use std::any::TypeId;
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
-use std::pin::Pin;
 use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::sync::Mutex;
 
 /*
@@ -42,60 +43,93 @@ pub(crate) struct Datum {
     segment: u32,
 }
 
+#[derive(Clone)]
+pub struct Meta {
+    identifier: TypeId,
+    store: fn(usize) -> Arc<dyn Any + Sync + Send>,
+}
+
 pub struct World {
+    pub(crate) identifier: usize,
     pub(crate) free: Mutex<Vec<Entity>>,
     pub(crate) last: AtomicUsize,
     pub(crate) capacity: AtomicUsize,
     pub(crate) data: Vec<Datum>,
-    pub(crate) segments: Vec<Segment>,
+    pub(crate) segments: Vec<Arc<Segment>>,
+    metas: HashMap<TypeId, Meta>,
 }
 
 pub struct Segment {
     pub(crate) index: usize,
     pub(crate) count: usize,
+    pub(crate) capacity: usize,
     pub(crate) indices: HashMap<TypeId, usize>,
-    pub(crate) stores: Box<[Pin<Box<dyn Any>>]>,
+    pub(crate) stores: Box<[(Meta, Arc<dyn Any + Sync + Send>)]>,
 }
 
 pub struct Store<T>(pub(crate) UnsafeCell<Box<[T]>>);
+unsafe impl<T> Sync for Store<T> {}
 
 impl World {
     pub fn new() -> Self {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
         Self {
+            identifier: COUNTER.fetch_add(1, Ordering::Relaxed),
             free: Vec::new().into(),
             last: 0.into(),
             capacity: 0.into(),
             data: Vec::new(),
             segments: Vec::new(),
+            metas: HashMap::new(),
         }
     }
 
-    pub fn scheduler(&self) -> Scheduler {
+    pub fn scheduler(&mut self) -> Scheduler {
         Scheduler {
             schedules: Vec::new(),
             world: self,
         }
     }
 
-    pub fn segment(&mut self, types: &[TypeId]) -> &Segment {
-        let segments = &self.segments;
-        let mut index = segments.len();
-        for i in 0..segments.len() {
-            let segment = &segments[i];
-            if segment.stores.len() == types.len()
-                && types
-                    .iter()
-                    .all(|value| segment.indices.contains_key(value))
-            {
-                index = i;
-                break;
+    pub fn meta<T: Send + 'static>(&mut self) -> Meta {
+        let key = TypeId::of::<T>();
+        match self.metas.get(&key) {
+            Some(meta) => meta.clone(),
+            None => {
+                let meta = Meta {
+                    identifier: key.clone(),
+                    store: |capacity| Arc::new(Store::<T>::new(capacity)),
+                };
+                self.metas.insert(key, meta.clone());
+                meta
+            }
+        }
+    }
+
+    pub fn segment(&mut self, metas: &[Meta], capacity: Option<usize>) -> Arc<Segment> {
+        for segment in self.segments.iter() {
+            if segment.is(metas) {
+                return segment.clone();
             }
         }
 
-        // if index == segments.len() {
-        //     segments.push(Segment::default());
-        // }
-        &segments[index]
+        let capacity = capacity.unwrap_or(32);
+        let segment = Arc::new(Segment {
+            index: self.segments.len(),
+            count: 0,
+            capacity,
+            indices: metas
+                .iter()
+                .enumerate()
+                .map(|pair| (pair.1.identifier.clone(), pair.0))
+                .collect(),
+            stores: metas
+                .iter()
+                .map(|meta| (meta.clone(), (meta.store)(capacity)))
+                .collect(),
+        });
+        self.segments.push(segment.clone());
+        segment
     }
 
     pub fn reserve(&self, _entities: &mut [Entity]) {
@@ -106,9 +140,16 @@ impl World {
 }
 
 impl Segment {
-    pub fn store<T: Send + 'static>(&self) -> Option<&Store<T>> {
+    pub fn store<T: Send + 'static>(&self) -> Option<Arc<Store<T>>> {
         let index = self.indices.get(&TypeId::of::<T>())?;
-        self.stores[*index].downcast_ref()
+        self.stores[*index].1.clone().downcast().ok()
+    }
+
+    pub fn is(&self, metas: &[Meta]) -> bool {
+        self.indices.len() == metas.len()
+            && metas
+                .iter()
+                .all(|meta| self.indices.contains_key(&meta.identifier))
     }
 }
 

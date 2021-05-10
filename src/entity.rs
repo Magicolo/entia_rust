@@ -1,6 +1,7 @@
+use crate::item::*;
 use crate::system::*;
 use crate::world::*;
-use crate::*;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Entity {
@@ -8,19 +9,26 @@ pub struct Entity {
     generation: u32,
 }
 
-impl<'a> Query<'a> for Entity {
-    type State = &'a Store<Entity>;
+pub struct EntityState(Arc<Store<Entity>>);
 
-    fn initialize(segment: &'a Segment, _: &World) -> Option<Self::State> {
-        segment.store()
-    }
+impl Item for Entity {
+    type State = EntityState;
 
-    #[inline]
-    fn query(index: usize, store: &Self::State) -> Self {
-        unsafe { *store.at(index) }
+    fn initialize(segment: &Segment) -> Option<Self::State> {
+        todo!()
+        // segment.store()
     }
 
     fn dependencies(_: &Self::State) -> Vec<Dependency> {
         Vec::new()
+    }
+}
+
+impl At<'_> for EntityState {
+    type Item = Entity;
+
+    #[inline]
+    fn at(&self, index: usize) -> Self::Item {
+        unsafe { *self.0.at(index) }
     }
 }

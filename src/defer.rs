@@ -22,22 +22,23 @@ impl Defer<'_> {
     }
 }
 
-impl<'a> Inject<'a> for Defer<'a> {
-    type State = &'a World;
+impl Inject for Defer<'_> {
+    type State = (); //&'a World;
 
-    fn initialize(world: &'a World) -> Option<Self::State> {
-        Some(world)
+    fn initialize(_: &mut World) -> Option<Self::State> {
+        todo!()
+        // Some(world)
     }
 
-    fn inject(state: &Self::State) -> Self {
-        Defer(state)
-    }
+    // fn inject(state: &Self::State) -> Self {
+    //     Defer(state)
+    // }
 
-    fn resolve(_: &mut Self::State) {
+    fn resolve(_: &mut Self::State, _: &mut World) {
         todo!()
     }
 
-    fn dependencies(_: &Self::State) -> Vec<Dependency> {
+    fn dependencies(_: &Self::State, _: &World) -> Vec<Dependency> {
         Vec::new()
     }
 }

@@ -1,79 +1,52 @@
 use crate::system::*;
 use crate::world::*;
-use std::marker::PhantomData;
 
-pub trait Inject<'a>: 'a {
-    type State: 'a;
-    // type State: for<'a> State<'a>;
-    fn initialize(world: &'i World) -> Option<Self::State>;
-    fn inject(state: &Self::State) -> Self;
-    fn update(_: &mut Self::State) {}
-    fn resolve(_: &mut Self::State) {}
-    fn dependencies(_: &Self::State) -> Vec<Dependency> {
+pub trait Inject {
+    type State: for<'a> Get<'a> + 'static;
+    fn initialize(world: &mut World) -> Option<Self::State>;
+    fn update(_: &mut Self::State, _: &mut World) {}
+    fn resolve(_: &mut Self::State, _: &mut World) {}
+    fn dependencies(_: &Self::State, _: &World) -> Vec<Dependency> {
         vec![Dependency::Unknown]
     }
 }
 
-pub trait State<'a> {
+pub trait Get<'a> {
     type Item;
-    fn get(&'a self) -> Self::Item;
-    // fn update(&mut self) {}
-    // fn resolve(&mut self) {}
-    // fn dependencies(&self) -> Vec<Dependency> {
-    //     vec![Dependency::Unknown]
-    // }
-}
-
-impl<'a, T: 'a> Inject<'a> for PhantomData<T> {
-    type State = ();
-
-    fn initialize(_: &World) -> Option<Self::State> {
-        Some(())
-    }
-
-    fn inject(_: &Self::State) -> Self {
-        PhantomData
-    }
-
-    fn dependencies(_: &Self::State) -> Vec<Dependency> {
-        Vec::new()
-    }
+    fn get(&'a mut self, world: &World) -> Self::Item;
 }
 
 macro_rules! inject {
     ($($p:ident, $t:ident),*) => {
-        impl<'a, $($t: Inject<'a>,)*> Inject<'a> for ($($t,)*) {
+        impl<'a, $($t: Inject,)*> Inject for ($($t,)*) {
             type State = ($($t::State,)*);
 
-            fn initialize(_world: &'a World) -> Option<Self::State> {
+            fn initialize(_world: &mut World) -> Option<Self::State> {
                 Some(($($t::initialize(_world)?,)*))
             }
 
-            fn inject(($($p,)*): &Self::State) -> Self {
-                ($($t::inject($p),)*)
+            fn update(($($p,)*): &mut Self::State,world: &mut World) {
+                $($t::update($p, world);)*
             }
 
-            fn update(($($p,)*): &mut Self::State) {
-                $($t::update($p);)*
+            fn resolve(($($p,)*): &mut Self::State, world: &mut World) {
+                $($t::resolve($p, world);)*
             }
 
-            fn resolve(($($p,)*): &mut Self::State) {
-                $($t::resolve($p);)*
-            }
-
-            fn dependencies(($($p,)*): &Self::State) -> Vec<Dependency> {
+            fn dependencies(($($p,)*): &Self::State, world: &World) -> Vec<Dependency> {
                 let mut _dependencies = Vec::new();
-                $(_dependencies.append(&mut $t::dependencies($p));)*
+                $(_dependencies.append(&mut $t::dependencies($p, world));)*
                 _dependencies
             }
         }
 
-        impl<'a, $($t: State<'a>,)*> State<'a> for ($($t,)*) {
+        impl<'a, $($t: Get<'a>,)*> Get<'a> for ($($t,)*) {
             type Item = ($($t::Item,)*);
 
-            fn get(&'a self) -> Self::Item {
+            #[inline]
+            fn get(&'a mut self, world: &World) -> Self::Item {
                 let ($($p,)*) = self;
-                ($($p.get(),)*)
+                ($($p.get(world),)*)
             }
         }
     };
