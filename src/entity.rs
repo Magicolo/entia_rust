@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Entity {
-    index: u32,
-    generation: u32,
+    pub(crate) index: u32,
+    pub(crate) generation: u32,
 }
 
 pub struct EntityState(Arc<Store<Entity>>);
@@ -15,8 +15,7 @@ impl Item for Entity {
     type State = EntityState;
 
     fn initialize(segment: &Segment) -> Option<Self::State> {
-        todo!()
-        // segment.store()
+        Some(EntityState(segment.entities.clone()))
     }
 
     fn dependencies(_: &Self::State) -> Vec<Dependency> {

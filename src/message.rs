@@ -28,8 +28,8 @@ impl<M: Message> Inject for Emit<'_, M> {
     type State = EmitState<M>;
 
     fn initialize(world: &mut World) -> Option<Self::State> {
-        let meta = world.meta::<Messages<M>>();
-        let segment = world.segment(&[meta], Some(4));
+        let meta = world.get_or_add_meta::<Messages<M>>();
+        let segment = world.get_or_add_segment(&[meta], Some(4));
         Some(EmitState(segment.store()?, segment))
     }
 
@@ -69,8 +69,14 @@ impl<M: Message> Iterator for Receive<'_, M> {
 impl<M: Message> Inject for Receive<'_, M> {
     type State = ReceiveState<M>;
 
-    fn initialize(_: &mut World) -> Option<Self::State> {
-        todo!()
+    fn initialize(world: &mut World) -> Option<Self::State> {
+        let (entity, segment) = world.create_entity((Messages::<M>(VecDeque::new()),));
+        let datum = world.get_datum(entity)?;
+        Some(ReceiveState(
+            segment.store()?,
+            segment,
+            datum.index as usize,
+        ))
     }
 
     fn dependencies(state: &Self::State, _: &World) -> Vec<Dependency> {

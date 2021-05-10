@@ -14,8 +14,7 @@ impl<C: Component> Item for &C {
     type State = ReadState<C>;
 
     fn initialize(segment: &Segment) -> Option<Self::State> {
-        todo!()
-        // Some((segment.store()?, segment.index))
+        Some(ReadState(segment.store()?, segment.index))
     }
 
     fn dependencies(state: &Self::State) -> Vec<Dependency> {
@@ -36,8 +35,7 @@ impl<C: Component> Item for &mut C {
     type State = WriteState<C>;
 
     fn initialize(segment: &Segment) -> Option<Self::State> {
-        todo!()
-        // Some((segment.store()?, segment.index))
+        Some(WriteState(segment.store()?, segment.index))
     }
 
     fn dependencies(state: &Self::State) -> Vec<Dependency> {

@@ -1,46 +1,20 @@
-use crate::*;
+use crate::entity::*;
+use crate::initialize::*;
+use crate::system::*;
 use std::any::Any;
 use std::any::TypeId;
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
+use std::sync::atomic::AtomicU32;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::sync::Mutex;
-
-/*
-SYSTEMS
-- Runners must be able to re-initialize and re-schedule all systems when a segment is added.
-- This will happen when the 'Defer' module is resolved which occurs at the next synchronization point.
-- There should not be a significant performance hit since segment addition/removal is expected to be rare and happen mainly
-in the first frames of execution.
-
-RESOURCES
-- There will be 1 segment per resource such that the same segment/dependency system can be used for them.
-- Resource segments should only allocate 1 store with 1 slot with the resource in it.
-- Resource entities must not be query-able (could be accomplished with a simple 'bool' in segments).
-
-DEPENDENCIES
-- Design a contract API that ensures that dependencies are well defined.
-- To gain access to a given resource, a user must provide a corresponding 'Contract' that is provided by a 'Contractor'.
-- The 'Contractor' then stores a copy of each emitted contract to later convert them into corresponding dependencies.
-- Ex: System::initialize(contractor: &mut Contractor, world: &mut World) -> Store<Time> {
-    world.get_resource(contractor.resource(TypeId::of::<Time>()))
-        OR
-    world.get_resource::<Time>(contractor)
-        OR
-    contractor.resource::<Time>(world) // This doesn't require the 'World' to know about the 'Contractor'.
-        OR
-    contractor.resource::<Time>() // The contractor can hold its own reference to the 'World'.
-}
-*/
 
 pub struct Template<T>(T);
 
-#[derive(Default)]
-pub(crate) struct Datum {
-    index: u32,
-    segment: u32,
+pub struct Datum {
+    pub(crate) index: u32,
+    pub(crate) segment: Arc<Segment>,
 }
 
 #[derive(Clone)]
@@ -51,11 +25,11 @@ pub struct Meta {
 
 pub struct World {
     pub(crate) identifier: usize,
-    pub(crate) free: Mutex<Vec<Entity>>,
-    pub(crate) last: AtomicUsize,
-    pub(crate) capacity: AtomicUsize,
-    pub(crate) data: Vec<Datum>,
     pub(crate) segments: Vec<Arc<Segment>>,
+    free: Vec<Entity>,
+    last: AtomicU32,
+    capacity: AtomicUsize,
+    data: Vec<Datum>,
     metas: HashMap<TypeId, Meta>,
 }
 
@@ -64,6 +38,7 @@ pub struct Segment {
     pub(crate) count: usize,
     pub(crate) capacity: usize,
     pub(crate) indices: HashMap<TypeId, usize>,
+    pub(crate) entities: Arc<Store<Entity>>,
     pub(crate) stores: Box<[(Meta, Arc<dyn Any + Sync + Send>)]>,
 }
 
@@ -91,11 +66,58 @@ impl World {
         }
     }
 
-    pub fn meta<T: Send + 'static>(&mut self) -> Meta {
+    pub fn create_entity(&mut self, initialize: impl Initialize) -> (Entity, Arc<Segment>) {
+        let (entities, segment): ([_; 1], _) = self.create_entities(initialize);
+        (entities[0], segment)
+    }
+
+    pub fn create_entities<const N: usize>(
+        &mut self,
+        initialize: impl Initialize,
+    ) -> ([Entity; N], Arc<Segment>) {
+        let entities = self.reserve_entities();
+        let segment = self.initialize_entities(&entities, initialize);
+        (entities, segment)
+    }
+
+    pub fn reserve_entities<const N: usize>(&self) -> [Entity; N] {
+        // TODO: use 'MaybeUninit'?
+        let mut entities = [Entity::default(); N];
+        entities
+    }
+
+    pub fn initialize_entities<I: Initialize>(
+        &mut self,
+        entities: &[Entity],
+        initialize: I,
+    ) -> Arc<Segment> {
+        let metas = I::metas(self);
+        let segment = self.get_or_add_segment(&metas, None);
+        todo!();
+        segment
+    }
+
+    pub fn has_entity(&self, entity: Entity) -> bool {
+        match self.get_datum(entity) {
+            Some(datum) => *unsafe { datum.segment.entities.at(datum.index as usize) } == entity,
+            None => false,
+        }
+    }
+
+    pub fn destroy_entities(&mut self, entities: &[Entity]) -> usize {
+        todo!()
+    }
+
+    pub fn get_meta<T: Send + 'static>(&self) -> Option<Meta> {
         let key = TypeId::of::<T>();
-        match self.metas.get(&key) {
-            Some(meta) => meta.clone(),
+        self.metas.get(&key).cloned()
+    }
+
+    pub fn get_or_add_meta<T: Send + 'static>(&mut self) -> Meta {
+        match self.get_meta::<T>() {
+            Some(meta) => meta,
             None => {
+                let key = TypeId::of::<T>();
                 let meta = Meta {
                     identifier: key.clone(),
                     store: |capacity| Arc::new(Store::<T>::new(capacity)),
@@ -106,14 +128,25 @@ impl World {
         }
     }
 
-    pub fn segment(&mut self, metas: &[Meta], capacity: Option<usize>) -> Arc<Segment> {
+    #[inline]
+    pub fn get_datum(&self, entity: Entity) -> Option<&Datum> {
+        if entity.index < self.last.load(Ordering::Relaxed) {
+            Some(&self.data[entity.index as usize])
+        } else {
+            None
+        }
+    }
+
+    pub fn get_segment(&self, metas: &[Meta]) -> Option<Arc<Segment>> {
         for segment in self.segments.iter() {
             if segment.is(metas) {
-                return segment.clone();
+                return Some(segment.clone());
             }
         }
+        None
+    }
 
-        let capacity = capacity.unwrap_or(32);
+    pub fn add_segment(&mut self, metas: &[Meta], capacity: usize) -> Arc<Segment> {
         let segment = Arc::new(Segment {
             index: self.segments.len(),
             count: 0,
@@ -123,6 +156,7 @@ impl World {
                 .enumerate()
                 .map(|pair| (pair.1.identifier.clone(), pair.0))
                 .collect(),
+            entities: Store::new(capacity).into(),
             stores: metas
                 .iter()
                 .map(|meta| (meta.clone(), (meta.store)(capacity)))
@@ -132,10 +166,15 @@ impl World {
         segment
     }
 
-    pub fn reserve(&self, _entities: &mut [Entity]) {
-        // let mut a = <[Entity; 32]>::default();
-        // self.reserve(&mut a);
-        // let mut b = vec![Entity::default(); 32];
+    pub fn get_or_add_segment(&mut self, metas: &[Meta], capacity: Option<usize>) -> Arc<Segment> {
+        match self.get_segment(metas) {
+            Some(segment) => {
+                let capacity = capacity.unwrap_or(segment.capacity);
+                segment.ensure(capacity);
+                segment
+            }
+            None => self.add_segment(metas, capacity.unwrap_or(32)),
+        }
     }
 }
 
@@ -150,6 +189,15 @@ impl Segment {
             && metas
                 .iter()
                 .all(|meta| self.indices.contains_key(&meta.identifier))
+    }
+
+    pub fn ensure(&self, capacity: usize) -> bool {
+        if self.capacity <= capacity {
+            false
+        } else {
+            // TODO: Resize stores.
+            true
+        }
     }
 }
 

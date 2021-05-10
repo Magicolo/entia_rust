@@ -3,6 +3,7 @@ pub mod change;
 pub mod component;
 pub mod defer;
 pub mod entity;
+pub mod initialize;
 pub mod inject;
 pub mod item;
 pub mod local;
@@ -12,14 +13,14 @@ pub mod resource;
 pub mod system;
 pub mod world;
 
-pub use call::*;
+pub use call::Call;
 pub use component::Component;
 pub use defer::Defer;
 pub use entity::Entity;
 pub use inject::Inject;
 pub use item::{And, Item, Not};
 pub use local::Local;
-pub use message::Message;
+pub use message::{Emit, Message, Receive};
 pub use query::Query;
 pub use resource::Resource;
 pub use system::{Runner, Scheduler};
@@ -39,7 +40,33 @@ deallocation time.
     - Should static entities have a different type? Otherwise, it means that a component 'add' could fail.
     - Perhaps, only the batch allocation/deallocation mechanism could use static segments?
     - Should static entities be queried differently than dynamic ones? 'Group<(Entity, And<Static>)>'?
+*/
 
+/*
+SYSTEMS
+- Runners must be able to re-initialize and re-schedule all systems when a segment is added.
+- This will happen when the 'Defer' module is resolved which occurs at the next synchronization point.
+- There should not be a significant performance hit since segment addition/removal is expected to be rare and happen mainly
+in the first frames of execution.
+
+RESOURCES
+- There will be 1 segment per resource such that the same segment/dependency system can be used for them.
+- Resource segments should only allocate 1 store with 1 slot with the resource in it.
+- Resource entities must not be query-able (could be accomplished with a simple 'bool' in segments).
+
+DEPENDENCIES
+- Design a contract API that ensures that dependencies are well defined.
+- To gain access to a given resource, a user must provide a corresponding 'Contract' that is provided by a 'Contractor'.
+- The 'Contractor' then stores a copy of each emitted contract to later convert them into corresponding dependencies.
+- Ex: System::initialize(contractor: &mut Contractor, world: &mut World) -> Store<Time> {
+    world.get_resource(contractor.resource(TypeId::of::<Time>()))
+        OR
+    world.get_resource::<Time>(contractor)
+        OR
+    contractor.resource::<Time>(world) // This doesn't require the 'World' to know about the 'Contractor'.
+        OR
+    contractor.resource::<Time>() // The contractor can hold its own reference to the 'World'.
+}
 */
 
 #[macro_export]
@@ -70,6 +97,8 @@ mod test {
         struct Frozen;
         struct Position(f64, f64, f64);
         struct Velocity(f64, f64, f64);
+        #[derive(Clone)]
+        struct OnKill(Entity);
 
         fn physics(scheduler: Scheduler) -> Scheduler {
             scheduler.system(|_: ((), ())| {})
@@ -153,6 +182,9 @@ mod test {
                 }
             })
             .system(motion)
+            .system(|mut on_kill: Emit<OnKill>| on_kill.emit(OnKill(Entity::default())))
+            .system(|on_kill: Receive<OnKill>| for _ in on_kill {})
+            .system(|mut on_kill: Receive<OnKill>| while let Some(_) = on_kill.next() {})
             .schedule()
             .unwrap();
 

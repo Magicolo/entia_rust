@@ -7,33 +7,25 @@ use std::sync::Arc;
 pub trait Resource: Default + Send + 'static {}
 impl<T: Default + Send + 'static> Resource for T {}
 
-pub struct ReadState<R: Resource>(Arc<Store<R>>, usize);
-pub struct WriteState<R: Resource>(Arc<Store<R>>, usize);
+pub struct ReadState<R: Resource>(Arc<Store<R>>, Arc<Segment>);
+pub struct WriteState<R: Resource>(Arc<Store<R>>, Arc<Segment>);
 
 impl<R: Resource> Inject for &R {
     type State = ReadState<R>;
 
     fn initialize(world: &mut World) -> Option<Self::State> {
-        /*
-        let types = [TypeId::of::<R>()];
-        match world.get_segment(types) {
-            Some(segment) if segment.entities.len() > 0 {
-                (segment.store()?, segment.index)
-            }
-            None => {
-                let template = Template::new().add(R::default());
-                let entity = world.create_entity(template);
-                let (segment, _index) = world.find_segment(entity)?;
-                (segment.store()?, segment.index)
+        let metas = [world.get_or_add_meta::<R>()];
+        match world.get_segment(&metas) {
+            Some(segment) if segment.count > 0 => Some(ReadState(segment.store()?, segment)),
+            _ => {
+                let (_, segment) = world.create_entity((R::default(),));
+                Some(ReadState(segment.store()?, segment))
             }
         }
-        */
-
-        todo!()
     }
 
     fn dependencies(state: &Self::State, _: &World) -> Vec<Dependency> {
-        vec![Dependency::Read(state.1, TypeId::of::<R>())]
+        vec![Dependency::Read(state.1.index, TypeId::of::<R>())]
     }
 }
 
@@ -49,12 +41,14 @@ impl<R: Resource> Inject for &mut R {
     type State = WriteState<R>;
 
     fn initialize(world: &mut World) -> Option<Self::State> {
-        // let segment = world.segment(&[TypeId::of::<R>()])?
-        todo!()
+        let meta = world.get_or_add_meta::<R>();
+        let segment = world.get_or_add_segment(&[meta], Some(1));
+        let store = segment.store()?;
+        Some(WriteState(store, segment))
     }
 
     fn dependencies(state: &Self::State, _: &World) -> Vec<Dependency> {
-        vec![Dependency::Read(state.1, TypeId::of::<R>())]
+        vec![Dependency::Read(state.1.index, TypeId::of::<R>())]
     }
 }
 

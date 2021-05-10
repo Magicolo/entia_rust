@@ -8,7 +8,7 @@ pub struct Query<'a, I: Item> {
     states: &'a Vec<(I::State, Arc<Segment>)>,
 }
 
-pub struct QueryState<I: Item>(usize, Vec<(I::State, Arc<Segment>)>, Arc<Vec<Segment>>);
+pub struct QueryState<I: Item>(usize, Vec<(I::State, Arc<Segment>)>);
 
 pub struct QueryIterator<'a, I: Item> {
     index: usize,
@@ -83,25 +83,23 @@ impl<'a, I: Item> Iterator for QueryIterator<'a, I> {
 impl<'a, I: Item + 'static> Inject for Query<'a, I> {
     type State = QueryState<I>;
 
-    fn initialize(world: &mut World) -> Option<Self::State> {
-        todo!()
-        // Some(State((0, Vec::new().into(), world)))
+    fn initialize(_: &mut World) -> Option<Self::State> {
+        Some(QueryState(0, Vec::new()))
     }
 
     fn update(state: &mut Self::State, world: &mut World) {
         while let Some(segment) = world.segments.get(state.0) {
             if let Some(item) = I::initialize(&segment) {
-                todo!()
-                // state.1.push((item, &segment));
+                state.1.push((item, segment.clone()));
             }
             state.0 += 1;
         }
     }
 
-    fn dependencies(state: &Self::State, world: &World) -> Vec<Dependency> {
+    fn dependencies(state: &Self::State, _: &World) -> Vec<Dependency> {
         let mut dependencies = Vec::new();
-        for (state, _) in state.1.iter() {
-            dependencies.append(&mut I::dependencies(state));
+        for (item, _) in state.1.iter() {
+            dependencies.append(&mut I::dependencies(item));
         }
         dependencies
     }
@@ -110,7 +108,7 @@ impl<'a, I: Item + 'static> Inject for Query<'a, I> {
 impl<'a, I: Item> Get<'a> for QueryState<I> {
     type Item = Query<'a, I>;
 
-    fn get(&'a mut self, world: &World) -> Self::Item {
+    fn get(&'a mut self, _: &World) -> Self::Item {
         Query { states: &self.1 }
     }
 }
