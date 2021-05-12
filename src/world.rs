@@ -1,11 +1,9 @@
 use crate::entity::*;
-use crate::initialize::*;
 use crate::system::*;
 use std::any::Any;
 use std::any::TypeId;
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
-use std::sync::atomic::AtomicU32;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -14,6 +12,7 @@ pub struct Template<T>(T);
 
 pub struct Datum {
     pub(crate) index: u32,
+    pub(crate) store: Arc<Store<Entity>>,
     pub(crate) segment: Arc<Segment>,
 }
 
@@ -26,19 +25,14 @@ pub struct Meta {
 pub struct World {
     pub(crate) identifier: usize,
     pub(crate) segments: Vec<Arc<Segment>>,
-    free: Vec<Entity>,
-    last: AtomicU32,
-    capacity: AtomicUsize,
-    data: Vec<Datum>,
     metas: HashMap<TypeId, Meta>,
 }
 
 pub struct Segment {
     pub(crate) index: usize,
-    pub(crate) count: usize,
+    pub(crate) count: AtomicUsize,
     pub(crate) capacity: usize,
     pub(crate) indices: HashMap<TypeId, usize>,
-    pub(crate) entities: Arc<Store<Entity>>,
     pub(crate) stores: Box<[(Meta, Arc<dyn Any + Sync + Send>)]>,
 }
 
@@ -50,10 +44,6 @@ impl World {
         static COUNTER: AtomicUsize = AtomicUsize::new(0);
         Self {
             identifier: COUNTER.fetch_add(1, Ordering::Relaxed),
-            free: Vec::new().into(),
-            last: 0.into(),
-            capacity: 0.into(),
-            data: Vec::new(),
             segments: Vec::new(),
             metas: HashMap::new(),
         }
@@ -64,48 +54,6 @@ impl World {
             schedules: Vec::new(),
             world: self,
         }
-    }
-
-    pub fn create_entity(&mut self, initialize: impl Initialize) -> (Entity, Arc<Segment>) {
-        let (entities, segment): ([_; 1], _) = self.create_entities(initialize);
-        (entities[0], segment)
-    }
-
-    pub fn create_entities<const N: usize>(
-        &mut self,
-        initialize: impl Initialize,
-    ) -> ([Entity; N], Arc<Segment>) {
-        let entities = self.reserve_entities();
-        let segment = self.initialize_entities(&entities, initialize);
-        (entities, segment)
-    }
-
-    pub fn reserve_entities<const N: usize>(&self) -> [Entity; N] {
-        // TODO: use 'MaybeUninit'?
-        let mut entities = [Entity::default(); N];
-        entities
-    }
-
-    pub fn initialize_entities<I: Initialize>(
-        &mut self,
-        entities: &[Entity],
-        initialize: I,
-    ) -> Arc<Segment> {
-        let metas = I::metas(self);
-        let segment = self.get_or_add_segment(&metas, None);
-        todo!();
-        segment
-    }
-
-    pub fn has_entity(&self, entity: Entity) -> bool {
-        match self.get_datum(entity) {
-            Some(datum) => *unsafe { datum.segment.entities.at(datum.index as usize) } == entity,
-            None => false,
-        }
-    }
-
-    pub fn destroy_entities(&mut self, entities: &[Entity]) -> usize {
-        todo!()
     }
 
     pub fn get_meta<T: Send + 'static>(&self) -> Option<Meta> {
@@ -128,35 +76,30 @@ impl World {
         }
     }
 
-    #[inline]
-    pub fn get_datum(&self, entity: Entity) -> Option<&Datum> {
-        if entity.index < self.last.load(Ordering::Relaxed) {
-            Some(&self.data[entity.index as usize])
-        } else {
-            None
-        }
+    pub fn get_segment(&self, metas: &[Meta]) -> Option<Arc<Segment>> {
+        self.get_segments(metas).next()
     }
 
-    pub fn get_segment(&self, metas: &[Meta]) -> Option<Arc<Segment>> {
-        for segment in self.segments.iter() {
-            if segment.is(metas) {
-                return Some(segment.clone());
-            }
-        }
-        None
+    pub fn get_segments<'a>(
+        &'a self,
+        metas: &'a [Meta],
+    ) -> impl Iterator<Item = Arc<Segment>> + 'a {
+        self.segments
+            .iter()
+            .filter(move |segment| segment.is(metas))
+            .cloned()
     }
 
     pub fn add_segment(&mut self, metas: &[Meta], capacity: usize) -> Arc<Segment> {
         let segment = Arc::new(Segment {
             index: self.segments.len(),
-            count: 0,
+            count: 0.into(),
             capacity,
             indices: metas
                 .iter()
                 .enumerate()
                 .map(|pair| (pair.1.identifier.clone(), pair.0))
                 .collect(),
-            entities: Store::new(capacity).into(),
             stores: metas
                 .iter()
                 .map(|meta| (meta.clone(), (meta.store)(capacity)))
@@ -185,10 +128,13 @@ impl Segment {
     }
 
     pub fn is(&self, metas: &[Meta]) -> bool {
-        self.indices.len() == metas.len()
-            && metas
-                .iter()
-                .all(|meta| self.indices.contains_key(&meta.identifier))
+        self.indices.len() == metas.len() && self.has(metas)
+    }
+
+    pub fn has(&self, metas: &[Meta]) -> bool {
+        metas
+            .iter()
+            .all(|meta| self.indices.contains_key(&meta.identifier))
     }
 
     pub fn ensure(&self, capacity: usize) -> bool {

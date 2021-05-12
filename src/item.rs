@@ -8,7 +8,7 @@ pub struct Not<I: Item>(PhantomData<I>);
 pub trait Item {
     type State: for<'a> At<'a> + 'static;
     fn initialize(segment: &Segment) -> Option<Self::State>;
-    fn dependencies(_: &Self::State) -> Vec<Dependency> {
+    fn depend(_: &Self::State, _: &World) -> Vec<Dependency> {
         vec![Dependency::Unknown]
     }
 }
@@ -27,9 +27,9 @@ impl<I: Item> Item for Option<I> {
         Some(I::initialize(segment))
     }
 
-    fn dependencies(state: &Self::State) -> Vec<Dependency> {
+    fn depend(state: &Self::State, world: &World) -> Vec<Dependency> {
         match state {
-            Some(state) => I::dependencies(state),
+            Some(state) => I::depend(state, world),
             None => Vec::new(),
         }
     }
@@ -70,7 +70,7 @@ impl<I: Item + 'static> Item for And<I> {
         }
     }
 
-    fn dependencies(_: &Self::State) -> Vec<Dependency> {
+    fn depend(_: &Self::State, _: &World) -> Vec<Dependency> {
         Vec::new()
     }
 }
@@ -92,7 +92,7 @@ impl<I: Item + 'static> Item for Not<I> {
         }
     }
 
-    fn dependencies(_: &Self::State) -> Vec<Dependency> {
+    fn depend(_: &Self::State, _: &World) -> Vec<Dependency> {
         Vec::new()
     }
 }
@@ -106,9 +106,9 @@ macro_rules! matcher {
                 Some(($($t::initialize(_segment)?,)*))
             }
 
-            fn dependencies(($($p,)*): &Self::State) -> Vec<Dependency> {
+            fn depend(($($p,)*): &Self::State, _world: &World) -> Vec<Dependency> {
                 let mut _dependencies = Vec::new();
-                $(_dependencies.append(&mut $t::dependencies($p));)*
+                $(_dependencies.append(&mut $t::depend($p, _world));)*
                 _dependencies
             }
         }

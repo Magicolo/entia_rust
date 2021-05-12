@@ -40,7 +40,7 @@ impl<T: Default + 'static> Inject for Local<'_, T> {
         Some(LocalState(T::default()))
     }
 
-    fn dependencies(_: &Self::State, _: &World) -> Vec<Dependency> {
+    fn depend(_: &Self::State, _: &World) -> Vec<Dependency> {
         Vec::new()
     }
 }

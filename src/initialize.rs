@@ -1,15 +1,16 @@
-use crate::world::*;
-
 pub trait Initialize {
-    fn metas(world: &mut World) -> Vec<Meta>;
+    // fn initialize(world: &mut World);
 }
 
 macro_rules! initialize {
     ($($p:ident, $t:ident),*) => {
         impl<$($t: Send + 'static,)*> Initialize for ($($t,)*) {
-            fn metas(world: &mut World) -> Vec<Meta> {
-                vec![$(world.get_or_add_meta::<$t>(),)*]
-            }
+            // fn initialize(world: &mut World) {
+            //     $($t::initialize(world);)*
+            // }
+            // fn metas(_world: &mut World) -> Vec<Meta> {
+            //     vec![$(_world.get_or_add_meta::<$t>(),)*]
+            // }
         }
     };
 }

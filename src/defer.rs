@@ -5,19 +5,22 @@ use crate::*;
 pub struct Defer<'a>(&'a World);
 
 impl Defer<'_> {
-    pub fn create<T, const N: usize>(&self, template: Template<T>) -> [Entity; N] {
+    pub fn create<T, const N: usize>(&self, _: Template<T>) -> [Entity; N] {
         todo!();
         // use std::mem::MaybeUninit;
         // let entities = MaybeUninit::uninit_array();
         // unsafe { MaybeUninit::array_assume_init(entities) }
     }
-    pub fn destroy(&self, entities: &[Entity]) {
+
+    pub fn destroy(&self, _: &[Entity]) {
         todo!()
     }
-    pub fn add<C: Component>(&self, entity: Entity, _component: C) {
+
+    pub fn add<C: Component>(&self, _: Entity, _component: C) {
         todo!()
     }
-    pub fn remove<C: Component>(&self, entity: Entity) {
+
+    pub fn remove<C: Component>(&self, _: Entity) {
         todo!()
     }
 }
@@ -38,7 +41,7 @@ impl Inject for Defer<'_> {
         todo!()
     }
 
-    fn dependencies(_: &Self::State, _: &World) -> Vec<Dependency> {
+    fn depend(_: &Self::State, _: &World) -> Vec<Dependency> {
         Vec::new()
     }
 }

@@ -6,7 +6,7 @@ pub trait Inject {
     fn initialize(world: &mut World) -> Option<Self::State>;
     fn update(_: &mut Self::State, _: &mut World) {}
     fn resolve(_: &mut Self::State, _: &mut World) {}
-    fn dependencies(_: &Self::State, _: &World) -> Vec<Dependency> {
+    fn depend(_: &Self::State, _: &World) -> Vec<Dependency> {
         vec![Dependency::Unknown]
     }
 }
@@ -25,17 +25,17 @@ macro_rules! inject {
                 Some(($($t::initialize(_world)?,)*))
             }
 
-            fn update(($($p,)*): &mut Self::State,world: &mut World) {
-                $($t::update($p, world);)*
+            fn update(($($p,)*): &mut Self::State, _world: &mut World) {
+                $($t::update($p, _world);)*
             }
 
-            fn resolve(($($p,)*): &mut Self::State, world: &mut World) {
-                $($t::resolve($p, world);)*
+            fn resolve(($($p,)*): &mut Self::State, _world: &mut World) {
+                $($t::resolve($p, _world);)*
             }
 
-            fn dependencies(($($p,)*): &Self::State, world: &World) -> Vec<Dependency> {
+            fn depend(($($p,)*): &Self::State, _world: &World) -> Vec<Dependency> {
                 let mut _dependencies = Vec::new();
-                $(_dependencies.append(&mut $t::dependencies($p, world));)*
+                $(_dependencies.append(&mut $t::depend($p, _world));)*
                 _dependencies
             }
         }
@@ -44,9 +44,9 @@ macro_rules! inject {
             type Item = ($($t::Item,)*);
 
             #[inline]
-            fn get(&'a mut self, world: &World) -> Self::Item {
+            fn get(&'a mut self, _world: &World) -> Self::Item {
                 let ($($p,)*) = self;
-                ($($p.get(world),)*)
+                ($($p.get(_world),)*)
             }
         }
     };

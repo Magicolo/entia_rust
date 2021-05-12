@@ -23,7 +23,7 @@ pub struct System {
     run: Box<dyn FnMut(&World)>,
     update: Box<dyn FnMut(&mut World)>,
     resolve: Box<dyn FnMut(&mut World)>,
-    dependencies: Box<dyn FnMut(&World) -> Vec<Dependency>>,
+    depend: Box<dyn FnMut(&World) -> Vec<Dependency>>,
 }
 
 pub struct Scheduler<'a> {
@@ -109,7 +109,7 @@ impl Runner {
         let mut writes = HashSet::new();
 
         for mut system in systems {
-            let dependencies = (system.dependencies)(world);
+            let dependencies = (system.depend)(world);
             if Self::conflicts(&dependencies, &mut reads, &mut writes) {
                 return None;
             }
@@ -144,7 +144,7 @@ impl System {
         run: fn(&'a mut T, &World),
         update: fn(&'a mut T, &mut World),
         resolve: fn(&'a mut T, &mut World),
-        dependencies: fn(&'a mut T, &World) -> Vec<Dependency>,
+        depend: fn(&'a mut T, &World) -> Vec<Dependency>,
     ) -> Self {
         let state = Arc::new(UnsafeCell::new(state));
         // SAFETY: Since this crate controls the execution of the system's functions, it can guarantee
@@ -162,9 +162,9 @@ impl System {
                 let state = state.clone();
                 Box::new(move |world| resolve(unsafe { &mut *state.get() }, world))
             },
-            dependencies: {
+            depend: {
                 let state = state.clone();
-                Box::new(move |world| dependencies(unsafe { &mut *state.get() }, world))
+                Box::new(move |world| depend(unsafe { &mut *state.get() }, world))
             },
         }
     }
@@ -185,7 +185,7 @@ impl<'a> Scheduler<'a> {
                 |(run, state), world| run.call(state.get(world)),
                 |(_, state), world| I::update(state, world),
                 |(_, state), world| I::resolve(state, world),
-                |(_, state), world| I::dependencies(state, world),
+                |(_, state), world| I::depend(state, world),
             )
         }));
         self
@@ -205,13 +205,16 @@ impl<'a> Scheduler<'a> {
     pub fn schedule(self) -> Option<Runner> {
         let mut runs = Vec::new();
         for system in self.schedules {
-            runs.push(system?);
+            let mut system = system?;
+            (system.update)(self.world);
+            runs.push(system);
         }
+
         // TODO: return a 'Result<Runner<'a>, Error>'
         Some(Runner {
             identifier: self.world.identifier,
             systems: Runner::schedule(runs.drain(..), self.world)?,
-            segments: 0,
+            segments: self.world.segments.len(),
         })
     }
 }

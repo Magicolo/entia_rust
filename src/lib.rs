@@ -16,7 +16,7 @@ pub mod world;
 pub use call::Call;
 pub use component::Component;
 pub use defer::Defer;
-pub use entity::Entity;
+pub use entity::{Entities, Entity};
 pub use inject::Inject;
 pub use item::{And, Item, Not};
 pub use local::Local;
@@ -99,6 +99,12 @@ mod test {
         struct Velocity(f64, f64, f64);
         #[derive(Clone)]
         struct OnKill(Entity);
+        impl Resource for Time {}
+        impl Resource for Physics {}
+        impl Component for Frozen {}
+        impl Component for Position {}
+        impl Component for Velocity {}
+        impl Message for OnKill {}
 
         fn physics(scheduler: Scheduler) -> Scheduler {
             scheduler.system(|_: ((), ())| {})
@@ -174,6 +180,8 @@ mod test {
             .system({
                 #[derive(Default)]
                 struct Private(usize);
+                impl Resource for Private {}
+
                 let mut counter = 0;
                 move |mut state: Local<usize>, resource: &mut Private| {
                     *state += counter;
@@ -185,6 +193,8 @@ mod test {
             .system(|mut on_kill: Emit<OnKill>| on_kill.emit(OnKill(Entity::default())))
             .system(|on_kill: Receive<OnKill>| for _ in on_kill {})
             .system(|mut on_kill: Receive<OnKill>| while let Some(_) = on_kill.next() {})
+            .system(|_: &Entities| {})
+            .system(|_: &mut Entities| {})
             .schedule()
             .unwrap();
 

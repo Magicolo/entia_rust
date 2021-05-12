@@ -5,8 +5,6 @@ use std::any::TypeId;
 use std::sync::Arc;
 
 pub trait Component: Send + 'static {}
-impl<T: Send + 'static> Component for T {}
-
 pub struct ReadState<C: Component>(Arc<Store<C>>, usize);
 pub struct WriteState<C: Component>(Arc<Store<C>>, usize);
 
@@ -17,8 +15,10 @@ impl<C: Component> Item for &C {
         Some(ReadState(segment.store()?, segment.index))
     }
 
-    fn dependencies(state: &Self::State) -> Vec<Dependency> {
-        vec![Dependency::Read(state.1, TypeId::of::<C>())]
+    fn depend(state: &Self::State, _: &World) -> Vec<Dependency> {
+        let mut dependencies = Vec::new();
+        dependencies.push(Dependency::Read(state.1, TypeId::of::<C>()));
+        dependencies
     }
 }
 
@@ -38,8 +38,10 @@ impl<C: Component> Item for &mut C {
         Some(WriteState(segment.store()?, segment.index))
     }
 
-    fn dependencies(state: &Self::State) -> Vec<Dependency> {
-        vec![Dependency::Write(state.1, TypeId::of::<C>())]
+    fn depend(state: &Self::State, _: &World) -> Vec<Dependency> {
+        let mut dependencies = Vec::new();
+        dependencies.push(Dependency::Write(state.1, TypeId::of::<C>()));
+        dependencies
     }
 }
 
