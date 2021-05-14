@@ -23,8 +23,3 @@ crate::recurse!(
     p21, T21, p22, T22, p23, T23, p24, T24, p25, T25, p26, T26, p27, T27, p28, T28, p29, T29, p30,
     T30, p31, T31, p32, T32
 );
-
-fn boba() {
-    let k = 765;
-    let a = (&k).prepend(());
-}

@@ -64,8 +64,9 @@ impl At<'_> for EntityState {
 impl Entities<'_> {
     pub fn create<const N: usize>(&self) -> [Entity; N] {
         // TODO: use 'MaybeUninit'?
-        let mut entities = [Entity::ZERO; N];
-        entities
+        // let mut entities = [Entity::ZERO; N];
+        // entities
+        todo!()
     }
 
     pub fn has(&self, entity: Entity) -> bool {
@@ -75,7 +76,7 @@ impl Entities<'_> {
         }
     }
 
-    pub fn destroy(&mut self, entities: &[Entity]) -> usize {
+    pub fn destroy(&mut self, _entities: &[Entity]) -> usize {
         todo!()
     }
 

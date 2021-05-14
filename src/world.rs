@@ -1,6 +1,5 @@
 use crate::entity::*;
 use crate::inject::*;
-use crate::system::*;
 use std::any::Any;
 use std::any::TypeId;
 use std::cell::UnsafeCell;
@@ -12,7 +11,7 @@ use std::sync::Arc;
 pub struct Datum {
     pub(crate) index: u32,
     pub(crate) store: Arc<Store<Entity>>,
-    pub(crate) segment: Arc<Segment>,
+    pub(crate) _segment: Arc<Segment>,
 }
 
 #[derive(Clone)]
