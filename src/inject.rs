@@ -1,5 +1,5 @@
-use crate::call::*;
-use crate::prepend::*;
+use crate::core::call::*;
+use crate::core::prepend::*;
 use crate::schedule::*;
 use crate::system::*;
 use crate::world::*;
@@ -98,4 +98,4 @@ macro_rules! inject {
     };
 }
 
-crate::recurse_32!(inject);
+entia_macro::recurse_32!(inject);

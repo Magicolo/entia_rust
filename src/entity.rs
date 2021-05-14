@@ -24,7 +24,7 @@ struct EntitiesInner {
     pub capacity: AtomicUsize,
     pub data: Vec<Datum>,
 }
-impl Resource for EntitiesInner {}
+// impl Resource for EntitiesInner {}
 
 impl Entity {
     pub const ZERO: Self = Self {

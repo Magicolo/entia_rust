@@ -18,4 +18,4 @@ macro_rules! append {
     };
 }
 
-crate::recurse_32!(append);
+entia_macro::recurse_32!(append);

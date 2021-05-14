@@ -1,4 +1,3 @@
-use crate::component::*;
 use crate::inject::*;
 use crate::query::*;
 use crate::system::*;
@@ -10,6 +9,8 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 pub trait Message: Clone + Send + 'static {}
+impl<T: Clone + Send + 'static> Message for T {}
+
 pub struct Emit<'a, M: Message>(Query<'a, Write<Messages<M>>>);
 pub struct EmitState<M: Message>(QueryState<Write<Messages<M>>>);
 pub struct Receive<'a, M: Message>(&'a mut Messages<M>);
@@ -22,7 +23,6 @@ struct Messages<M: Message> {
     messages: VecDeque<M>,
     capacity: usize,
 }
-impl<M: Message> Component for Messages<M> {}
 
 /*
 - Allow for entity-less segments for messages?

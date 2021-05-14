@@ -7,6 +7,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 pub trait Resource: Default + Send + 'static {}
+impl<T: Default + Send + 'static> Resource for T {}
 
 impl<R: Resource> Inject for &R {
     type Input = <Read<R> as Inject>::Input;

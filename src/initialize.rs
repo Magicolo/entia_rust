@@ -15,4 +15,4 @@ macro_rules! initialize {
     };
 }
 
-crate::recurse_32!(initialize);
+entia_macro::recurse_32!(initialize);
