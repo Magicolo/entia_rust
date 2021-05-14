@@ -24,10 +24,6 @@ pub struct System {
     pub(crate) depend: Box<dyn FnMut(&World) -> Vec<Dependency>>,
 }
 
-// pub trait IntoSystem<'a, M = ()> {
-//     fn system(self, world: &mut World) -> Option<System>;
-// }
-
 unsafe impl Send for System {}
 
 impl Runner {
@@ -196,42 +192,3 @@ impl System {
         }
     }
 }
-
-// impl IntoSystem<'_> for System {
-//     fn system(self, _: &mut World) -> Option<System> {
-//         Some(self)
-//     }
-// }
-
-// impl<'a, F: FnMut(Injector) -> Option<System> + 'a> IntoSystem<'a> for F {
-//     fn system(mut self, world: &mut World) -> Option<System> {
-//         self(world.injector())
-//     }
-// }
-
-// impl<'a, I: Inject, C: Call<I, ()> + Call<<I::State as Get<'a>>::Item, ()> + 'static>
-//     IntoSystem<'a, [I; 3]> for C
-// where
-//     I::Input: Default,
-// {
-//     fn system(self, world: &mut World) -> Option<System> {
-//         IntoSystem::<[I; 4]>::system((I::Input::default(), self), world)
-//     }
-// }
-
-// impl<'a, I: Inject, C: Call<I, ()> + Call<<I::State as Get<'a>>::Item, ()> + 'static>
-//     IntoSystem<'a, [I; 4]> for (I::Input, C)
-// {
-//     fn system(self, world: &mut World) -> Option<System> {
-//         let state = I::initialize(self.0, world)?;
-//         Some(unsafe {
-//             System::new(
-//                 (self.1, state),
-//                 |(run, state), world| run.call(state.get(world)),
-//                 |(_, state), world| I::update(state, world),
-//                 |(_, state), world| I::resolve(state, world),
-//                 |(_, state), world| I::depend(state, world),
-//             )
-//         })
-//     }
-// }
