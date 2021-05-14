@@ -1,60 +1,57 @@
 use crate::inject::*;
+use crate::read::*;
 use crate::system::*;
 use crate::world::*;
-use std::any::TypeId;
+use crate::write::*;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 pub trait Resource: Default + Send + 'static {}
-pub struct ReadState<R: Resource>(pub(crate) Arc<Store<R>>, pub(crate) Arc<Segment>);
-pub struct WriteState<R: Resource>(pub(crate) Arc<Store<R>>, pub(crate) Arc<Segment>);
 
 impl<R: Resource> Inject for &R {
-    type State = ReadState<R>;
+    type Input = <Read<R> as Inject>::Input;
+    type State = <Read<R> as Inject>::State;
 
-    fn initialize(world: &mut World) -> Option<Self::State> {
-        initialize(R::default, world).map(|pair| ReadState(pair.0, pair.1))
+    fn initialize(input: Self::Input, world: &mut World) -> Option<Self::State> {
+        <Read<R> as Inject>::initialize(input, world)
     }
 
-    fn depend(state: &Self::State, _: &World) -> Vec<Dependency> {
-        let mut dependencies = Vec::new();
-        dependencies.push(Dependency::Read(state.1.index, TypeId::of::<R>()));
-        dependencies
+    fn update(state: &mut Self::State, world: &mut World) {
+        <Read<R> as Inject>::update(state, world);
     }
-}
 
-impl<'a, R: Resource> Get<'a> for ReadState<R> {
-    type Item = &'a R;
+    fn resolve(state: &mut Self::State, world: &mut World) {
+        <Read<R> as Inject>::resolve(state, world);
+    }
 
-    fn get(&'a mut self, _: &World) -> Self::Item {
-        unsafe { self.0.at(0) }
+    fn depend(state: &Self::State, world: &World) -> Vec<Dependency> {
+        <Read<R> as Inject>::depend(state, world)
     }
 }
 
 impl<R: Resource> Inject for &mut R {
-    type State = WriteState<R>;
+    type Input = <Write<R> as Inject>::Input;
+    type State = <Write<R> as Inject>::State;
 
-    fn initialize(world: &mut World) -> Option<Self::State> {
-        initialize(R::default, world).map(|pair| WriteState(pair.0, pair.1))
+    fn initialize(input: Self::Input, world: &mut World) -> Option<Self::State> {
+        <Write<R> as Inject>::initialize(input, world)
     }
 
-    fn depend(state: &Self::State, _: &World) -> Vec<Dependency> {
-        let mut dependencies = Vec::new();
-        dependencies.push(Dependency::Write(state.1.index, TypeId::of::<R>()));
-        dependencies
+    fn update(state: &mut Self::State, world: &mut World) {
+        <Write<R> as Inject>::update(state, world);
     }
-}
 
-impl<'a, R: Resource> Get<'a> for WriteState<R> {
-    type Item = &'a mut R;
+    fn resolve(state: &mut Self::State, world: &mut World) {
+        <Write<R> as Inject>::resolve(state, world);
+    }
 
-    fn get(&'a mut self, _: &World) -> Self::Item {
-        unsafe { self.0.at(0) }
+    fn depend(state: &Self::State, world: &World) -> Vec<Dependency> {
+        <Write<R> as Inject>::depend(state, world)
     }
 }
 
 pub(crate) fn initialize<T: Send + 'static>(
-    provide: impl Fn() -> T,
+    provide: impl FnOnce() -> T,
     world: &mut World,
 ) -> Option<(Arc<Store<T>>, Arc<Segment>)> {
     let meta = world.get_or_add_meta::<T>();

@@ -1,3 +1,4 @@
+pub mod append;
 pub mod call;
 pub mod change;
 pub mod component;
@@ -8,23 +9,28 @@ pub mod inject;
 pub mod item;
 pub mod local;
 pub mod message;
+pub mod prepend;
 pub mod query;
+pub mod read;
 pub mod resource;
+pub mod schedule;
 pub mod system;
 pub mod world;
+pub mod write;
 
 pub use call::Call;
 pub use component::Component;
 pub use defer::Defer;
 pub use entity::{Entities, Entity};
-pub use inject::Inject;
+pub use inject::{Inject, Injector};
 pub use item::{And, Item, Not};
 pub use local::Local;
 pub use message::{Emit, Message, Receive};
 pub use query::Query;
 pub use resource::Resource;
-pub use system::{Runner, Scheduler};
-pub use world::{Template, World};
+pub use schedule::Scheduler;
+pub use system::Runner;
+pub use world::World;
 
 /*
 - Each 'World' instance could have a unique identifier (a simple counter would do) such that a runner that runs over a 'World'
@@ -74,13 +80,9 @@ macro_rules! recurse {
     ($m:ident) => {
         $m!();
     };
-    ($m:ident, $a:ident, $b:ident) => {
-        $m!($a, $b);
-        crate::recurse!($m);
-    };
-    ($m:ident, $a:ident, $b:ident, $($as:ident, $bs:ident),*) => {
-        $m!($a, $b, $($as, $bs),*);
-        crate::recurse!($m, $($as, $bs),*);
+    ($m:ident, $a:ident, $b:ident $(,$as:ident, $bs:ident)*) => {
+        $m!($a, $b $(,$as, $bs)*);
+        crate::recurse!($m $(,$as, $bs)*);
     };
 }
 
@@ -106,13 +108,13 @@ mod test {
         impl Component for Velocity {}
         impl Message for OnKill {}
 
-        fn physics(scheduler: Scheduler) -> Scheduler {
-            scheduler.system(|_: ((), ())| {})
-        }
+        // fn physics(scheduler: Scheduler) -> Scheduler {
+        //     scheduler.schedule(|_: ((), ())| {})
+        // }
 
-        fn ui(scheduler: Scheduler) -> Scheduler {
-            scheduler.system(|_: ()| {})
-        }
+        // fn ui(scheduler: Scheduler) -> Scheduler {
+        //     scheduler.schedule(|_: ()| {})
+        // }
 
         fn motion(group: Query<(&mut Position, &Velocity)>) {
             group.each(|(position, velocity)| {
@@ -125,35 +127,55 @@ mod test {
         let mut world = World::new();
         let mut runner = world
             .scheduler()
-            .pipe(physics)
-            .pipe(ui)
+            // .pipe(physics)
+            // .pipe(ui)
             .synchronize()
-            .system(|_: ()| {})
-            .system(|_: &Time| {})
-            .system(|_: (&Time,)| {})
-            .system(|_: &Time, _: &Physics, _: &mut Time, _: &mut Physics| {})
-            .system(|_: (&Time, &Physics, &mut Time, &mut Physics)| {})
-            .system(|_: (&Time, &Physics)| {})
-            .system(|group: Query<Entity>| for _ in &group {})
-            .system(
+            // .schedule(|_: ()| {})
+            // .schedule(|_: &World| {})
+            .schedule(|_: &Time| {})
+            .schedule(|_: (&Time,)| {})
+            .schedule(|_: &Time, _: &Physics, _: &mut Time, _: &mut Physics| {})
+            .schedule(|_: &Time, _: &Physics, _: &mut Time, _: &mut Physics| {})
+            .schedule(|_: (&Time, &Physics, &mut Time, &mut Physics)| {})
+            .schedule(|_: (&Time, &Physics)| {})
+            .schedule(|group: Query<Entity>| for _ in &group {})
+            .schedule(
                 |(group,): (Query<(Entity, &mut Position)>,)| {
                     for _ in &group {}
                 },
             )
-            .system(|_: Query<(Entity, Not<&Frozen>, And<&Position>)>| {})
-            .system(|_: Query<(Entity, (&Position, &Velocity))>| {})
-            .system(|group: Query<(&mut Position, &mut Position)>| {
-                group.each(|(_1, _2)| {});
-                group.each(|_12| {});
-                for _12 in &group {}
-                for (_1, _2) in &group {}
+            .schedule(|_: Query<(Entity, Not<&Frozen>, And<&Position>)>| {})
+            .schedule(|_: Query<(Entity, (&Position, &Velocity))>| {})
+            .schedule(|query: Query<(&mut Position, &mut Position)>| {
+                query.each(|(_1, _2)| {});
+                query.each(|_12| {});
+                for _12 in &query {}
+                for (_1, _2) in &query {}
             })
-            // .system(|_: &'static Time| {})
-            .system(|_: (&Time, &Physics)| {})
-            .system(|_: (&Time, Query<Option<&Position>>)| {})
+            // .schedule(|_: &'static Time| {})
+            // .schedule(|_: &mut World| {
+            //     let mut counter = 1.;
+            //     move |time: &Time, _: &World| {
+            //         counter += time.0 * counter;
+            //     }
+            // })
+            .schedule(|injector: Injector| {
+                injector
+                    .inject::<&Time>()
+                    .inject::<&mut Physics>()
+                    .inject::<Emit<OnKill>>()
+                    .inject_with::<Receive<OnKill>>(8)
+                    .inject::<Query<(Entity, &mut Position, &Velocity)>>()
+                    .schedule(|_a, _b, _c, _d, _e| {})
+            })
+            .schedule(|_: (&Time, &Physics)| {})
+            .schedule(|_: (&Time, &Physics)| {})
+            .schedule(|_: (&Time, Query<Option<&Position>>)| {})
             .synchronize()
-            .system(|_: (&Physics, Query<&Velocity>)| {})
-            .system(
+            .schedule(|(_, query): (&Physics, Query<&mut Velocity>)| {
+                query.each(|velocity| velocity.0 += 1.)
+            })
+            .schedule(
                 |(time, groups): (&Time, (Query<&mut Position>, Query<&mut Velocity>))| {
                     groups.1.each(|velocity| {
                         velocity.0 += time.0;
@@ -177,7 +199,7 @@ mod test {
                     }
                 },
             )
-            .system({
+            .schedule({
                 #[derive(Default)]
                 struct Private(usize);
                 impl Resource for Private {}
@@ -189,13 +211,13 @@ mod test {
                     counter += counter;
                 }
             })
-            .system(motion)
-            .system(|mut on_kill: Emit<OnKill>| on_kill.emit(OnKill(Entity::default())))
-            .system(|on_kill: Receive<OnKill>| for _ in on_kill {})
-            .system(|mut on_kill: Receive<OnKill>| while let Some(_) = on_kill.next() {})
-            .system(|_: &Entities| {})
-            .system(|_: &mut Entities| {})
-            .schedule()
+            .schedule(motion)
+            .schedule(|mut on_kill: Emit<OnKill>| on_kill.emit(OnKill(Entity::default())))
+            .schedule_with((8,), |on_kill: Receive<OnKill>| for _ in on_kill {})
+            .schedule(|on_kill: Receive<OnKill>| for _ in on_kill {})
+            .schedule(|mut on_kill: Receive<OnKill>| while let Some(_) = on_kill.next() {})
+            .schedule(|_: Entities| {})
+            .runner()
             .unwrap();
 
         loop {

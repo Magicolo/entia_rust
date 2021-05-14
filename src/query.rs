@@ -11,7 +11,7 @@ pub struct Query<'a, I: Item> {
     states: &'a Vec<(I::State, Arc<Segment>)>,
 }
 
-pub struct QueryState<I: Item>(usize, Vec<(I::State, Arc<Segment>)>);
+pub struct QueryState<I: Item>(usize, Vec<(I::State, Arc<Segment>)>, Filter);
 
 pub struct QueryIterator<'a, I: Item> {
     index: usize,
@@ -20,9 +20,36 @@ pub struct QueryIterator<'a, I: Item> {
     query: Query<'a, I>,
 }
 
-impl<'a, I: Item> Query<'a, I> {
+pub struct Filter(fn(&Segment) -> bool);
+
+impl Default for Filter {
+    fn default() -> Self {
+        Self::with::<Entity>()
+    }
+}
+
+impl Filter {
+    pub const TRUE: Self = Self(|_| true);
+    pub const FALSE: Self = Self(|_| false);
+
     #[inline]
-    pub fn each<F: FnMut(<I::State as At>::Item)>(&self, mut each: F) {
+    pub fn new(filter: fn(&Segment) -> bool) -> Self {
+        Self(filter)
+    }
+
+    #[inline]
+    pub fn with<T: Send + 'static>() -> Self {
+        Self::new(|segment| segment.store::<T>().is_some())
+    }
+
+    #[inline]
+    pub fn filter(&self, segment: &Segment) -> bool {
+        self.0(segment)
+    }
+}
+
+impl<'a, I: Item> Query<'a, I> {
+    pub fn each<F: FnMut(<I::State as At<'a>>::Item)>(&self, mut each: F) {
         for (item, segment) in self.states.iter() {
             let count = segment.count.load(Ordering::Relaxed);
             for i in 0..count {
@@ -93,18 +120,18 @@ impl<'a, I: Item> Iterator for QueryIterator<'a, I> {
 }
 
 impl<'a, I: Item + 'static> Inject for Query<'a, I> {
+    type Input = Filter;
     type State = QueryState<I>;
 
-    fn initialize(_: &mut World) -> Option<Self::State> {
-        Some(QueryState(0, Vec::new()))
+    fn initialize(input: Self::Input, _: &mut World) -> Option<Self::State> {
+        Some(QueryState(0, Vec::new(), input))
     }
 
     fn update(state: &mut Self::State, world: &mut World) {
         while let Some(segment) = world.segments.get(state.0) {
             state.0 += 1;
 
-            // Only segments with entities can be queried.
-            if let Some(_) = segment.store::<Entity>() {
+            if state.2.filter(segment) {
                 if let Some(item) = I::initialize(&segment) {
                     state.1.push((item, segment.clone()));
                 }
@@ -122,7 +149,7 @@ impl<'a, I: Item + 'static> Inject for Query<'a, I> {
     }
 }
 
-impl<'a, I: Item> Get<'a> for QueryState<I> {
+impl<'a, I: Item + 'static> Get<'a> for QueryState<I> {
     type Item = Query<'a, I>;
 
     fn get(&'a mut self, _: &World) -> Self::Item {

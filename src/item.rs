@@ -97,7 +97,7 @@ impl<I: Item + 'static> Item for Not<I> {
     }
 }
 
-macro_rules! matcher {
+macro_rules! item {
     ($($p:ident, $t:ident),*) => {
         impl<$($t: Item,)*> Item for ($($t,)*) {
             type State = ($($t::State,)*);
@@ -126,7 +126,8 @@ macro_rules! matcher {
 }
 
 crate::recurse!(
-    matcher, matcher0, Q0, matcher1, Q1, matcher2, Q2, matcher3, Q3, matcher4, Q4, matcher5, Q5,
-    matcher6, Q6, matcher7, Q7, matcher8, Q8, matcher9, Q9, matcher10, Q10, matcher11, Q11,
-    matcher12, Q12, matcher13, Q13, matcher14, Q14, matcher15, Q15
+    item, p1, T1, p2, T2, p3, T3, p4, T4, p5, T5, p6, T6, p7, T7, p8, T8, p9, T9, p10, T10, p11,
+    T11, p12, T12, p13, T13, p14, T14, p15, T15, p16, T16, p17, T17, p18, T18, p19, T19, p20, T20,
+    p21, T21, p22, T22, p23, T23, p24, T24, p25, T25, p26, T26, p27, T27, p28, T28, p29, T29, p30,
+    T30, p31, T31, p32, T32
 );

@@ -5,7 +5,7 @@ use std::ops::Deref;
 use std::ops::DerefMut;
 
 pub struct Local<'a, T: Default>(pub(crate) &'a mut T);
-pub struct LocalState<T>(T);
+pub struct State<T>(T);
 
 impl<T: Default> AsRef<T> for Local<'_, T> {
     fn as_ref(&self) -> &T {
@@ -34,10 +34,11 @@ impl<T: Default> DerefMut for Local<'_, T> {
 }
 
 impl<T: Default + 'static> Inject for Local<'_, T> {
-    type State = LocalState<T>;
+    type Input = Option<T>;
+    type State = State<T>;
 
-    fn initialize(_: &mut World) -> Option<Self::State> {
-        Some(LocalState(T::default()))
+    fn initialize(input: Self::Input, _: &mut World) -> Option<Self::State> {
+        Some(State(input.unwrap_or_default()))
     }
 
     fn depend(_: &Self::State, _: &World) -> Vec<Dependency> {
@@ -45,7 +46,7 @@ impl<T: Default + 'static> Inject for Local<'_, T> {
     }
 }
 
-impl<'a, T: Default + 'a> Get<'a> for LocalState<T> {
+impl<'a, T: Default + 'static> Get<'a> for State<T> {
     type Item = Local<'a, T>;
 
     #[inline]

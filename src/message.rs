@@ -1,15 +1,28 @@
+use crate::component::*;
 use crate::inject::*;
+use crate::query::*;
 use crate::system::*;
 use crate::world::*;
+use crate::write::*;
 use std::any::TypeId;
+use std::collections::VecDeque;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 pub trait Message: Clone + Send + 'static {}
-pub struct Emit<'a, M: Message>(&'a Vec<(Arc<Store<M>>, Arc<Segment>)>);
-pub struct EmitState<M: Message>(usize, Vec<(Arc<Store<M>>, Arc<Segment>)>);
-pub struct Receive<'a, M: Message>(usize, usize, &'a Store<M>, &'a Segment);
-pub struct ReceiveState<M: Message>(Arc<Store<M>>, Arc<Segment>);
+pub struct Emit<'a, M: Message>(Query<'a, Write<Messages<M>>>);
+pub struct EmitState<M: Message>(QueryState<Write<Messages<M>>>);
+pub struct Receive<'a, M: Message>(&'a mut Messages<M>);
+pub struct ReceiveState<M: Message> {
+    index: usize,
+    store: Arc<Store<Messages<M>>>,
+    segment: Arc<Segment>,
+}
+struct Messages<M: Message> {
+    messages: VecDeque<M>,
+    capacity: usize,
+}
+impl<M: Message> Component for Messages<M> {}
 
 /*
 - Allow for entity-less segments for messages?
@@ -23,40 +36,37 @@ pub struct ReceiveState<M: Message>(Arc<Store<M>>, Arc<Segment>);
 
 impl<M: Message> Emit<'_, M> {
     pub fn emit(&mut self, message: M) {
-        for (store, segment) in self.0 {
-            let count = segment.count.fetch_add(1, Ordering::Relaxed);
-            let index = count - 1;
-            segment.ensure(count);
-            *unsafe { store.at(index) } = message.clone();
-        }
+        self.0.each(|messages| {
+            if messages.capacity > 0 {
+                while messages.messages.len() >= messages.capacity {
+                    messages.messages.pop_front();
+                }
+            }
+
+            messages.messages.push_back(message.clone());
+        });
     }
 }
 
-impl<M: Message> Inject for Emit<'_, M> {
+impl<'a, M: Message> Inject for Emit<'a, M> {
+    type Input = ();
     type State = EmitState<M>;
 
-    fn initialize(_: &mut World) -> Option<Self::State> {
-        Some(EmitState(0, Vec::new()))
+    fn initialize(_: Self::Input, world: &mut World) -> Option<Self::State> {
+        <Query<'a, Write<Messages<M>>> as Inject>::initialize(Filter::TRUE, world)
+            .map(|state| EmitState(state))
     }
 
-    fn update(state: &mut Self::State, world: &mut World) {
-        while let Some(segment) = world.segments.get(state.0) {
-            state.0 += 1;
-
-            if segment.stores.len() == 1 {
-                if let Some(store) = segment.store() {
-                    state.1.push((store, segment.clone()));
-                }
-            }
-        }
+    fn update(EmitState(state): &mut Self::State, world: &mut World) {
+        <Query<'a, Write<Messages<M>>> as Inject>::update(state, world);
     }
 
-    fn depend(state: &Self::State, _: &World) -> Vec<Dependency> {
-        let mut dependencies = Vec::new();
-        for (_, segment) in state.1.iter() {
-            dependencies.push(Dependency::Write(segment.index, TypeId::of::<M>()));
-        }
-        dependencies
+    fn resolve(EmitState(state): &mut Self::State, world: &mut World) {
+        <Query<'a, Write<Messages<M>>> as Inject>::resolve(state, world);
+    }
+
+    fn depend(EmitState(state): &Self::State, world: &World) -> Vec<Dependency> {
+        <Query<'a, Write<Messages<M>>> as Inject>::depend(state, world)
     }
 }
 
@@ -64,8 +74,8 @@ impl<'a, M: Message> Get<'a> for EmitState<M> {
     type Item = Emit<'a, M>;
 
     #[inline]
-    fn get(&'a mut self, _: &World) -> Self::Item {
-        Emit(&self.1)
+    fn get(&'a mut self, world: &'a World) -> Self::Item {
+        Emit(self.0.get(world))
     }
 }
 
@@ -74,45 +84,34 @@ impl<M: Message> Iterator for Receive<'_, M> {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        let index = self.0;
-        if index < self.1 {
-            self.0 += 1;
-            Some(unsafe { std::ptr::read(self.2.at(index) as *const M) })
-        } else {
-            None
-        }
-    }
-}
-
-impl<M: Message> Drop for Receive<'_, M> {
-    fn drop(&mut self) {
-        let index = self.0;
-        let count = self.3.count.fetch_sub(index, Ordering::Relaxed);
-        if count > 0 {
-            unsafe {
-                let source = self.2.at(index);
-                let target = self.2.at(0);
-                if index < count {
-                    std::ptr::copy_nonoverlapping(source as *const M, target as *mut M, count);
-                } else {
-                    std::ptr::copy(source as *const M, target as *mut M, count);
-                }
-            }
-        }
+        self.0.messages.pop_front()
     }
 }
 
 impl<M: Message> Inject for Receive<'_, M> {
+    type Input = usize;
     type State = ReceiveState<M>;
 
-    fn initialize(world: &mut World) -> Option<Self::State> {
+    fn initialize(input: Self::Input, world: &mut World) -> Option<Self::State> {
         let meta = world.get_or_add_meta::<M>();
         let segment = world.add_segment(&[meta], 8);
-        Some(ReceiveState(segment.store()?, segment))
+        let store = segment.store()?;
+        let count = segment.count.fetch_add(1, Ordering::Relaxed);
+        let index = count - 1;
+        segment.ensure(count);
+        *unsafe { store.at(index) } = Messages {
+            messages: VecDeque::new(),
+            capacity: input,
+        };
+        Some(ReceiveState {
+            index,
+            store,
+            segment,
+        })
     }
 
     fn depend(state: &Self::State, _: &World) -> Vec<Dependency> {
-        vec![Dependency::Write(state.1.index, TypeId::of::<M>())]
+        vec![Dependency::Write(state.segment.index, TypeId::of::<M>())]
     }
 }
 
@@ -121,6 +120,6 @@ impl<'a, M: Message> Get<'a> for ReceiveState<M> {
 
     #[inline]
     fn get(&'a mut self, _: &World) -> Self::Item {
-        Receive(0, self.1.count.load(Ordering::Relaxed), &self.0, &self.1)
+        Receive(unsafe { self.store.at(self.index) })
     }
 }

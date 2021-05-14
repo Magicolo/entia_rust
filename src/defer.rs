@@ -1,3 +1,4 @@
+use crate::initialize::*;
 use crate::system::*;
 use crate::world::*;
 use crate::*;
@@ -5,7 +6,7 @@ use crate::*;
 pub struct Defer<'a>(&'a World);
 
 impl Defer<'_> {
-    pub fn create<T, const N: usize>(&self, _: Template<T>) -> [Entity; N] {
+    pub fn create<T, const N: usize>(&self, _: impl Initialize) -> [Entity; N] {
         todo!();
         // use std::mem::MaybeUninit;
         // let entities = MaybeUninit::uninit_array();
@@ -26,9 +27,10 @@ impl Defer<'_> {
 }
 
 impl Inject for Defer<'_> {
+    type Input = ();
     type State = (); //&'a World;
 
-    fn initialize(_: &mut World) -> Option<Self::State> {
+    fn initialize(_: Self::Input, _: &mut World) -> Option<Self::State> {
         todo!()
         // Some(world)
     }

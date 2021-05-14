@@ -1,4 +1,5 @@
 use crate::entity::*;
+use crate::inject::*;
 use crate::system::*;
 use std::any::Any;
 use std::any::TypeId;
@@ -7,8 +8,6 @@ use std::collections::HashMap;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-
-pub struct Template<T>(T);
 
 pub struct Datum {
     pub(crate) index: u32,
@@ -26,6 +25,24 @@ pub struct World {
     pub(crate) identifier: usize,
     pub(crate) segments: Vec<Arc<Segment>>,
     metas: HashMap<TypeId, Meta>,
+}
+
+pub struct WorldState;
+impl Inject for &World {
+    type Input = ();
+    type State = WorldState;
+
+    fn initialize(_: Self::Input, _: &mut World) -> Option<Self::State> {
+        Some(WorldState)
+    }
+}
+
+impl<'a> Get<'a> for WorldState {
+    type Item = &'a World;
+
+    fn get(&'a mut self, world: &'a World) -> Self::Item {
+        world
+    }
 }
 
 pub struct Segment {
@@ -46,13 +63,6 @@ impl World {
             identifier: COUNTER.fetch_add(1, Ordering::Relaxed),
             segments: Vec::new(),
             metas: HashMap::new(),
-        }
-    }
-
-    pub fn scheduler(&mut self) -> Scheduler {
-        Scheduler {
-            schedules: Vec::new(),
-            world: self,
         }
     }
 

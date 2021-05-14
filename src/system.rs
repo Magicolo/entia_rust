@@ -1,5 +1,3 @@
-use crate::call::*;
-use crate::inject::*;
 use crate::world::*;
 use std::any::TypeId;
 use std::cell::UnsafeCell;
@@ -14,26 +12,33 @@ pub enum Dependency {
 }
 
 pub struct Runner {
-    identifier: usize,
-    systems: Vec<Vec<System>>,
-    segments: usize,
+    pub(crate) identifier: usize,
+    pub(crate) systems: Vec<Vec<System>>,
+    pub(crate) segments: usize,
 }
 
 pub struct System {
-    run: Box<dyn FnMut(&World)>,
-    update: Box<dyn FnMut(&mut World)>,
-    resolve: Box<dyn FnMut(&mut World)>,
-    depend: Box<dyn FnMut(&World) -> Vec<Dependency>>,
+    pub(crate) run: Box<dyn FnMut(&World)>,
+    pub(crate) update: Box<dyn FnMut(&mut World)>,
+    pub(crate) resolve: Box<dyn FnMut(&mut World)>,
+    pub(crate) depend: Box<dyn FnMut(&World) -> Vec<Dependency>>,
 }
 
-pub struct Scheduler<'a> {
-    pub(crate) schedules: Vec<Option<System>>,
-    pub(crate) world: &'a mut World,
-}
+// pub trait IntoSystem<'a, M = ()> {
+//     fn system(self, world: &mut World) -> Option<System>;
+// }
 
 unsafe impl Send for System {}
 
 impl Runner {
+    pub fn new(systems: impl IntoIterator<Item = System>, world: &mut World) -> Option<Self> {
+        Some(Self {
+            identifier: world.identifier,
+            systems: Self::schedule(systems.into_iter(), world)?,
+            segments: world.segments.len(),
+        })
+    }
+
     pub fn run(&mut self, world: &mut World) {
         if self.identifier != world.identifier {
             panic!();
@@ -101,7 +106,10 @@ impl Runner {
         false
     }
 
-    fn schedule(systems: impl Iterator<Item = System>, world: &World) -> Option<Vec<Vec<System>>> {
+    pub(crate) fn schedule(
+        systems: impl Iterator<Item = System>,
+        world: &World,
+    ) -> Option<Vec<Vec<System>>> {
         let mut pairs = Vec::new();
         let mut sequence = Vec::new();
         let mut parallel = Vec::new();
@@ -139,82 +147,91 @@ impl Runner {
 
 impl System {
     #[inline]
-    pub fn new<'a, T: 'static>(
+    pub unsafe fn new<'a, T: 'static>(
         state: T,
-        run: fn(&'a mut T, &World),
-        update: fn(&'a mut T, &mut World),
-        resolve: fn(&'a mut T, &mut World),
-        depend: fn(&'a mut T, &World) -> Vec<Dependency>,
+        run: fn(&'a mut T, &'a World),
+        update: fn(&'a mut T, &'a mut World),
+        resolve: fn(&'a mut T, &'a mut World),
+        depend: fn(&'a mut T, &'a World) -> Vec<Dependency>,
     ) -> Self {
-        let state = Arc::new(UnsafeCell::new(state));
         // SAFETY: Since this crate controls the execution of the system's functions, it can guarantee
         // that they are not run in parallel which would allow for races.
+
+        // SAFETY: The 'new' function is declared as unsafe because the user must guarantee that no reference
+        // to the 'World' outlives the call of the function pointers. Normally this could be enforced by Rust but
+        // there seem to be a limitation in the expressivity of the type system to be able to express the desired
+        // intention.
+        let state = Arc::new(UnsafeCell::new(state));
         Self {
             run: {
                 let state = state.clone();
-                Box::new(move |world| run(unsafe { &mut *state.get() }, world))
+                Box::new(move |world| unsafe { run(&mut *state.get(), &*(world as *const _)) })
             },
             update: {
                 let state = state.clone();
-                Box::new(move |world| update(unsafe { &mut *state.get() }, world))
+                Box::new(move |world| unsafe { update(&mut *state.get(), &mut *(world as *mut _)) })
             },
             resolve: {
                 let state = state.clone();
-                Box::new(move |world| resolve(unsafe { &mut *state.get() }, world))
+                Box::new(move |world| unsafe {
+                    resolve(&mut *state.get(), &mut *(world as *mut _))
+                })
             },
             depend: {
                 let state = state.clone();
-                Box::new(move |world| depend(unsafe { &mut *state.get() }, world))
+                Box::new(move |world| unsafe { depend(&mut *state.get(), &*(world as *const _)) })
             },
         }
     }
-}
 
-impl<'a> Scheduler<'a> {
-    pub fn pipe<F: FnOnce(Self) -> Self>(self, pipe: F) -> Self {
-        pipe(self)
-    }
-
-    pub fn system<I: Inject, C: Call<I, ()> + Call<<I::State as Get<'a>>::Item, ()> + 'static>(
-        mut self,
-        run: C,
-    ) -> Self {
-        self.schedules.push(I::initialize(self.world).map(|state| {
-            System::new(
-                (run, state),
-                |(run, state), world| run.call(state.get(world)),
-                |(_, state), world| I::update(state, world),
-                |(_, state), world| I::resolve(state, world),
-                |(_, state), world| I::depend(state, world),
+    pub fn depend(dependencies: impl IntoIterator<Item = Dependency>) -> Self {
+        unsafe {
+            Self::new(
+                dependencies.into_iter().collect::<Vec<_>>(),
+                |_, _| {},
+                |_, _| {},
+                |_, _| {},
+                |state, _| state.clone(),
             )
-        }));
-        self
-    }
-
-    pub fn synchronize(mut self) -> Self {
-        self.schedules.push(Some(System::new(
-            (),
-            |_, _| {},
-            |_, _| {},
-            |_, _| {},
-            |_, _| vec![Dependency::Unknown],
-        )));
-        self
-    }
-
-    pub fn schedule(self) -> Option<Runner> {
-        let mut runs = Vec::new();
-        for system in self.schedules {
-            let mut system = system?;
-            (system.update)(self.world);
-            runs.push(system);
         }
-
-        // TODO: return a 'Result<Runner<'a>, Error>'
-        Some(Runner {
-            identifier: self.world.identifier,
-            systems: Runner::schedule(runs.drain(..), self.world)?,
-            segments: self.world.segments.len(),
-        })
     }
 }
+
+// impl IntoSystem<'_> for System {
+//     fn system(self, _: &mut World) -> Option<System> {
+//         Some(self)
+//     }
+// }
+
+// impl<'a, F: FnMut(Injector) -> Option<System> + 'a> IntoSystem<'a> for F {
+//     fn system(mut self, world: &mut World) -> Option<System> {
+//         self(world.injector())
+//     }
+// }
+
+// impl<'a, I: Inject, C: Call<I, ()> + Call<<I::State as Get<'a>>::Item, ()> + 'static>
+//     IntoSystem<'a, [I; 3]> for C
+// where
+//     I::Input: Default,
+// {
+//     fn system(self, world: &mut World) -> Option<System> {
+//         IntoSystem::<[I; 4]>::system((I::Input::default(), self), world)
+//     }
+// }
+
+// impl<'a, I: Inject, C: Call<I, ()> + Call<<I::State as Get<'a>>::Item, ()> + 'static>
+//     IntoSystem<'a, [I; 4]> for (I::Input, C)
+// {
+//     fn system(self, world: &mut World) -> Option<System> {
+//         let state = I::initialize(self.0, world)?;
+//         Some(unsafe {
+//             System::new(
+//                 (self.1, state),
+//                 |(run, state), world| run.call(state.get(world)),
+//                 |(_, state), world| I::update(state, world),
+//                 |(_, state), world| I::resolve(state, world),
+//                 |(_, state), world| I::depend(state, world),
+//             )
+//         })
+//     }
+// }
