@@ -8,7 +8,9 @@ pub trait Inject {
     type Input;
     type State: for<'a> Get<'a>;
     fn initialize(input: Self::Input, world: &mut World) -> Option<Self::State>;
+    #[inline]
     fn update(_: &mut Self::State, _: &mut World) {}
+    #[inline]
     fn resolve(_: &mut Self::State, _: &mut World) {}
     fn depend(_: &Self::State, _: &World) -> Vec<Dependency> {
         vec![Dependency::Unknown]
@@ -71,10 +73,12 @@ macro_rules! inject {
                 Some(($($t::initialize($p, _world)?,)*))
             }
 
+            #[inline]
             fn update(($($p,)*): &mut Self::State, _world: &mut World) {
                 $($t::update($p, _world);)*
             }
 
+            #[inline]
             fn resolve(($($p,)*): &mut Self::State, _world: &mut World) {
                 $($t::resolve($p, _world);)*
             }

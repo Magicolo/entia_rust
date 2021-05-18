@@ -1,5 +1,7 @@
+pub mod add;
 pub mod component;
 pub mod defer;
+pub mod entities;
 pub mod entity;
 pub mod initialize;
 pub mod inject;
@@ -15,13 +17,15 @@ pub mod world;
 pub mod write;
 
 pub mod core {
+    pub use entia_core::utility;
     pub use entia_core::*;
 }
 
 pub mod prelude {
     pub use crate::component::Component;
     pub use crate::defer::Defer;
-    pub use crate::entity::{Entities, Entity};
+    pub use crate::entities::Entities;
+    pub use crate::entity::Entity;
     pub use crate::inject::{Inject, Injector};
     pub use crate::item::{And, Item, Not};
     pub use crate::local::Local;

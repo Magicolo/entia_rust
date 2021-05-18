@@ -17,7 +17,7 @@ pub struct Receive<'a, M: Message>(&'a mut Messages<M>);
 pub struct ReceiveState<M: Message> {
     index: usize,
     store: Arc<Store<Messages<M>>>,
-    segment: Arc<Segment>,
+    segment: usize,
 }
 struct Messages<M: Message> {
     messages: VecDeque<M>,
@@ -57,10 +57,12 @@ impl<'a, M: Message> Inject for Emit<'a, M> {
             .map(|state| EmitState(state))
     }
 
+    #[inline]
     fn update(EmitState(state): &mut Self::State, world: &mut World) {
         <Query<'a, Write<Messages<M>>> as Inject>::update(state, world);
     }
 
+    #[inline]
     fn resolve(EmitState(state): &mut Self::State, world: &mut World) {
         <Query<'a, Write<Messages<M>>> as Inject>::resolve(state, world);
     }
@@ -106,12 +108,12 @@ impl<M: Message> Inject for Receive<'_, M> {
         Some(ReceiveState {
             index,
             store,
-            segment,
+            segment: segment.index,
         })
     }
 
     fn depend(state: &Self::State, _: &World) -> Vec<Dependency> {
-        vec![Dependency::Write(state.segment.index, TypeId::of::<M>())]
+        vec![Dependency::Write(state.segment, TypeId::of::<M>())]
     }
 }
 

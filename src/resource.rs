@@ -54,7 +54,7 @@ impl<R: Resource> Inject for &mut R {
 pub(crate) fn initialize<T: Send + 'static>(
     provide: impl FnOnce() -> T,
     world: &mut World,
-) -> Option<(Arc<Store<T>>, Arc<Segment>)> {
+) -> Option<(Arc<Store<T>>, usize)> {
     let meta = world.get_or_add_meta::<T>();
     let segment = world.get_or_add_segment(&[meta], Some(1));
     let store = segment.store()?;
@@ -63,5 +63,5 @@ pub(crate) fn initialize<T: Send + 'static>(
     } else {
         segment.count.fetch_sub(1, Ordering::Relaxed);
     }
-    Some((store, segment))
+    Some((store, segment.index))
 }

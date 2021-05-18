@@ -11,11 +11,11 @@ pub struct Read<T>(Arc<Store<T>>);
 pub struct State<T>(Arc<Store<T>>, usize);
 
 impl<R: Resource> Inject for Read<R> {
-    type Input = ();
+    type Input = Option<R>;
     type State = State<R>;
 
-    fn initialize(_: Self::Input, world: &mut World) -> Option<Self::State> {
-        initialize(R::default, world).map(|pair| State(pair.0, pair.1.index))
+    fn initialize(input: Self::Input, world: &mut World) -> Option<Self::State> {
+        initialize(|| input.unwrap_or_default(), world).map(|pair| State(pair.0, pair.1))
     }
 
     fn depend(state: &Self::State, _: &World) -> Vec<Dependency> {
@@ -50,5 +50,25 @@ impl<'a, C: Component> At<'a> for State<C> {
     #[inline]
     fn at(&'a self, index: usize) -> Self::Item {
         unsafe { self.0.at(index) }
+    }
+}
+
+impl<R: Resource> AsRef<R> for Read<R> {
+    #[inline]
+    fn as_ref(&self) -> &R {
+        unsafe { self.0.at(0) }
+    }
+}
+
+impl<R: Resource> AsRef<R> for State<R> {
+    #[inline]
+    fn as_ref(&self) -> &R {
+        unsafe { self.0.at(0) }
+    }
+}
+
+impl<T> State<T> {
+    pub fn read(&self) -> Read<T> {
+        Read(self.0.clone())
     }
 }
