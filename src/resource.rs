@@ -3,7 +3,6 @@ use crate::read::*;
 use crate::system::*;
 use crate::world::*;
 use crate::write::*;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 pub trait Resource: Default + Send + 'static {}
@@ -56,12 +55,11 @@ pub(crate) fn initialize<T: Send + 'static>(
     world: &mut World,
 ) -> Option<(Arc<Store<T>>, usize)> {
     let meta = world.get_or_add_meta::<T>();
-    let segment = world.get_or_add_segment(&[meta], Some(1));
-    let store = segment.store()?;
-    if segment.count.fetch_add(1, Ordering::Relaxed) == 1 {
-        *unsafe { store.at(0) } = provide();
-    } else {
-        segment.count.fetch_sub(1, Ordering::Relaxed);
+    let segment = world.get_or_add_segment_by_metas(&[meta], Some(1));
+    let store = segment.static_store()?;
+    if segment.count == 0 {
+        let index = segment.reserve();
+        *unsafe { store.at(index) } = provide();
     }
     Some((store, segment.index))
 }

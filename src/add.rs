@@ -1,12 +1,15 @@
-use crate::core::utility::*;
+use entia_core::utility::get_mut2;
+
+use crate::component::*;
 use crate::entities;
 use crate::entities::*;
 use crate::entity::*;
 use crate::inject::*;
+use crate::segment::*;
 use crate::system::*;
 use crate::world::*;
-use std::any::TypeId;
 use std::collections::HashMap;
+use std::{any::TypeId, sync::Arc};
 
 /*
 Add<(Position, Velocity)>({ source: [target] })
@@ -33,143 +36,294 @@ both [Position, Velocity] and that has a link with a source segment)
     }
 */
 
-pub trait Boba {
-    fn is_target_candidate(segment: &Segment) -> bool;
-    fn can_move_to(source: &Segment, target: &Segment) -> bool;
-    fn is_target(&self, segment: &Segment) -> bool;
-    fn add_target<'a>(&self, world: &'a mut World) -> &'a mut Segment;
-    fn initialize(self, index: usize, segment: &Segment);
-    fn depend(segment: &Segment) -> Vec<Dependency>;
+pub struct Add<'a, M: Modify> {
+    defer: &'a mut Vec<(Entity, M)>,
 }
 
-pub struct Add<'a, T: Boba>(
-    &'a mut Vec<(Entity, T, usize, Option<usize>, usize)>,
-    &'a HashMap<usize, Vec<usize>>,
-    Entities<'a>,
-    &'a World,
-);
+pub struct State<M: Modify> {
+    targets: HashMap<usize, Vec<(M::State, Move)>>,
+    defer: Vec<(Entity, M)>,
+    entities: entities::State,
+}
 
-pub struct State<T>(
-    usize,
-    Vec<(Entity, T, usize, Option<usize>, usize)>,
-    HashMap<usize, Vec<usize>>,
-    entities::State,
-);
+pub trait Modify<M = ()> {
+    type State;
+    fn initialize(segment: &Segment, world: &World) -> Option<Self::State>;
+    fn metas(&self, world: &mut World) -> Vec<Meta>;
+    fn validate(&self, state: &Self::State) -> bool;
+    fn modify(self, state: &Self::State, index: usize);
+    fn depend(state: &Self::State) -> Vec<Dependency>;
+}
 
-impl<T: Boba> Add<'_, T> {
-    pub fn add(&mut self, entity: Entity, initialize: T) -> bool {
-        fn select<'a, T: Boba>(
-            initialize: &T,
-            candidates: &Vec<usize>,
-            world: &'a World,
-        ) -> Option<&'a Segment> {
-            for &candidate in candidates {
-                let segment = &world.segments[candidate];
-                if initialize.is_target(segment) {
-                    return Some(segment);
-                }
-            }
-            None
-        }
+impl<C: Component> Modify<[(); 0]> for C {
+    type State = (Arc<Store<C>>, usize);
 
-        if let Some(datum) = self.2.get_datum(entity) {
-            let index = datum.index as usize;
-            let source = datum.segment as usize;
-            let targets = &self.1[&source]; // All entity segments must be in the hash map.
+    fn initialize(segment: &Segment, _: &World) -> Option<Self::State> {
+        Some((segment.static_store()?, segment.index))
+    }
 
-            if let Some(target) = select(&initialize, targets, self.3) {
-                if source == target.index {
-                    // Entity is already in the target segment, so simply write the data.
-                    initialize.initialize(index, target);
-                } else {
-                    // Entity will need to be moved to a new segment, so defer.
-                    self.0
-                        .push((entity, initialize, source, Some(target.index), index));
-                }
-            } else {
-                self.0.push((entity, initialize, source, None, index));
-            }
+    fn metas(&self, world: &mut World) -> Vec<Meta> {
+        vec![world.get_or_add_meta::<C>()]
+    }
 
-            true
-        } else {
-            false
-        }
+    #[inline]
+    fn validate(&self, _: &Self::State) -> bool {
+        true
+    }
+
+    #[inline]
+    fn modify(self, (store, _): &Self::State, index: usize) {
+        *unsafe { store.at(index) } = self;
+    }
+
+    fn depend(state: &Self::State) -> Vec<Dependency> {
+        vec![Dependency::Write(state.1, TypeId::of::<C>())]
     }
 }
 
-impl<T: Boba + 'static> Inject for Add<'_, T> {
-    type Input = ();
-    type State = State<T>;
+impl<C: Component, F: FnOnce() -> C> Modify<[C; 1]> for F {
+    type State = (Arc<Store<C>>, usize);
 
-    fn initialize(_: Self::Input, world: &mut World) -> Option<Self::State> {
-        Entities::initialize((), world).map(|state| State(0, Vec::new(), HashMap::new(), state))
+    fn initialize(segment: &Segment, _: &World) -> Option<Self::State> {
+        Some((segment.static_store()?, segment.index))
     }
 
-    fn update(state: &mut Self::State, world: &mut World) {
-        while let Some(segment) = world.segments.get(state.0) {
-            state.0 += 1;
+    fn metas(&self, world: &mut World) -> Vec<Meta> {
+        vec![world.get_or_add_meta::<C>()]
+    }
 
-            let mut targets = Vec::new();
-            if T::is_target_candidate(segment) {
-                // TODO: Map source segments to target segments.
-                for (&source, targets) in state.2.iter_mut() {
-                    if T::can_move_to(&world.segments[source], segment) {
-                        targets.push(segment.index);
-                    }
-                }
+    #[inline]
+    fn validate(&self, _: &Self::State) -> bool {
+        true
+    }
 
-                for source in world.segments.iter() {
-                    if T::can_move_to(source, segment) {
-                        targets.push(source.index);
-                    }
-                }
-            }
+    #[inline]
+    fn modify(self, (store, _): &Self::State, index: usize) {
+        *unsafe { store.at(index) } = self();
+    }
 
-            state.2.insert(segment.index, targets);
+    fn depend(state: &Self::State) -> Vec<Dependency> {
+        vec![Dependency::Write(state.1, TypeId::of::<C>())]
+    }
+}
+
+impl<M: Modify> Modify for Option<M> {
+    type State = M::State;
+
+    fn initialize(segment: &Segment, world: &World) -> Option<Self::State> {
+        M::initialize(segment, world)
+    }
+
+    fn metas(&self, world: &mut World) -> Vec<Meta> {
+        match self {
+            Some(modify) => modify.metas(world),
+            None => Vec::new(),
         }
     }
 
-    fn resolve(state: &mut Self::State, world: &mut World) {
-        // TODO: Cache mapping of source segment stores to target segment stores?
-        for (entity, initialize, source, target, index) in state.1.drain(..) {
-            // If target segment does not exist yet, so create it.
-            let target = match target {
-                Some(target) => target,
-                None => initialize.add_target(world).index,
-            };
-
-            let mut entities = state.3.entities();
-            if let Some((source, target)) = get_mut2(&mut world.segments, (source, target)) {
-                if let Some(datum) = entities.get_datum_mut(entity) {
-                    if let Some(index) = source.move_to(index, target) {
-                        datum.index = index as u32;
-                        datum.segment = target.index as u32;
-                        initialize.initialize(index, &target);
-                    }
-                }
-            }
+    #[inline]
+    fn validate(&self, state: &Self::State) -> bool {
+        match self {
+            Some(modify) => modify.validate(state),
+            _ => false,
         }
     }
 
-    fn depend(state: &Self::State, world: &World) -> Vec<Dependency> {
+    #[inline]
+    fn modify(self, state: &Self::State, index: usize) {
+        match self {
+            Some(modify) => modify.modify(state, index),
+            _ => {}
+        }
+    }
+
+    fn depend(state: &Self::State) -> Vec<Dependency> {
+        M::depend(state)
+    }
+}
+
+impl<M1: Modify, M2: Modify> Modify for (M1, M2) {
+    type State = (M1::State, M2::State);
+
+    fn initialize(segment: &Segment, world: &World) -> Option<Self::State> {
+        Some((
+            M1::initialize(segment, world)?,
+            M2::initialize(segment, world)?,
+        ))
+    }
+
+    fn metas(&self, world: &mut World) -> Vec<Meta> {
+        let mut metas = Vec::new();
+        metas.append(&mut self.0.metas(world));
+        metas.append(&mut self.1.metas(world));
+        metas
+    }
+
+    #[inline]
+    fn validate(&self, state: &Self::State) -> bool {
+        self.0.validate(&state.0) && self.1.validate(&state.1)
+    }
+
+    #[inline]
+    fn modify(self, state: &Self::State, index: usize) {
+        self.0.modify(&state.0, index);
+        self.1.modify(&state.1, index);
+    }
+
+    fn depend(state: &Self::State) -> Vec<Dependency> {
         let mut dependencies = Vec::new();
-        for (&source, targets) in state.2.iter() {
-            if targets.len() > 0 {
-                dependencies.push(Dependency::Write(source, TypeId::of::<Entity>()));
-                for &target in targets {
-                    dependencies.push(Dependency::Add(target, TypeId::of::<Entity>()));
-                    dependencies.append(&mut T::depend(&world.segments[target]));
-                }
-            }
-        }
+        dependencies.append(&mut M1::depend(&state.0));
+        dependencies.append(&mut M2::depend(&state.1));
         dependencies
     }
 }
 
-impl<'a, T: Boba + 'static> Get<'a> for State<T> {
+impl<M: Modify> Add<'_, M> {
+    pub fn add(&mut self, entity: Entity, modify: M) {
+        self.defer.push((entity, modify));
+    }
+
+    //     fn try_resolve(&self, index: usize, source: usize, modify: &M) -> Resolution {
+    //         if let Some(targets) = self.targets.get(&source) {
+    //             for i in 0..targets.len() {
+    //                 let pair = &targets[i];
+    //                 if modify.validate(&pair.0) {
+    //                     if pair.1.source() == pair.1.target() {
+    //                         return Resolution::Resolve(&pair.0);
+    //                     } else {
+    //                         return Resolution::Defer(i);
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //         None
+    //     }
+
+    //     fn select<'a>(
+    //         targets: &'a mut HashMap<usize, Vec<(M::State, Move)>>,
+    //         modify: &M,
+    //         source: usize,
+    //         world: &mut World,
+    //     ) -> Option<&'a (M::State, Move)> {
+    //         let targets = targets.entry(source).or_default();
+    //         let mut index = None;
+    //         for i in 0..targets.len() {
+    //             let pair = &targets[i];
+    //             if modify.validate(&pair.0) {
+    //                 index = Some(i);
+    //             }
+    //         }
+
+    //         match index {
+    //             Some(index) => Some(&targets[index]),
+    //             None => {
+    //                 let mut types = world.segments[source].types.clone();
+    //                 for meta in modify.metas(world) {
+    //                     types.add(meta.index);
+    //                 }
+
+    //                 let target = world.get_or_add_segment_by_types(&types, None).index;
+    //                 if let Some(state) = M::initialize(&world.segments[target], world) {
+    //                     let indices = (source, target);
+    //                     if let Some((source, target)) = get_mut2(&mut world.segments, indices) {
+    //                         targets.push((state, source.prepare_move(target)));
+    //                         return targets.last();
+    //                     }
+    //                 }
+    //                 None
+    //             }
+    //         }
+    //     }
+}
+
+impl<M: Modify + 'static> Inject for Add<'_, M> {
+    type Input = ();
+    type State = State<M>;
+
+    fn initialize(_: Self::Input, world: &mut World) -> Option<Self::State> {
+        <Entities as Inject>::initialize((), world).map(|state| State {
+            targets: HashMap::new(),
+            defer: Vec::new(),
+            entities: state,
+        })
+    }
+
+    fn resolve(state: &mut Self::State, world: &mut World) {
+        fn select<'a, M: Modify>(
+            targets: &'a mut HashMap<usize, Vec<(M::State, Move)>>,
+            modify: &M,
+            source: usize,
+            world: &mut World,
+        ) -> Option<&'a (M::State, Move)> {
+            let targets = targets.entry(source).or_default();
+            let mut index = None;
+            for i in 0..targets.len() {
+                let pair = &targets[i];
+                if modify.validate(&pair.0) {
+                    index = Some(i);
+                }
+            }
+
+            match index {
+                Some(index) => Some(&targets[index]),
+                None => {
+                    let mut types = world.segments[source].types.clone();
+                    for meta in modify.metas(world) {
+                        types.add(meta.index);
+                    }
+
+                    let target = world.get_or_add_segment_by_types(&types, None).index;
+                    if let Some(state) = M::initialize(&world.segments[target], world) {
+                        let indices = (source, target);
+                        if let Some((source, target)) = get_mut2(&mut world.segments, indices) {
+                            targets.push((state, source.prepare_move(target)));
+                            return targets.last();
+                        }
+                    }
+                    None
+                }
+            }
+        }
+
+        for (entity, modify) in state.defer.drain(..) {
+            let mut entities = state.entities.entities();
+            if let Some(datum) = entities.get_datum_mut(entity) {
+                let index = datum.index as usize;
+                let source = datum.segment as usize;
+                if let Some(target) = select(&mut state.targets, &modify, source, world) {
+                    if let Some(index) = target.1.apply(index, world) {
+                        modify.modify(&target.0, index);
+                        datum.index = index as u32;
+                        datum.segment = target.1.target() as u32;
+                    }
+                }
+            }
+        }
+    }
+
+    fn depend(state: &Self::State, _: &World) -> Vec<Dependency> {
+        let mut dependencies = Vec::new();
+
+        for (_, targets) in state.targets.iter() {
+            for (state, motion) in targets {
+                if motion.source() != motion.target() {
+                    dependencies.push(Dependency::Write(motion.source(), TypeId::of::<Entity>()));
+                    dependencies.push(Dependency::Add(motion.target(), TypeId::of::<Entity>()));
+                }
+                dependencies.append(&mut M::depend(state));
+            }
+        }
+
+        dependencies
+    }
+}
+
+impl<'a, T: Modify + 'static> Get<'a> for State<T> {
     type Item = Add<'a, T>;
 
-    fn get(&'a mut self, world: &'a World) -> Self::Item {
-        Add(&mut self.1, &self.2, self.3.get(world), world)
+    fn get(&'a mut self, _: &'a World) -> Self::Item {
+        Add {
+            defer: &mut self.defer,
+        }
     }
 }

@@ -2,6 +2,7 @@ use crate::component::*;
 use crate::inject::*;
 use crate::item::*;
 use crate::resource::*;
+use crate::segment::*;
 use crate::system::*;
 use crate::world::*;
 use std::any::TypeId;
@@ -36,7 +37,7 @@ impl<C: Component> Item for Write<C> {
     type State = State<C>;
 
     fn initialize(segment: &Segment) -> Option<Self::State> {
-        Some(State(segment.store()?, segment.index))
+        Some(State(segment.static_store()?, segment.index))
     }
 
     fn depend(state: &Self::State, _: &World) -> Vec<Dependency> {

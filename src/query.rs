@@ -1,16 +1,21 @@
 use crate::entity::*;
 use crate::inject::*;
 use crate::item::*;
+use crate::segment::*;
 use crate::system::*;
 use crate::world::*;
 use std::any::TypeId;
-use std::sync::atomic::Ordering;
 
 pub struct Query<'a, I: Item> {
-    states: &'a Vec<(I::State, usize, usize)>,
+    states: &'a Vec<(I::State, usize)>,
+    world: &'a World,
 }
 
-pub struct QueryState<I: Item>(usize, Vec<(I::State, usize, usize)>, Filter);
+pub struct QueryState<I: Item> {
+    index: usize,
+    states: Vec<(I::State, usize)>,
+    filter: Filter,
+}
 
 pub struct QueryIterator<'a, I: Item> {
     index: usize,
@@ -37,7 +42,7 @@ impl Filter {
 
     #[inline]
     pub fn with<T: Send + 'static>() -> Self {
-        Self::new(|segment| segment.store::<T>().is_some())
+        Self::new(|segment| segment.static_store::<T>().is_some())
     }
 
     #[inline]
@@ -48,8 +53,9 @@ impl Filter {
 
 impl<'a, I: Item> Query<'a, I> {
     pub fn each<F: FnMut(<I::State as At<'a>>::Item)>(&self, mut each: F) {
-        for (item, _, count) in self.states.iter() {
-            for i in 0..*count {
+        for (item, segment) in self.states.iter() {
+            let segment = &self.world.segments[*segment];
+            for i in 0..segment.count {
                 each(item.at(i));
             }
         }
@@ -60,6 +66,7 @@ impl<'a, I: Item> Clone for Query<'a, I> {
     fn clone(&self) -> Self {
         Query {
             states: self.states,
+            world: self.world,
         }
     }
 }
@@ -95,8 +102,9 @@ impl<'a, I: Item> Iterator for QueryIterator<'a, I> {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some((item, _, count)) = self.query.states.get(self.segment) {
-            if self.index < *count {
+        while let Some((item, segment)) = self.query.states.get(self.segment) {
+            let segment = &self.query.world.segments[*segment];
+            if self.index < segment.count {
                 let item = item.at(self.index);
                 self.index += 1;
                 return Some(item);
@@ -114,23 +122,20 @@ impl<'a, I: Item + 'static> Inject for Query<'a, I> {
     type State = QueryState<I>;
 
     fn initialize(input: Self::Input, _: &mut World) -> Option<Self::State> {
-        Some(QueryState(0, Vec::new(), input))
+        Some(QueryState {
+            index: 0,
+            states: Vec::new(),
+            filter: input,
+        })
     }
 
     fn update(state: &mut Self::State, world: &mut World) {
-        // This can be done before adding segments since the 'count' will be up to date when adding a new segment.
-        for (_, segment, count) in state.1.iter_mut() {
-            *count = world.segments[*segment].count.load(Ordering::Relaxed);
-        }
+        while let Some(segment) = world.segments.get(state.index) {
+            state.index += 1;
 
-        while let Some(segment) = world.segments.get(state.0) {
-            state.0 += 1;
-
-            if state.2.filter(segment) {
+            if state.filter.filter(segment) {
                 if let Some(item) = I::initialize(&segment) {
-                    state
-                        .1
-                        .push((item, segment.index, segment.count.load(Ordering::Relaxed)));
+                    state.states.push((item, segment.index));
                 }
             }
         }
@@ -138,7 +143,7 @@ impl<'a, I: Item + 'static> Inject for Query<'a, I> {
 
     fn depend(state: &Self::State, world: &World) -> Vec<Dependency> {
         let mut dependencies = Vec::new();
-        for (item, segment, _) in state.1.iter() {
+        for (item, segment) in state.states.iter() {
             dependencies.push(Dependency::Read(*segment, TypeId::of::<Entity>()));
             dependencies.append(&mut I::depend(item, world));
         }
@@ -149,7 +154,10 @@ impl<'a, I: Item + 'static> Inject for Query<'a, I> {
 impl<'a, I: Item + 'static> Get<'a> for QueryState<I> {
     type Item = Query<'a, I>;
 
-    fn get(&'a mut self, _: &World) -> Self::Item {
-        Query { states: &self.1 }
+    fn get(&'a mut self, world: &'a World) -> Self::Item {
+        Query {
+            states: &self.states,
+            world,
+        }
     }
 }

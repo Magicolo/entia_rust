@@ -5,7 +5,6 @@ use crate::world::*;
 use crate::write::*;
 use std::any::TypeId;
 use std::collections::VecDeque;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 pub trait Message: Clone + Send + 'static {}
@@ -96,11 +95,9 @@ impl<M: Message> Inject for Receive<'_, M> {
 
     fn initialize(input: Self::Input, world: &mut World) -> Option<Self::State> {
         let meta = world.get_or_add_meta::<M>();
-        let segment = world.add_segment(&[meta], 8);
-        let store = segment.store()?;
-        let count = segment.count.fetch_add(1, Ordering::Relaxed);
-        let index = count - 1;
-        segment.ensure(count);
+        let segment = world.add_segment_from_metas(&[meta], 8);
+        let store = segment.static_store()?;
+        let index = segment.reserve();
         *unsafe { store.at(index) } = Messages {
             messages: VecDeque::new(),
             capacity: input,

@@ -1,3 +1,4 @@
+use crate::segment::*;
 use crate::system::*;
 use crate::world::*;
 use std::marker::PhantomData;

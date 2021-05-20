@@ -12,6 +12,7 @@ pub mod query;
 pub mod read;
 pub mod resource;
 pub mod schedule;
+pub mod segment;
 pub mod system;
 pub mod world;
 pub mod write;
