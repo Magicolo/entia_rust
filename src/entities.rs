@@ -1,5 +1,6 @@
 use crate::entity::*;
 use crate::inject::*;
+use crate::resource::*;
 use crate::system::*;
 use crate::world::*;
 use crate::write;
@@ -14,6 +15,8 @@ struct Inner {
     pub last: AtomicU32,
     pub data: Vec<Datum>,
 }
+
+impl Resource for Inner {}
 
 impl Entities<'_> {
     pub fn create<const N: usize>(&self) -> [Entity; N] {

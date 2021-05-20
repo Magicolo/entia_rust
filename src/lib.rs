@@ -23,6 +23,7 @@ pub mod core {
 }
 
 pub mod prelude {
+    pub use crate::add::Add;
     pub use crate::component::Component;
     pub use crate::defer::Defer;
     pub use crate::entities::Entities;
@@ -98,6 +99,12 @@ mod test {
         struct Velocity(f64, f64, f64);
         #[derive(Clone)]
         struct OnKill(Entity);
+        impl Resource for Time {}
+        impl Resource for Physics {}
+        impl Component for Position {}
+        impl Component for Velocity {}
+        impl Component for Frozen {}
+        impl Message for OnKill {}
 
         fn physics(scheduler: Scheduler) -> Scheduler {
             scheduler.schedule(|_: ((), ())| {})
@@ -192,6 +199,7 @@ mod test {
             .schedule({
                 #[derive(Default)]
                 struct Private(usize);
+                impl Resource for Private {}
 
                 let mut counter = 0;
                 move |mut state: Local<usize>, resource: &mut Private| {
@@ -206,6 +214,14 @@ mod test {
             .schedule(|on_kill: Receive<OnKill>| for _ in on_kill {})
             .schedule(|mut on_kill: Receive<OnKill>| while let Some(_) = on_kill.next() {})
             .schedule(|_: Entities| {})
+            .schedule(
+                |query: Query<Entity>, mut add: Add<(Position, Option<Velocity>)>| {
+                    for entity in &query {
+                        add.add(entity, (Position(1., 2., 3.), None));
+                        add.add(entity, (Position(1., 2., 3.), Some(Velocity(3., 2., 1.))));
+                    }
+                },
+            )
             .runner()
             .unwrap();
 
