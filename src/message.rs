@@ -97,7 +97,7 @@ impl<M: Message> Inject for Receive<'_, M> {
         let meta = world.get_or_add_meta::<M>();
         let segment = world.add_segment_from_metas(&[meta], 8);
         let store = segment.static_store()?;
-        let index = segment.reserve();
+        let index = segment.reserve(1);
         *unsafe { store.at(index) } = Messages {
             messages: VecDeque::new(),
             capacity: input,

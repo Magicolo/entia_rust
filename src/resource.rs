@@ -57,7 +57,7 @@ pub(crate) fn initialize<T: Send + 'static>(
     let segment = world.get_or_add_segment_by_metas(&[meta], Some(1));
     let store = segment.static_store()?;
     if segment.count == 0 {
-        let index = segment.reserve();
+        let index = segment.reserve(1);
         *unsafe { store.at(index) } = provide();
     }
     Some((store, segment.index))

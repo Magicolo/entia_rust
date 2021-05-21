@@ -1,5 +1,6 @@
 pub mod add;
 pub mod component;
+pub mod create;
 pub mod defer;
 pub mod entities;
 pub mod entity;
@@ -8,6 +9,7 @@ pub mod inject;
 pub mod item;
 pub mod local;
 pub mod message;
+pub mod modify;
 pub mod query;
 pub mod read;
 pub mod resource;
@@ -25,11 +27,11 @@ pub mod core {
 pub mod prelude {
     pub use crate::add::Add;
     pub use crate::component::Component;
+    pub use crate::create::Create;
     pub use crate::defer::Defer;
-    pub use crate::entities::Entities;
     pub use crate::entity::Entity;
-    pub use crate::inject::{Inject, Injector};
-    pub use crate::item::{And, Item, Not};
+    pub use crate::inject::Injector;
+    pub use crate::item::{And, Not};
     pub use crate::local::Local;
     pub use crate::message::{Emit, Message, Receive};
     pub use crate::query::Query;
@@ -213,7 +215,6 @@ mod test {
             .schedule(((8,), |on_kill: Receive<OnKill>| for _ in on_kill {}))
             .schedule(|on_kill: Receive<OnKill>| for _ in on_kill {})
             .schedule(|mut on_kill: Receive<OnKill>| while let Some(_) = on_kill.next() {})
-            .schedule(|_: Entities| {})
             .schedule(
                 |query: Query<Entity>, mut add: Add<(Position, Option<Velocity>)>| {
                     for entity in &query {

@@ -6,7 +6,6 @@ use crate::world::*;
 use crate::write::*;
 
 pub trait Component: Send + 'static {}
-// impl<T: Send + 'static> Component for T {}
 
 impl<C: Component> Item for &C {
     type State = <Read<C> as Item>::State;

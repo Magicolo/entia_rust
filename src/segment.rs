@@ -22,7 +22,7 @@ impl Move {
         } else if let Some((source, target)) = get_mut2(&mut world.segments, (self.0, self.1)) {
             source.count -= 1;
             let source_index = source.count;
-            let target_index = target.reserve();
+            let target_index = target.reserve(1);
             for (source_store, target_store) in &self.2 {
                 source_store.copy_to(index, (target_index, target_store.as_ref()), 1);
                 source_store.copy(source_index, index, 1);
@@ -93,9 +93,9 @@ impl Segment {
         None
     }
 
-    pub fn reserve(&mut self) -> usize {
+    pub fn reserve(&mut self, count: usize) -> usize {
         let index = self.count;
-        self.count += 1;
+        self.count += count;
         self.ensure(self.count);
         index
     }

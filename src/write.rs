@@ -1,12 +1,15 @@
-use crate::component::*;
-use crate::inject::*;
-use crate::item::*;
-use crate::resource::*;
-use crate::segment::*;
-use crate::system::*;
-use crate::world::*;
-use std::any::TypeId;
-use std::sync::Arc;
+use std::{any::TypeId, sync::Arc};
+
+use crate::{
+    component::Component,
+    inject::{Get, Inject},
+    item::{At, Item},
+    resource::{initialize, Resource},
+    segment::Segment,
+    system::Dependency,
+    world::Store,
+    world::World,
+};
 
 pub struct Write<T>(Arc<Store<T>>);
 pub struct State<T>(Arc<Store<T>>, usize);
