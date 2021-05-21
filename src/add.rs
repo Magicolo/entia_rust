@@ -40,48 +40,41 @@ impl<M: Modify + 'static> Inject for Add<'_, M> {
     }
 
     fn resolve(state: &mut Self::State, world: &mut World) {
-        fn select<'a, M: Modify>(
-            targets: &'a mut HashMap<usize, Vec<(M::State, Move)>>,
-            modify: &M,
-            source: usize,
-            world: &mut World,
-        ) -> Option<&'a (M::State, Move)> {
-            let targets = targets.entry(source).or_default();
-            let mut index = None;
-            for i in 0..targets.len() {
-                let (state, _) = &targets[i];
-                if modify.validate(state) {
-                    index = Some(i);
-                }
-            }
-
-            match index {
-                Some(index) => Some(&targets[index]),
-                None => {
-                    let mut types = world.segments[source].types.clone();
-                    for meta in modify.metas(world) {
-                        types.add(meta.index);
-                    }
-
-                    let target = world.get_or_add_segment_by_types(&types, None).index;
-                    if let Some(state) = M::initialize(&world.segments[target], world) {
-                        let indices = (source, target);
-                        if let Some((source, target)) = get_mut2(&mut world.segments, indices) {
-                            targets.push((state, source.prepare_move(target)));
-                            return targets.last();
-                        }
-                    }
-                    None
-                }
-            }
-        }
-
         for (entity, modify) in state.defer.drain(..) {
             let mut entities = state.entities.entities();
             if let Some(datum) = entities.get_datum_mut(entity) {
                 let index = datum.index as usize;
                 let source = datum.segment as usize;
-                if let Some(target) = select(&mut state.targets, &modify, source, world) {
+                let targets = state.targets.entry(source).or_insert_with(|| {
+                    let mut targets = Vec::new();
+                    let source = &mut world.segments[source];
+                    if let Some(state) = M::initialize(source, world) {
+                        targets.push((state, source.prepare_move(source)));
+                    }
+                    targets
+                });
+                let target = targets
+                    .iter()
+                    .position(|pair| modify.validate(&pair.0))
+                    // .position(|(state, types, move)| world.segment[move.target()].has_all(types))
+                    .map_or_else(
+                        || {
+                            let mut types = world.segments[source].types.clone();
+                            for meta in modify.metas(world) {
+                                types.add(meta.index);
+                            }
+
+                            let target = world.get_or_add_segment_by_types(&types, None).index;
+                            let state = M::initialize(&world.segments[target], world)?;
+                            let indices = (source, target);
+                            let (source, target) = get_mut2(&mut world.segments, indices)?;
+                            targets.push((state, source.prepare_move(target)));
+                            return targets.last();
+                        },
+                        |index| Some(&targets[index]),
+                    );
+
+                if let Some(target) = target {
                     if let Some(index) = target.1.apply(index, world) {
                         modify.modify(&target.0, index);
                         datum.index = index as u32;
@@ -95,13 +88,13 @@ impl<M: Modify + 'static> Inject for Add<'_, M> {
     fn depend(state: &Self::State, _: &World) -> Vec<Dependency> {
         let mut dependencies = Vec::new();
 
-        for (_, targets) in state.targets.iter() {
-            for (state, motion) in targets {
-                if motion.source() != motion.target() {
-                    dependencies.push(Dependency::Write(motion.source(), TypeId::of::<Entity>()));
-                    dependencies.push(Dependency::Add(motion.target(), TypeId::of::<Entity>()));
+        for targets in state.targets.values() {
+            for pair in targets {
+                if pair.1.source() != pair.1.target() {
+                    dependencies.push(Dependency::Write(pair.1.source(), TypeId::of::<Entity>()));
+                    dependencies.push(Dependency::Add(pair.1.target(), TypeId::of::<Entity>()));
                 }
-                dependencies.append(&mut M::depend(state));
+                dependencies.append(&mut M::depend(&pair.0));
             }
         }
 

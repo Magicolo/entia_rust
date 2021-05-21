@@ -13,19 +13,30 @@ pub struct Segment {
     pub(crate) stores: Box<[(Meta, Arc<dyn Storage>, Arc<dyn Any + Send + Sync>)]>,
 }
 
-pub struct Move(usize, usize, Vec<(Arc<dyn Storage>, Arc<dyn Any>)>);
+pub struct Move {
+    source: usize,
+    target: usize,
+    copy: Vec<(Arc<dyn Storage>, Arc<dyn Any>)>,
+    clear: Vec<Arc<dyn Storage>>,
+}
 
 impl Move {
     pub fn apply(&self, index: usize, world: &mut World) -> Option<usize> {
-        if self.0 == self.1 {
+        if self.source == self.target {
             Some(index)
-        } else if let Some((source, target)) = get_mut2(&mut world.segments, (self.0, self.1)) {
+        } else if let Some((source, target)) =
+            get_mut2(&mut world.segments, (self.source, self.target))
+        {
             source.count -= 1;
             let source_index = source.count;
             let target_index = target.reserve(1);
-            for (source_store, target_store) in &self.2 {
+            for (source_store, target_store) in self.copy.iter() {
                 source_store.copy_to(index, (target_index, target_store.as_ref()), 1);
                 source_store.copy(source_index, index, 1);
+            }
+
+            for store in self.clear.iter() {
+                store.clear(source_index, 1);
             }
             Some(target_index)
         } else {
@@ -35,12 +46,12 @@ impl Move {
 
     #[inline]
     pub const fn source(&self) -> usize {
-        self.0
+        self.source
     }
 
     #[inline]
     pub const fn target(&self) -> usize {
-        self.1
+        self.target
     }
 }
 
@@ -63,13 +74,21 @@ impl Segment {
     }
 
     pub fn prepare_move(&self, target: &Segment) -> Move {
-        let mut stores = Vec::new();
+        let mut copy = Vec::new();
+        let mut clear = Vec::new();
         for (meta, source, _) in self.stores.iter() {
             if let Some(target) = target.dynamic_store(meta) {
-                stores.push((source.clone(), target));
+                copy.push((source.clone(), target));
+            } else {
+                clear.push(source.clone())
             }
         }
-        Move(self.index, target.index, stores)
+        Move {
+            source: self.index,
+            target: target.index,
+            copy,
+            clear,
+        }
     }
 
     pub fn static_store<T: Send + 'static>(&self) -> Option<Arc<Store<T>>> {

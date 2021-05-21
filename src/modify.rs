@@ -43,10 +43,10 @@ impl<C: Component> Modify for C {
 }
 
 impl<M: Modify> Modify for Option<M> {
-    type State = M::State;
+    type State = Option<M::State>;
 
     fn initialize(segment: &Segment, world: &World) -> Option<Self::State> {
-        M::initialize(segment, world)
+        Some(M::initialize(segment, world))
     }
 
     fn metas(&self, world: &mut World) -> Vec<Meta> {
@@ -58,22 +58,27 @@ impl<M: Modify> Modify for Option<M> {
 
     #[inline]
     fn validate(&self, state: &Self::State) -> bool {
-        match self {
-            Some(modify) => modify.validate(state),
-            _ => false,
+        match (self, state) {
+            (Some(modify), Some(state)) => modify.validate(state),
+            (Some(_), None) => false,
+            (None, Some(_)) => false,
+            (None, None) => true,
         }
     }
 
     #[inline]
     fn modify(self, state: &Self::State, index: usize) {
-        match self {
-            Some(modify) => modify.modify(state, index),
+        match (self, state) {
+            (Some(modify), Some(state)) => modify.modify(state, index),
             _ => {}
         }
     }
 
     fn depend(state: &Self::State) -> Vec<Dependency> {
-        M::depend(state)
+        match state {
+            Some(state) => M::depend(state),
+            None => Vec::new(),
+        }
     }
 }
 

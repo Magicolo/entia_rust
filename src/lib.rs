@@ -12,6 +12,7 @@ pub mod message;
 pub mod modify;
 pub mod query;
 pub mod read;
+pub mod remove;
 pub mod resource;
 pub mod schedule;
 pub mod segment;
@@ -35,6 +36,7 @@ pub mod prelude {
     pub use crate::local::Local;
     pub use crate::message::{Emit, Message, Receive};
     pub use crate::query::Query;
+    pub use crate::remove::Remove;
     pub use crate::resource::Resource;
     pub use crate::schedule::Scheduler;
     pub use crate::system::Runner;
@@ -221,6 +223,13 @@ mod test {
                         add.add(entity, (Position(1., 2., 3.), None));
                         add.add(entity, (Position(1., 2., 3.), Some(Velocity(3., 2., 1.))));
                     }
+                },
+            )
+            .schedule(
+                |mut create: Create<(Position, Option<Velocity>)>, mut add: Add<Frozen>| {
+                    let _ = create.create((Position(1., 2., 3.), None));
+                    let entity = create.create((Position(1., 2., 3.), Some(Velocity(3., 2., 1.))));
+                    add.add(entity, Frozen);
                 },
             )
             .runner()

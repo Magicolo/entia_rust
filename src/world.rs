@@ -1,4 +1,3 @@
-use crate::entity::*;
 use crate::inject::*;
 use crate::segment::*;
 use entia_core::bits::Bits;
@@ -9,12 +8,6 @@ use std::collections::HashMap;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-
-pub struct Datum {
-    pub(crate) index: u32,
-    pub(crate) segment: u32,
-    pub(crate) store: Arc<Store<Entity>>,
-}
 
 #[derive(Clone)]
 pub struct Meta {
@@ -39,6 +32,7 @@ pub trait Storage: Sync + Send {
     fn ensure(&self, capacity: usize) -> bool;
     fn copy_to(&self, source: usize, target: (usize, &dyn Any), count: usize) -> bool;
     fn copy(&self, source: usize, target: usize, count: usize) -> bool;
+    fn clear(&self, index: usize, count: usize);
 }
 
 impl<T: Send + 'static> Storage for Store<T> {
@@ -68,6 +62,13 @@ impl<T: Send + 'static> Storage for Store<T> {
         } else {
             unsafe { std::ptr::copy_nonoverlapping(self.at(source), self.at(target), count) };
             true
+        }
+    }
+
+    fn clear(&self, index: usize, mut count: usize) {
+        while count > 0 {
+            count -= 1;
+            drop(unsafe { self.at(index + count) });
         }
     }
 }

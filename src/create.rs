@@ -20,6 +20,7 @@ pub struct State<M: Modify> {
     entities: entities::State,
 }
 
+// TODO: add create_batch
 impl<M: Modify> Create<'_, M> {
     pub fn create(&mut self, modify: M) -> Entity {
         let entities: [Entity; 1] = self.entities.create();
@@ -42,38 +43,44 @@ impl<M: Modify + 'static> Inject for Create<'_, M> {
     }
 
     fn resolve(state: &mut Self::State, world: &mut World) {
-        fn select<'a, M: Modify>(
-            targets: &'a mut Vec<(M::State, Arc<Store<Entity>>, usize)>,
-            modify: &M,
-            world: &mut World,
-        ) -> Option<&'a (M::State, Arc<Store<Entity>>, usize)> {
-            let mut index = None;
-            for i in 0..targets.len() {
-                let (state, _, _) = &targets[i];
-                if modify.validate(state) {
-                    index = Some(i);
-                }
-            }
+        /*
+        CREATE:
+        static: (Position, Option<Velocity>)
+        dynamic: (Position, None)
+        targets: []
+        metas: [Position]
+        -> add_segment, move
 
-            match index {
-                Some(index) => Some(&targets[index]),
-                None => {
-                    let mut metas = vec![world.get_or_add_meta::<Entity>()];
-                    metas.append(&mut modify.metas(world));
-                    let target = world.get_or_add_segment_by_metas(&metas, None).index;
-                    if let Some(entities) = world.segments[target].static_store() {
-                        if let Some(state) = M::initialize(&world.segments[target], world) {
-                            targets.push((state, entities, target));
-                            return targets.last();
-                        }
-                    }
-                    None
-                }
-            }
-        }
+        static: (Position, Option<Velocity>)
+        dynamic: (Position, Some(Velocity))
+        targets: [[Position]]
+        metas: [Position, Velocity]
+        -> add_segment, move
 
+        // Validate should ensure that 'target.types == Bits(metas)'
+
+        ADD:
+        // Validate should ensure that 'target.types.has_all(Bits(metas))'
+        */
         for (entity, modify) in state.defer.drain(..) {
-            if let Some((state, entities, target)) = select(&mut state.targets, &modify, world) {
+            let targets = &mut state.targets;
+            let target = targets
+                .iter()
+                .position(|pair| modify.validate(&pair.0))
+                .map_or_else(
+                    || {
+                        let mut metas = vec![world.get_or_add_meta::<Entity>()];
+                        metas.append(&mut modify.metas(world));
+                        let target = world.get_or_add_segment_by_metas(&metas, None).index;
+                        let entities = world.segments[target].static_store()?;
+                        let state = M::initialize(&world.segments[target], world)?;
+                        targets.push((state, entities, target));
+                        return targets.last();
+                    },
+                    |index| Some(&state.targets[index]),
+                );
+
+            if let Some((state, entities, target)) = target {
                 let target = &mut world.segments[*target];
                 let index = target.reserve(1);
                 *unsafe { entities.at(index) } = entity;

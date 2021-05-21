@@ -1,15 +1,27 @@
-use crate::entity::*;
-use crate::inject::*;
-use crate::resource::*;
-use crate::system::*;
-use crate::world::*;
-use crate::write;
-use crate::write::*;
-use std::any::TypeId;
-use std::sync::atomic::AtomicU32;
+use std::{
+    any::TypeId,
+    sync::{atomic::AtomicU32, Arc},
+};
+
+use crate::{
+    entity::Entity,
+    inject::{Get, Inject},
+    resource::Resource,
+    system::Dependency,
+    world::Store,
+    world::World,
+    write::{self, Write},
+};
 
 pub struct Entities<'a>(&'a mut Inner);
 pub struct State(write::State<Inner>);
+
+pub struct Datum {
+    pub(crate) index: u32,
+    pub(crate) segment: u32,
+    pub(crate) store: Arc<Store<Entity>>,
+}
+
 struct Inner {
     pub free: Vec<Entity>,
     pub last: AtomicU32,
