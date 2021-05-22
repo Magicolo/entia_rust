@@ -23,7 +23,7 @@ pub struct State<M: Modify> {
 // TODO: add create_batch
 impl<M: Modify> Create<'_, M> {
     pub fn create(&mut self, modify: M) -> Entity {
-        let entities: [Entity; 1] = self.entities.create();
+        let entities: [Entity; 1] = self.entities.reserve();
         let entity = entities[0];
         self.defer.push((entity, modify));
         entity
@@ -74,7 +74,7 @@ impl<M: Modify + 'static> Inject for Create<'_, M> {
         let mut dependencies = Vec::new();
         for &(_, _, target) in state.targets.iter() {
             // No need to consider 'M::depend' since the entity's components can not be seen from other threads until 'resolve' is called.
-            // Only the lightweight 'Add' dependency is required to ensure consistency.
+            // Only the less constraining 'Add' dependency is required to ensure consistency.
             dependencies.push(Dependency::Add(target, TypeId::of::<Entity>()));
         }
         dependencies

@@ -6,7 +6,7 @@ use crate::{
     system::Dependency,
     world::World,
 };
-use std::{collections::HashMap, marker::PhantomData};
+use std::{any::TypeId, collections::HashMap, marker::PhantomData};
 
 pub struct Destroy<'a, M: Modify = ()> {
     defer: &'a mut Vec<Entity>,
@@ -52,14 +52,18 @@ impl<M: Modify + 'static> Inject for Destroy<'_, M> {
 
                 if *target {
                     world.segments[source].clear_at(index);
-                    entities.destroy(&[entity]);
+                    entities.release(&[entity]);
                 }
             }
         }
     }
 
-    fn depend(_: &Self::State, _: &World) -> Vec<Dependency> {
-        todo!()
+    fn depend(state: &Self::State, _: &World) -> Vec<Dependency> {
+        let mut dependencies = Vec::new();
+        for (&target, _) in state.targets.iter().filter(|(_, &value)| value) {
+            dependencies.push(Dependency::Write(target, TypeId::of::<Entity>()));
+        }
+        dependencies
     }
 }
 

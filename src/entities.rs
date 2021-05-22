@@ -31,37 +31,33 @@ struct Inner {
 impl Resource for Inner {}
 
 impl Entities<'_> {
-    pub fn create<const N: usize>(&self) -> [Entity; N] {
+    pub fn reserve<const N: usize>(&self) -> [Entity; N] {
         // TODO: use 'MaybeUninit'?
         // let mut entities = [Entity::ZERO; N];
         // entities
         todo!()
     }
 
-    pub fn destroy(&mut self, entities: &[Entity]) -> usize {
-        let mut count = 0;
+    pub fn release(&mut self, entities: &[Entity]) {
         for &entity in entities {
-            if self.has(entity) {
+            if let Some(_) = self.get_datum_mut(entity) {
                 self.0.free.push(entity);
-                count += 1;
             }
-        }
-        count
-    }
-
-    pub fn has(&self, entity: Entity) -> bool {
-        match self.get_datum(entity) {
-            Some(datum) => *unsafe { datum.store.at(datum.index as usize) } == entity,
-            None => false,
         }
     }
 
     pub fn get_datum(&self, entity: Entity) -> Option<&Datum> {
-        self.0.data.get(entity.index as usize)
+        self.0
+            .data
+            .get(entity.index as usize)
+            .filter(|datum| *unsafe { datum.store.at(datum.index as usize) } == entity)
     }
 
     pub fn get_datum_mut(&mut self, entity: Entity) -> Option<&mut Datum> {
-        self.0.data.get_mut(entity.index as usize)
+        self.0
+            .data
+            .get_mut(entity.index as usize)
+            .filter(|datum| *unsafe { datum.store.at(datum.index as usize) } == entity)
     }
 }
 

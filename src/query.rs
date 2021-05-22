@@ -60,6 +60,8 @@ impl<'a, I: Item> Query<'a, I> {
             }
         }
     }
+
+    pub fn get(&self, entity: Entity) -> Option<<I::State as At<'a>>::Item> {}
 }
 
 impl<'a, I: Item> Clone for Query<'a, I> {

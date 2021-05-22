@@ -14,7 +14,9 @@ pub trait Modify {
     fn dynamic_metas(&self, world: &mut World) -> Vec<Meta>;
     fn validate(&self, state: &Self::State) -> bool;
     fn modify(self, state: &Self::State, index: usize);
-    fn depend(state: &Self::State) -> Vec<Dependency>;
+    fn depend(_: &Self::State) -> Vec<Dependency> {
+        vec![Dependency::Unknown]
+    }
 }
 
 impl<C: Component> Modify for C {

@@ -1,11 +1,10 @@
 pub mod add;
 pub mod component;
 pub mod create;
-pub mod defer;
+pub mod depend;
 pub mod destroy;
 pub mod entities;
 pub mod entity;
-pub mod initialize;
 pub mod inject;
 pub mod item;
 pub mod local;
@@ -30,7 +29,6 @@ pub mod prelude {
     pub use crate::add::Add;
     pub use crate::component::Component;
     pub use crate::create::Create;
-    pub use crate::defer::Defer;
     pub use crate::destroy::Destroy;
     pub use crate::entity::Entity;
     pub use crate::inject::Injector;
@@ -240,13 +238,19 @@ mod test {
                         remove.remove(entity);
                     }
                 },
-            ).schedule(
+            )
+            .schedule(
                 |query: Query<Entity>, mut destroy: Destroy<(Position, Option<Velocity>)>| {
                     for entity in &query {
                         destroy.destroy(entity);
                     }
                 },
             )
+            .schedule(|query: Query<Entity>, mut destroy: Destroy| {
+                for entity in &query {
+                    destroy.destroy(entity);
+                }
+            })
             .runner()
             .unwrap();
 
