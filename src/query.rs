@@ -1,26 +1,31 @@
-use crate::entity::*;
-use crate::inject::*;
-use crate::item::*;
-use crate::segment::*;
-use crate::system::*;
-use crate::world::*;
+use crate::{
+    entities::{self, Entities},
+    entity::Entity,
+    inject::{Get, Inject},
+    item::{At, Item},
+    segment::Segment,
+    system::Dependency,
+    world::World,
+};
 use std::any::TypeId;
 
 pub struct Query<'a, I: Item> {
     states: &'a Vec<(I::State, usize)>,
+    entities: Entities<'a>,
     world: &'a World,
 }
 
-pub struct QueryState<I: Item> {
+pub struct State<I: Item> {
     index: usize,
     states: Vec<(I::State, usize)>,
+    entities: entities::State,
     filter: Filter,
 }
 
-pub struct QueryIterator<'a, I: Item> {
+pub struct Iterator<'a, 'b, I: Item> {
     index: usize,
     segment: usize,
-    query: Query<'a, I>,
+    query: &'b Query<'a, I>,
 }
 
 pub struct Filter(fn(&Segment) -> bool);
@@ -61,24 +66,26 @@ impl<'a, I: Item> Query<'a, I> {
         }
     }
 
-    pub fn get(&self, entity: Entity) -> Option<<I::State as At<'a>>::Item> {}
-}
-
-impl<'a, I: Item> Clone for Query<'a, I> {
-    fn clone(&self) -> Self {
-        Query {
-            states: self.states,
-            world: self.world,
-        }
+    pub fn get(&self, entity: Entity) -> Option<<I::State as At<'a>>::Item> {
+        self.entities.get_datum(entity).and_then(|datum| {
+            let index = datum.index as usize;
+            let segment = datum.segment as usize;
+            for pair in self.states {
+                if pair.1 == segment {
+                    return Some(pair.0.at(index));
+                }
+            }
+            None
+        })
     }
 }
 
-impl<'a, I: Item> IntoIterator for Query<'a, I> {
+impl<'a, 'b, I: Item> IntoIterator for &'b Query<'a, I> {
     type Item = <I::State as At<'a>>::Item;
-    type IntoIter = QueryIterator<'a, I>;
+    type IntoIter = Iterator<'a, 'b, I>;
 
     fn into_iter(self) -> Self::IntoIter {
-        QueryIterator {
+        Iterator {
             segment: 0,
             index: 0,
             query: self,
@@ -86,20 +93,7 @@ impl<'a, I: Item> IntoIterator for Query<'a, I> {
     }
 }
 
-impl<'a, I: Item> IntoIterator for &Query<'a, I> {
-    type Item = <I::State as At<'a>>::Item;
-    type IntoIter = QueryIterator<'a, I>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        QueryIterator {
-            segment: 0,
-            index: 0,
-            query: self.clone(),
-        }
-    }
-}
-
-impl<'a, I: Item> Iterator for QueryIterator<'a, I> {
+impl<'a, 'b, I: Item> std::iter::Iterator for Iterator<'a, 'b, I> {
     type Item = <I::State as At<'a>>::Item;
 
     #[inline]
@@ -121,12 +115,13 @@ impl<'a, I: Item> Iterator for QueryIterator<'a, I> {
 
 impl<'a, I: Item + 'static> Inject for Query<'a, I> {
     type Input = Filter;
-    type State = QueryState<I>;
+    type State = State<I>;
 
-    fn initialize(input: Self::Input, _: &mut World) -> Option<Self::State> {
-        Some(QueryState {
+    fn initialize(input: Self::Input, world: &mut World) -> Option<Self::State> {
+        <Entities as Inject>::initialize((), world).map(|state| State {
             index: 0,
             states: Vec::new(),
+            entities: state,
             filter: input,
         })
     }
@@ -153,12 +148,13 @@ impl<'a, I: Item + 'static> Inject for Query<'a, I> {
     }
 }
 
-impl<'a, I: Item + 'static> Get<'a> for QueryState<I> {
+impl<'a, I: Item + 'static> Get<'a> for State<I> {
     type Item = Query<'a, I>;
 
     fn get(&'a mut self, world: &'a World) -> Self::Item {
         Query {
             states: &self.states,
+            entities: self.entities.get(world),
             world,
         }
     }

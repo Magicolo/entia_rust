@@ -23,6 +23,7 @@ pub struct State<M: Modify> {
 
 impl<M: Modify> Add<'_, M> {
     pub fn add(&mut self, entity: Entity, modify: M) {
+        // TODO: Try to optimisticaly resolve the 'add' here.
         self.defer.push((entity, modify));
     }
 }
