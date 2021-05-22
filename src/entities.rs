@@ -38,15 +38,22 @@ impl Entities<'_> {
         todo!()
     }
 
+    pub fn destroy(&mut self, entities: &[Entity]) -> usize {
+        let mut count = 0;
+        for &entity in entities {
+            if self.has(entity) {
+                self.0.free.push(entity);
+                count += 1;
+            }
+        }
+        count
+    }
+
     pub fn has(&self, entity: Entity) -> bool {
         match self.get_datum(entity) {
             Some(datum) => *unsafe { datum.store.at(datum.index as usize) } == entity,
             None => false,
         }
-    }
-
-    pub fn destroy(&mut self, _entities: &[Entity]) -> usize {
-        todo!()
     }
 
     pub fn get_datum(&self, entity: Entity) -> Option<&Datum> {

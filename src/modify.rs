@@ -10,7 +10,8 @@ use crate::{
 pub trait Modify {
     type State;
     fn initialize(segment: &Segment, world: &World) -> Option<Self::State>;
-    fn metas(&self, world: &mut World) -> Vec<Meta>;
+    fn static_metas(world: &mut World) -> Vec<Meta>;
+    fn dynamic_metas(&self, world: &mut World) -> Vec<Meta>;
     fn validate(&self, state: &Self::State) -> bool;
     fn modify(self, state: &Self::State, index: usize);
     fn depend(state: &Self::State) -> Vec<Dependency>;
@@ -23,8 +24,12 @@ impl<C: Component> Modify for C {
         Some((segment.static_store()?, segment.index))
     }
 
-    fn metas(&self, world: &mut World) -> Vec<Meta> {
+    fn static_metas(world: &mut World) -> Vec<Meta> {
         vec![world.get_or_add_meta::<C>()]
+    }
+
+    fn dynamic_metas(&self, world: &mut World) -> Vec<Meta> {
+        Self::static_metas(world)
     }
 
     #[inline]
@@ -49,9 +54,13 @@ impl<M: Modify> Modify for Option<M> {
         Some(M::initialize(segment, world))
     }
 
-    fn metas(&self, world: &mut World) -> Vec<Meta> {
+    fn static_metas(world: &mut World) -> Vec<Meta> {
+        M::static_metas(world)
+    }
+
+    fn dynamic_metas(&self, world: &mut World) -> Vec<Meta> {
         match self {
-            Some(modify) => modify.metas(world),
+            Some(modify) => modify.dynamic_metas(world),
             None => Vec::new(),
         }
     }
@@ -91,10 +100,16 @@ macro_rules! modify {
                 Some(($($t::initialize(_segment, _world)?,)*))
             }
 
-            fn metas(&self, _world: &mut World) -> Vec<Meta> {
+            fn static_metas(_world: &mut World) -> Vec<Meta> {
+                let mut _metas = Vec::new();
+                $(_metas.append(&mut $t::static_metas(_world));)*
+                _metas
+            }
+
+            fn dynamic_metas(&self, _world: &mut World) -> Vec<Meta> {
                 let ($($p,)*) = self;
                 let mut _metas = Vec::new();
-                $(_metas.append(&mut $p.metas(_world));)*
+                $(_metas.append(&mut $p.dynamic_metas(_world));)*
                 _metas
             }
 

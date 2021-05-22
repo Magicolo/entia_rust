@@ -40,14 +40,14 @@ impl<M: Modify + 'static> Inject for Add<'_, M> {
     }
 
     fn resolve(state: &mut Self::State, world: &mut World) {
+        let mut entities = state.entities.entities();
         for (entity, modify) in state.defer.drain(..) {
-            let mut entities = state.entities.entities();
             if let Some(datum) = entities.get_datum_mut(entity) {
                 let index = datum.index as usize;
                 let source = datum.segment as usize;
                 let targets = state.targets.entry(source).or_insert_with(|| {
                     let mut targets = Vec::new();
-                    let source = &mut world.segments[source];
+                    let source = &world.segments[source];
                     if let Some(state) = M::initialize(source, world) {
                         targets.push((state, source.prepare_move(source)));
                     }
@@ -56,23 +56,21 @@ impl<M: Modify + 'static> Inject for Add<'_, M> {
                 let target = targets
                     .iter()
                     .position(|pair| modify.validate(&pair.0))
-                    // .position(|(state, types, move)| world.segment[move.target()].has_all(types))
-                    .map_or_else(
-                        || {
-                            let mut types = world.segments[source].types.clone();
-                            for meta in modify.metas(world) {
-                                types.add(meta.index);
-                            }
+                    .or_else(|| {
+                        let mut types = world.segments[source].types.clone();
+                        for meta in modify.dynamic_metas(world) {
+                            types.add(meta.index);
+                        }
 
-                            let target = world.get_or_add_segment_by_types(&types, None).index;
-                            let state = M::initialize(&world.segments[target], world)?;
-                            let indices = (source, target);
-                            let (source, target) = get_mut2(&mut world.segments, indices)?;
-                            targets.push((state, source.prepare_move(target)));
-                            return targets.last();
-                        },
-                        |index| Some(&targets[index]),
-                    );
+                        let target = world.get_or_add_segment_by_types(&types, None).index;
+                        let state = M::initialize(&world.segments[target], world)?;
+                        let indices = (source, target);
+                        let (source, target) = get_mut2(&mut world.segments, indices)?;
+                        let index = targets.len();
+                        targets.push((state, source.prepare_move(target)));
+                        return Some(index);
+                    })
+                    .and_then(|index| targets.get(index));
 
                 if let Some(target) = target {
                     if let Some(index) = target.1.apply(index, world) {
@@ -87,15 +85,12 @@ impl<M: Modify + 'static> Inject for Add<'_, M> {
 
     fn depend(state: &Self::State, _: &World) -> Vec<Dependency> {
         let mut dependencies = Vec::new();
-
-        for targets in state.targets.values() {
-            for pair in targets {
-                if pair.1.source() != pair.1.target() {
-                    dependencies.push(Dependency::Write(pair.1.source(), TypeId::of::<Entity>()));
-                    dependencies.push(Dependency::Add(pair.1.target(), TypeId::of::<Entity>()));
-                }
-                dependencies.append(&mut M::depend(&pair.0));
+        for pair in state.targets.values().flat_map(|targets| targets) {
+            if pair.1.source() != pair.1.target() {
+                dependencies.push(Dependency::Write(pair.1.source(), TypeId::of::<Entity>()));
+                dependencies.push(Dependency::Add(pair.1.target(), TypeId::of::<Entity>()));
             }
+            dependencies.append(&mut M::depend(&pair.0));
         }
 
         dependencies

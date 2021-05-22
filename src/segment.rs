@@ -31,8 +31,8 @@ impl Move {
             let source_index = source.count;
             let target_index = target.reserve(1);
             for (source_store, target_store) in self.copy.iter() {
-                source_store.copy_to(index, (target_index, target_store.as_ref()), 1);
-                source_store.copy(source_index, index, 1);
+                source_store.foreign_copy(index, (target_index, target_store.as_ref()), 1);
+                source_store.local_copy(source_index, index, 1);
             }
 
             for store in self.clear.iter() {
@@ -88,6 +88,20 @@ impl Segment {
             target: target.index,
             copy,
             clear,
+        }
+    }
+
+    pub fn clear_at(&mut self, index: usize) -> bool {
+        if index < self.count {
+            self.count -= 1;
+            let last = self.count;
+            for (_, store, _) in self.stores.iter() {
+                store.clear(index, 1);
+                store.local_copy(last, index, 1);
+            }
+            true
+        } else {
+            false
         }
     }
 

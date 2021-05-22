@@ -17,9 +17,10 @@ pub struct Remove<'a, M: Modify> {
 }
 
 pub struct State<M: Modify> {
-    targets: HashMap<usize, Option<(M::State, Move)>>,
+    targets: HashMap<usize, Option<Move>>,
     defer: Vec<Entity>,
     entities: entities::State,
+    _marker: PhantomData<M>,
 }
 
 impl<M: Modify> Remove<'_, M> {
@@ -38,6 +39,7 @@ impl<M: Modify + 'static> Inject for Remove<'_, M> {
             targets: HashMap::new(),
             defer: Vec::new(),
             entities: state,
+            _marker: PhantomData,
         })
     }
 
@@ -51,23 +53,23 @@ impl<M: Modify + 'static> Inject for Remove<'_, M> {
                     .targets
                     .entry(source)
                     .or_insert_with(|| {
-                        let state = M::initialize(&world.segments[source], world)?;
-                        let mut types = &world.segments[source].types.clone();
-                        for meta in modify.metas(world) {
+                        M::initialize(&world.segments[source], world)?;
+                        let mut types = world.segments[source].types.clone();
+                        for meta in M::static_metas(world) {
                             types.remove(meta.index);
                         }
 
                         let target = world.get_or_add_segment_by_types(&types, None).index;
                         let indices = (source, target);
                         let (source, target) = get_mut2(&mut world.segments, indices)?;
-                        Some((state, source.prepare_move(target)))
+                        Some(source.prepare_move(target))
                     })
                     .as_ref();
 
                 if let Some(target) = target {
-                    if let Some(index) = target.1.apply(index, world) {
+                    if let Some(index) = target.apply(index, world) {
                         datum.index = index as u32;
-                        datum.segment = target.1.target() as u32;
+                        datum.segment = target.target() as u32;
                     }
                 }
             }
@@ -76,14 +78,12 @@ impl<M: Modify + 'static> Inject for Remove<'_, M> {
 
     fn depend(state: &Self::State, _: &World) -> Vec<Dependency> {
         let mut dependencies = Vec::new();
-
-        for pair in state.targets.values().filter_map(Option::as_ref) {
-            if pair.1.source() != pair.1.target() {
-                dependencies.push(Dependency::Write(pair.1.source(), TypeId::of::<Entity>()));
-                dependencies.push(Dependency::Add(pair.1.target(), TypeId::of::<Entity>()));
+        for target in state.targets.values().filter_map(Option::as_ref) {
+            if target.source() != target.target() {
+                dependencies.push(Dependency::Write(target.source(), TypeId::of::<Entity>()));
+                dependencies.push(Dependency::Add(target.target(), TypeId::of::<Entity>()));
             }
         }
-
         dependencies
     }
 }

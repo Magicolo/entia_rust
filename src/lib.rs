@@ -2,6 +2,7 @@ pub mod add;
 pub mod component;
 pub mod create;
 pub mod defer;
+pub mod destroy;
 pub mod entities;
 pub mod entity;
 pub mod initialize;
@@ -30,6 +31,7 @@ pub mod prelude {
     pub use crate::component::Component;
     pub use crate::create::Create;
     pub use crate::defer::Defer;
+    pub use crate::destroy::Destroy;
     pub use crate::entity::Entity;
     pub use crate::inject::Injector;
     pub use crate::item::{And, Not};
@@ -230,6 +232,19 @@ mod test {
                     let _ = create.create((Position(1., 2., 3.), None));
                     let entity = create.create((Position(1., 2., 3.), Some(Velocity(3., 2., 1.))));
                     add.add(entity, Frozen);
+                },
+            )
+            .schedule(
+                |query: Query<Entity>, mut remove: Remove<(Position, Option<Velocity>)>| {
+                    for entity in &query {
+                        remove.remove(entity);
+                    }
+                },
+            ).schedule(
+                |query: Query<Entity>, mut destroy: Destroy<(Position, Option<Velocity>)>| {
+                    for entity in &query {
+                        destroy.destroy(entity);
+                    }
                 },
             )
             .runner()

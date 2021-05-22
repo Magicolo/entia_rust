@@ -43,42 +43,23 @@ impl<M: Modify + 'static> Inject for Create<'_, M> {
     }
 
     fn resolve(state: &mut Self::State, world: &mut World) {
-        /*
-        CREATE:
-        static: (Position, Option<Velocity>)
-        dynamic: (Position, None)
-        targets: []
-        metas: [Position]
-        -> add_segment, move
-
-        static: (Position, Option<Velocity>)
-        dynamic: (Position, Some(Velocity))
-        targets: [[Position]]
-        metas: [Position, Velocity]
-        -> add_segment, move
-
-        // Validate should ensure that 'target.types == Bits(metas)'
-
-        ADD:
-        // Validate should ensure that 'target.types.has_all(Bits(metas))'
-        */
         for (entity, modify) in state.defer.drain(..) {
             let targets = &mut state.targets;
             let target = targets
                 .iter()
                 .position(|pair| modify.validate(&pair.0))
-                .map_or_else(
-                    || {
-                        let mut metas = vec![world.get_or_add_meta::<Entity>()];
-                        metas.append(&mut modify.metas(world));
-                        let target = world.get_or_add_segment_by_metas(&metas, None).index;
-                        let entities = world.segments[target].static_store()?;
-                        let state = M::initialize(&world.segments[target], world)?;
-                        targets.push((state, entities, target));
-                        return targets.last();
-                    },
-                    |index| Some(&state.targets[index]),
-                );
+                .or_else(|| {
+                    let mut metas = vec![world.get_or_add_meta::<Entity>()];
+                    metas.append(&mut modify.dynamic_metas(world));
+                    let target = world.get_or_add_segment_by_metas(&metas, None).index;
+                    let target = &world.segments[target];
+                    let entities = target.static_store()?;
+                    let state = M::initialize(target, world)?;
+                    let index = targets.len();
+                    targets.push((state, entities, target.index));
+                    return Some(index);
+                })
+                .and_then(|index| targets.get(index));
 
             if let Some((state, entities, target)) = target {
                 let target = &mut world.segments[*target];

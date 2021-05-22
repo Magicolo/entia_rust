@@ -30,8 +30,8 @@ pub struct State;
 
 pub trait Storage: Sync + Send {
     fn ensure(&self, capacity: usize) -> bool;
-    fn copy_to(&self, source: usize, target: (usize, &dyn Any), count: usize) -> bool;
-    fn copy(&self, source: usize, target: usize, count: usize) -> bool;
+    fn foreign_copy(&self, source: usize, target: (usize, &dyn Any), count: usize) -> bool;
+    fn local_copy(&self, source: usize, target: usize, count: usize) -> bool;
     fn clear(&self, index: usize, count: usize);
 }
 
@@ -47,7 +47,7 @@ impl<T: Send + 'static> Storage for Store<T> {
         }
     }
 
-    fn copy_to(&self, source: usize, target: (usize, &dyn Any), count: usize) -> bool {
+    fn foreign_copy(&self, source: usize, target: (usize, &dyn Any), count: usize) -> bool {
         if let Some(store) = target.1.downcast_ref::<Store<T>>() {
             unsafe { std::ptr::copy_nonoverlapping(self.at(source), store.at(target.0), count) };
             true
@@ -56,7 +56,7 @@ impl<T: Send + 'static> Storage for Store<T> {
         }
     }
 
-    fn copy(&self, source: usize, target: usize, count: usize) -> bool {
+    fn local_copy(&self, source: usize, target: usize, count: usize) -> bool {
         if source == target {
             false
         } else {
