@@ -22,6 +22,7 @@ pub struct State<M: Modify> {
 
 impl<M: Modify> Destroy<'_, M> {
     pub fn destroy(&mut self, entity: Entity) {
+        // TODO: Try to optimisticaly resolve here.
         self.defer.push(entity);
     }
 }

@@ -8,7 +8,7 @@ use crate::{
 };
 
 pub struct Receive<'a, M: Message>(&'a mut Messages<M>);
-pub struct ReceiveState<M: Message> {
+pub struct State<M: Message> {
     index: usize,
     store: Arc<Store<Messages<M>>>,
     segment: usize,
@@ -25,7 +25,7 @@ impl<M: Message> Iterator for Receive<'_, M> {
 
 impl<M: Message> Inject for Receive<'_, M> {
     type Input = usize;
-    type State = ReceiveState<M>;
+    type State = State<M>;
 
     fn initialize(input: Self::Input, world: &mut World) -> Option<Self::State> {
         let meta = world.get_or_add_meta::<M>();
@@ -36,7 +36,7 @@ impl<M: Message> Inject for Receive<'_, M> {
             messages: VecDeque::new(),
             capacity: input,
         };
-        Some(ReceiveState {
+        Some(State {
             index,
             store,
             segment: segment.index,
@@ -48,7 +48,7 @@ impl<M: Message> Inject for Receive<'_, M> {
     }
 }
 
-impl<'a, M: Message> Get<'a> for ReceiveState<M> {
+impl<'a, M: Message> Get<'a> for State<M> {
     type Item = Receive<'a, M>;
 
     #[inline]

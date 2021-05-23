@@ -29,7 +29,7 @@ impl Default for Entity {
 impl Item for Entity {
     type State = State;
 
-    fn initialize(segment: &Segment) -> Option<Self::State> {
+    fn initialize(segment: &Segment, _: &World) -> Option<Self::State> {
         Some(State(segment.static_store()?, segment.index))
     }
 

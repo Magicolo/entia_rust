@@ -39,7 +39,7 @@ impl<'a, R: Resource> Get<'a> for State<R> {
 impl<C: Component> Item for Write<C> {
     type State = State<C>;
 
-    fn initialize(segment: &Segment) -> Option<Self::State> {
+    fn initialize(segment: &Segment, _: &World) -> Option<Self::State> {
         Some(State(segment.static_store()?, segment.index))
     }
 

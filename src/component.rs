@@ -10,8 +10,8 @@ pub trait Component: Send + 'static {}
 impl<C: Component> Item for &C {
     type State = <Read<C> as Item>::State;
 
-    fn initialize(segment: &Segment) -> Option<Self::State> {
-        <Read<C> as Item>::initialize(segment)
+    fn initialize(segment: &Segment, world: &World) -> Option<Self::State> {
+        <Read<C> as Item>::initialize(segment, world)
     }
 
     fn depend(state: &Self::State, world: &World) -> Vec<Dependency> {
@@ -22,8 +22,8 @@ impl<C: Component> Item for &C {
 impl<C: Component> Item for &mut C {
     type State = <Write<C> as Item>::State;
 
-    fn initialize(segment: &Segment) -> Option<Self::State> {
-        <Write<C> as Item>::initialize(segment)
+    fn initialize(segment: &Segment, world: &World) -> Option<Self::State> {
+        <Write<C> as Item>::initialize(segment, world)
     }
 
     fn depend(state: &Self::State, world: &World) -> Vec<Dependency> {

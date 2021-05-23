@@ -26,6 +26,7 @@ pub struct State<M: Modify> {
 impl<M: Modify> Remove<'_, M> {
     // TODO: add 'remove_batch'
     pub fn remove(&mut self, entity: Entity) {
+        // TODO: Try to optimisticaly resolve here.
         self.defer.push(entity);
     }
 }

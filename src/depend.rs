@@ -31,8 +31,8 @@ impl<I: Inject, D> Inject for Depend<I, D> {
 impl<I: Item, D> Item for Depend<I, D> {
     type State = I::State;
 
-    fn initialize(segment: &Segment) -> Option<Self::State> {
-        I::initialize(segment)
+    fn initialize(segment: &Segment, world: &World) -> Option<Self::State> {
+        I::initialize(segment, world)
     }
 
     fn depend(_: &Self::State, _: &World) -> Vec<Dependency> {

@@ -20,9 +20,10 @@ pub struct State<M: Modify> {
     entities: entities::State,
 }
 
-// TODO: add create_batch
 impl<M: Modify> Create<'_, M> {
+    // TODO: add create_batch
     pub fn create(&mut self, modify: M) -> Entity {
+        // TODO: Try to optimisticaly resolve here.
         let entities: [Entity; 1] = self.entities.reserve();
         let entity = entities[0];
         self.defer.push((entity, modify));

@@ -1,14 +1,10 @@
 use crate::segment::*;
 use crate::system::*;
 use crate::world::*;
-use std::marker::PhantomData;
-
-pub struct And<I: Item>(PhantomData<I>);
-pub struct Not<I: Item>(PhantomData<I>);
 
 pub trait Item {
     type State: for<'a> At<'a> + 'static;
-    fn initialize(segment: &Segment) -> Option<Self::State>;
+    fn initialize(segment: &Segment, world: &World) -> Option<Self::State>;
     fn depend(_: &Self::State, _: &World) -> Vec<Dependency> {
         vec![Dependency::Unknown]
     }
@@ -19,13 +15,11 @@ pub trait At<'a> {
     fn at(&'a self, index: usize) -> Self::Item;
 }
 
-pub struct DefaultState<T: Default>(PhantomData<T>);
-
 impl<I: Item> Item for Option<I> {
     type State = Option<I::State>;
 
-    fn initialize(segment: &Segment) -> Option<Self::State> {
-        Some(I::initialize(segment))
+    fn initialize(segment: &Segment, world: &World) -> Option<Self::State> {
+        Some(I::initialize(segment, world))
     }
 
     fn depend(state: &Self::State, world: &World) -> Vec<Dependency> {
@@ -45,66 +39,13 @@ impl<'a, A: At<'a>> At<'a> for Option<A> {
     }
 }
 
-impl<T: Default> At<'_> for DefaultState<T> {
-    type Item = T;
-
-    #[inline]
-    fn at(&self, _: usize) -> Self::Item {
-        T::default()
-    }
-}
-
-impl<I: Item> Default for And<I> {
-    #[inline]
-    fn default() -> Self {
-        And(PhantomData)
-    }
-}
-
-impl<I: Item + 'static> Item for And<I> {
-    type State = DefaultState<Self>;
-
-    fn initialize(segment: &Segment) -> Option<Self::State> {
-        match I::initialize(segment) {
-            Some(_) => Some(DefaultState(PhantomData)),
-            None => None,
-        }
-    }
-
-    fn depend(_: &Self::State, _: &World) -> Vec<Dependency> {
-        Vec::new()
-    }
-}
-
-impl<I: Item> Default for Not<I> {
-    #[inline]
-    fn default() -> Self {
-        Not(PhantomData)
-    }
-}
-
-impl<I: Item + 'static> Item for Not<I> {
-    type State = DefaultState<Self>;
-
-    fn initialize(segment: &Segment) -> Option<Self::State> {
-        match I::initialize(segment) {
-            Some(_) => None,
-            None => Some(DefaultState(PhantomData)),
-        }
-    }
-
-    fn depend(_: &Self::State, _: &World) -> Vec<Dependency> {
-        Vec::new()
-    }
-}
-
 macro_rules! item {
     ($($p:ident, $t:ident),*) => {
         impl<$($t: Item,)*> Item for ($($t,)*) {
             type State = ($($t::State,)*);
 
-            fn initialize(_segment: &Segment) -> Option<Self::State> {
-                Some(($($t::initialize(_segment)?,)*))
+            fn initialize(_segment: &Segment, _world: &World) -> Option<Self::State> {
+                Some(($($t::initialize(_segment, _world)?,)*))
             }
 
             fn depend(($($p,)*): &Self::State, _world: &World) -> Vec<Dependency> {

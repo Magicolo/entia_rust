@@ -1,4 +1,5 @@
 pub mod add;
+pub mod and;
 pub mod component;
 pub mod create;
 pub mod depend;
@@ -11,6 +12,7 @@ pub mod item;
 pub mod local;
 pub mod message;
 pub mod modify;
+pub mod not;
 pub mod query;
 pub mod read;
 pub mod receive;
@@ -29,15 +31,16 @@ pub mod core {
 
 pub mod prelude {
     pub use crate::add::Add;
+    pub use crate::and::And;
     pub use crate::component::Component;
     pub use crate::create::Create;
     pub use crate::destroy::Destroy;
     pub use crate::emit::Emit;
     pub use crate::entity::Entity;
     pub use crate::inject::Injector;
-    pub use crate::item::{And, Not};
     pub use crate::local::Local;
     pub use crate::message::Message;
+    pub use crate::not::Not;
     pub use crate::query::Query;
     pub use crate::receive::Receive;
     pub use crate::remove::Remove;
@@ -150,7 +153,7 @@ mod test {
                     for _ in &group {}
                 },
             )
-            .schedule(|_: Query<(Entity, Not<&Frozen>, And<&Position>)>| {})
+            .schedule(|_: Query<(Entity, Not<Frozen>, And<Position>)>| {})
             .schedule(|_: Query<(Entity, (&Position, &Velocity))>| {})
             .schedule(|query: Query<(&mut Position, &mut Position)>| {
                 query.each(|(_1, _2)| {});

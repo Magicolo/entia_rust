@@ -131,7 +131,7 @@ impl<'a, I: Item + 'static> Inject for Query<'a, I> {
             state.index += 1;
 
             if state.filter.filter(segment) {
-                if let Some(item) = I::initialize(&segment) {
+                if let Some(item) = I::initialize(&segment, world) {
                     state.states.push((item, segment.index));
                 }
             }
