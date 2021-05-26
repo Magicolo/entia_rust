@@ -98,7 +98,7 @@ impl<'a, 'b: 'a, I: Item, F: Filter> Iterator for Items<'a, 'b, I, F> {
     }
 }
 
-impl<'a, I: Item + 'static, F: Filter + 'static> Inject for Query<'a, I, F> {
+impl<'a, I: Item + 'static, F: Filter> Inject for Query<'a, I, F> {
     type Input = ();
     type State = State<I, F>;
 
@@ -139,7 +139,7 @@ impl<'a, I: Item + 'static, F: Filter + 'static> Inject for Query<'a, I, F> {
     }
 }
 
-impl<'a, I: Item + 'static, F: Filter + 'static> Get<'a> for State<I, F> {
+impl<'a, I: Item + 'static, F: Filter> Get<'a> for State<I, F> {
     type Item = Query<'a, I, F>;
 
     fn get(&'a mut self, world: &'a World) -> Self::Item {

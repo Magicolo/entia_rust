@@ -104,6 +104,8 @@ mod test {
         struct Time(f64);
         #[derive(Default)]
         struct Physics;
+        struct Player;
+        struct Enemy;
         struct Frozen;
         struct Position(f64, f64, f64);
         struct Velocity(f64, f64, f64);
@@ -111,6 +113,8 @@ mod test {
         struct OnKill(Entity);
         impl Resource for Time {}
         impl Resource for Physics {}
+        impl Component for Player {}
+        impl Component for Enemy {}
         impl Component for Position {}
         impl Component for Velocity {}
         impl Component for Frozen {}
@@ -253,8 +257,8 @@ mod test {
                     }
                 },
             )
-            // Removes the 'Position' component of all entities that have a 'Frozen' component.
-            .schedule(|mut remove: Remove<Position, Frozen>| remove.remove_all())
+            // Removes the 'Position' component of all entities that don't have a 'Player' component and that have a 'Frozen' component.
+            .schedule(|mut remove: Remove<Position, (Not<Player>, Frozen)>| remove.remove_all())
             .schedule(
                 |query: Query<Entity>, mut destroy: Destroy<(Position, Velocity)>| {
                     for entity in &query {

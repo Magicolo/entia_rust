@@ -6,24 +6,19 @@ use crate::{
     filter::Filter,
     inject::{Get, Inject},
     modify::Modify,
+    resource::Resource,
     segment::Move,
     system::Dependency,
     world::{Store, World},
+    write::{self, Write},
 };
 use std::{any::TypeId, marker::PhantomData, sync::Arc};
 
-pub struct Remove<'a, M: Modify, F: Filter = ()> {
-    all: &'a mut bool,
-    defer: &'a mut Vec<Entity>,
-    _marker: PhantomData<(M, F)>,
-}
+pub struct Remove<'a, M: Modify, F: Filter = ()>(&'a mut Inner<M, F>);
 
 pub struct State<M: Modify, F: Filter> {
-    all: bool,
-    defer: Vec<Entity>,
-    targets: Vec<Target>,
+    inner: write::State<Inner<M, F>>,
     entities: entities::State,
-    _marker: PhantomData<(M, F)>,
 }
 
 enum Target {
@@ -32,32 +27,49 @@ enum Target {
     Valid(Arc<Store<Entity>>, Move),
 }
 
-impl<M: Modify, F: Filter> Remove<'_, M, F> {
-    pub fn remove(&mut self, entity: Entity) {
-        // TODO: Try to optimisticaly resolve here.
-        self.defer.push(entity);
-    }
+struct Inner<M: Modify, F: Filter> {
+    all: bool,
+    defer: Vec<Entity>,
+    targets: Vec<Target>,
+    _marker: PhantomData<(M, F)>,
+}
 
-    pub fn remove_all(&mut self) {
-        *self.all = true;
+impl<M: Modify, F: Filter> Resource for Inner<M, F> {}
+
+impl<M: Modify, F: Filter> Default for Inner<M, F> {
+    fn default() -> Self {
+        Self {
+            all: false,
+            defer: Vec::new(),
+            targets: Vec::new(),
+            _marker: PhantomData,
+        }
     }
 }
 
-impl<M: Modify + 'static, F: Filter + 'static> Inject for Remove<'_, M, F> {
+impl<M: Modify, F: Filter> Remove<'_, M, F> {
+    pub fn remove(&mut self, entity: Entity) {
+        // TODO: Try to optimisticaly resolve here.
+        self.0.defer.push(entity);
+    }
+
+    pub fn remove_all(&mut self) {
+        self.0.all = true;
+    }
+}
+
+impl<M: Modify, F: Filter> Inject for Remove<'_, M, F> {
     type Input = ();
     type State = State<M, F>;
 
     fn initialize(_: Self::Input, world: &mut World) -> Option<Self::State> {
-        <Entities as Inject>::initialize((), world).map(|state| State {
-            all: false,
-            defer: Vec::new(),
-            targets: Vec::new(),
-            entities: state,
-            _marker: PhantomData,
-        })
+        let inner = <Write<Inner<M, F>> as Inject>::initialize(None, world)?;
+        let entities = <Entities as Inject>::initialize((), world)?;
+        Some(State { inner, entities })
     }
 
     fn update(state: &mut Self::State, world: &mut World) {
+        let state = state.inner.as_mut();
         while let Some(source) = world.segments.get(state.targets.len()) {
             let validate = || {
                 let meta = world.get_meta::<Entity>()?;
@@ -108,6 +120,8 @@ impl<M: Modify + 'static, F: Filter + 'static> Inject for Remove<'_, M, F> {
             target
         }
 
+        let entities = &mut state.entities;
+        let state = state.inner.as_mut();
         if state.all.change(false) {
             state.defer.clear();
 
@@ -118,9 +132,8 @@ impl<M: Modify + 'static, F: Filter + 'static> Inject for Remove<'_, M, F> {
                         if let Some(index) = target.apply(0, count, world) {
                             for i in index..index + count {
                                 let entity = *unsafe { store.at(i) };
-                                let datum = unsafe {
-                                    state.entities.get_datum_at_mut(entity.index as usize)
-                                };
+                                let datum =
+                                    unsafe { entities.get_datum_at_mut(entity.index as usize) };
                                 datum.index = i as u32;
                                 datum.segment = target.target() as u32;
                                 datum.store = store.clone();
@@ -132,7 +145,7 @@ impl<M: Modify + 'static, F: Filter + 'static> Inject for Remove<'_, M, F> {
             }
         } else {
             for entity in state.defer.drain(..) {
-                if let Some(datum) = state.entities.get_datum_mut(entity) {
+                if let Some(datum) = entities.get_datum_mut(entity) {
                     let index = datum.index as usize;
                     let source = datum.segment as usize;
                     match get(source, &mut state.targets, world) {
@@ -150,9 +163,9 @@ impl<M: Modify + 'static, F: Filter + 'static> Inject for Remove<'_, M, F> {
         }
     }
 
-    fn depend(state: &Self::State, _: &World) -> Vec<Dependency> {
-        let mut dependencies = Vec::new();
-        for target in state.targets.iter() {
+    fn depend(state: &Self::State, world: &World) -> Vec<Dependency> {
+        let mut dependencies = <Write<Inner<M, F>> as Inject>::depend(&state.inner, world);
+        for target in state.inner.as_ref().targets.iter() {
             match target {
                 // No need to check 'source != target' since 'get_mut2' already does this check.
                 Target::Valid(_, target) => {
@@ -165,14 +178,10 @@ impl<M: Modify + 'static, F: Filter + 'static> Inject for Remove<'_, M, F> {
     }
 }
 
-impl<'a, M: Modify + 'static, F: Filter + 'static> Get<'a> for State<M, F> {
+impl<'a, M: Modify, F: Filter> Get<'a> for State<M, F> {
     type Item = Remove<'a, M, F>;
 
-    fn get(&'a mut self, _: &'a World) -> Self::Item {
-        Remove {
-            all: &mut self.all,
-            defer: &mut self.defer,
-            _marker: PhantomData,
-        }
+    fn get(&'a mut self, world: &'a World) -> Self::Item {
+        Remove(self.inner.get(world))
     }
 }

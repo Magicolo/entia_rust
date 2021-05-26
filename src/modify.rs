@@ -7,7 +7,7 @@ use crate::{
     world::{Meta, Store, World},
 };
 
-pub trait Modify {
+pub trait Modify: Send + 'static {
     type State;
     fn initialize(segment: &Segment, world: &World) -> Option<Self::State>;
     fn static_metas(world: &mut World) -> Vec<Meta>;

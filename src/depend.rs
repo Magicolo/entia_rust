@@ -40,7 +40,7 @@ impl<I: Item, D> Item for Depend<I, D> {
     }
 }
 
-impl<M: Modify, D> Modify for Depend<M, D> {
+impl<M: Modify, D: Send + 'static> Modify for Depend<M, D> {
     type State = M::State;
 
     fn initialize(segment: &Segment, world: &World) -> Option<Self::State> {

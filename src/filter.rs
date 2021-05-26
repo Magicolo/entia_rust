@@ -1,6 +1,6 @@
 use crate::{segment::Segment, world::World};
 
-pub trait Filter {
+pub trait Filter: Send + 'static {
     fn filter(segment: &Segment, world: &World) -> bool;
 }
 

@@ -20,6 +20,8 @@ pub struct Move {
     clear: Vec<Arc<dyn Storage>>,
 }
 
+unsafe impl Send for Move {}
+
 impl Move {
     pub fn apply(&self, index: usize, count: usize, world: &mut World) -> Option<usize> {
         if self.source == self.target {

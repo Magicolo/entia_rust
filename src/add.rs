@@ -29,7 +29,7 @@ impl<M: Modify> Add<'_, M> {
     }
 }
 
-impl<M: Modify + 'static> Inject for Add<'_, M> {
+impl<M: Modify> Inject for Add<'_, M> {
     type Input = ();
     type State = State<M>;
 
@@ -128,7 +128,7 @@ impl<M: Modify + 'static> Inject for Add<'_, M> {
     }
 }
 
-impl<'a, M: Modify + 'static> Get<'a> for State<M> {
+impl<'a, M: Modify> Get<'a> for State<M> {
     type Item = Add<'a, M>;
 
     fn get(&'a mut self, _: &'a World) -> Self::Item {

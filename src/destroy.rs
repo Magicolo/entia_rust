@@ -33,7 +33,7 @@ impl<F: Filter> Destroy<'_, F> {
     }
 }
 
-impl<F: Filter + 'static> Inject for Destroy<'_, F> {
+impl<F: Filter> Inject for Destroy<'_, F> {
     type Input = ();
     type State = State<F>;
 
@@ -85,7 +85,7 @@ impl<F: Filter + 'static> Inject for Destroy<'_, F> {
     }
 }
 
-impl<'a, F: Filter + 'static> Get<'a> for State<F> {
+impl<'a, F: Filter> Get<'a> for State<F> {
     type Item = Destroy<'a, F>;
 
     #[inline]
