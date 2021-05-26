@@ -10,7 +10,7 @@ pub enum Dependency {
     Unknown,
     Read(usize, TypeId),
     Write(usize, TypeId),
-    Add(usize, TypeId),
+    Defer(usize, TypeId),
 }
 
 pub struct Runner {
@@ -96,7 +96,7 @@ impl Runner {
                     }
                     writes.insert(pair);
                 }
-                &Dependency::Add(segment, store) => {
+                &Dependency::Defer(segment, store) => {
                     let pair = (segment, store);
                     adds.insert(pair);
                 }

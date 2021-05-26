@@ -1,7 +1,7 @@
 use crate::{
     inject::{Get, Inject},
     message::{Message, Messages},
-    query::{self, Filter, Query},
+    query::{self, Query},
     system::Dependency,
     world::World,
     write::Write,
@@ -29,8 +29,7 @@ impl<'a, M: Message> Inject for Emit<'a, M> {
     type State = State<M>;
 
     fn initialize(_: Self::Input, world: &mut World) -> Option<Self::State> {
-        <Query<'a, Write<Messages<M>>> as Inject>::initialize(Filter::TRUE, world)
-            .map(|state| State(state))
+        <Query<'a, Write<Messages<M>>> as Inject>::initialize((), world).map(|state| State(state))
     }
 
     #[inline]

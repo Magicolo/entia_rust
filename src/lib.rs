@@ -1,5 +1,4 @@
 pub mod add;
-pub mod and;
 pub mod component;
 pub mod create;
 pub mod depend;
@@ -7,6 +6,7 @@ pub mod destroy;
 pub mod emit;
 pub mod entities;
 pub mod entity;
+pub mod filter;
 pub mod inject;
 pub mod item;
 pub mod local;
@@ -31,7 +31,6 @@ pub mod core {
 
 pub mod prelude {
     pub use crate::add::Add;
-    pub use crate::and::And;
     pub use crate::component::Component;
     pub use crate::create::Create;
     pub use crate::destroy::Destroy;
@@ -153,7 +152,15 @@ mod test {
                     for _ in &group {}
                 },
             )
-            .schedule(|_: Query<(Entity, Not<Frozen>, And<Position>)>| {})
+            .schedule(
+                |_: Query<
+                    (Entity,),
+                    (
+                        Not<(Not<(Frozen, Frozen)>, Frozen)>,
+                        (Position, Not<Frozen>),
+                    ),
+                >| {},
+            )
             .schedule(|_: Query<(Entity, (&Position, &Velocity))>| {})
             .schedule(|query: Query<(&mut Position, &mut Position)>| {
                 query.each(|(_1, _2)| {});
@@ -246,8 +253,10 @@ mod test {
                     }
                 },
             )
+            // Removes the 'Position' component of all entities that have a 'Frozen' component.
+            .schedule(|mut remove: Remove<Position, Frozen>| remove.remove_all())
             .schedule(
-                |query: Query<Entity>, mut destroy: Destroy<(Position, Option<Velocity>)>| {
+                |query: Query<Entity>, mut destroy: Destroy<(Position, Velocity)>| {
                     for entity in &query {
                         destroy.destroy(entity);
                     }

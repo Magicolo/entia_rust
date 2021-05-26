@@ -38,42 +38,60 @@ impl Entities<'_> {
         todo!()
     }
 
-    pub fn release(&mut self, entities: &[Entity]) {
-        for &entity in entities {
-            if let Some(_) = self.get_datum_mut(entity) {
-                self.0.free.push(entity);
-            }
-        }
-    }
-
     pub fn get_datum(&self, entity: Entity) -> Option<&Datum> {
         self.0
             .data
             .get(entity.index as usize)
             .filter(|datum| *unsafe { datum.store.at(datum.index as usize) } == entity)
     }
-
-    pub fn get_datum_mut(&mut self, entity: Entity) -> Option<&mut Datum> {
-        self.0
-            .data
-            .get_mut(entity.index as usize)
-            .filter(|datum| *unsafe { datum.store.at(datum.index as usize) } == entity)
-    }
 }
 
 impl State {
-    pub fn entities(&mut self) -> Entities {
-        Entities(self.0.as_mut())
+    #[inline]
+    pub fn release(&mut self, entities: &[Entity]) {
+        self.0.as_mut().release(entities);
+    }
+
+    #[inline]
+    pub fn get_datum(&self, entity: Entity) -> Option<&Datum> {
+        self.0.as_ref().get_datum(entity)
+    }
+
+    #[inline]
+    pub unsafe fn get_datum_at_mut(&mut self, index: usize) -> &mut Datum {
+        &mut self.0.as_mut().data[index]
+    }
+
+    #[inline]
+    pub fn get_datum_mut(&mut self, entity: Entity) -> Option<&mut Datum> {
+        self.0.as_mut().get_datum_mut(entity)
     }
 }
 
 impl Inner {
-    fn new(capacity: usize) -> Self {
+    pub fn new(capacity: usize) -> Self {
         Inner {
             free: Vec::with_capacity(capacity),
             last: 0.into(),
             data: Vec::with_capacity(capacity),
         }
+    }
+
+    #[inline]
+    pub fn release(&mut self, entities: &[Entity]) {
+        self.free.extend_from_slice(entities);
+    }
+
+    pub fn get_datum(&self, entity: Entity) -> Option<&Datum> {
+        self.data
+            .get(entity.index as usize)
+            .filter(|datum| *unsafe { datum.store.at(datum.index as usize) } == entity)
+    }
+
+    pub fn get_datum_mut(&mut self, entity: Entity) -> Option<&mut Datum> {
+        self.data
+            .get_mut(entity.index as usize)
+            .filter(|datum| *unsafe { datum.store.at(datum.index as usize) } == entity)
     }
 }
 

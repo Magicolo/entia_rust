@@ -1,106 +1,91 @@
+use entia_core::bits::Bits;
+
 use crate::{
     entities::{self, Entities},
     entity::Entity,
+    filter::Filter,
     inject::{Get, Inject},
     item::{At, Item},
-    segment::Segment,
     system::Dependency,
     world::World,
 };
-use std::any::TypeId;
+use std::{any::TypeId, marker::PhantomData};
 
-pub struct Query<'a, I: Item> {
-    states: &'a Vec<(I::State, usize)>,
+pub struct Query<'a, I: Item, F: Filter = ()> {
+    segments: &'a Bits,
+    states: &'a Vec<(I::State, usize, usize)>,
     entities: Entities<'a>,
-    world: &'a World,
+    _marker: PhantomData<F>,
 }
 
-pub struct State<I: Item> {
-    index: usize,
-    states: Vec<(I::State, usize)>,
-    entities: entities::State,
-    filter: Filter,
+pub struct State<I: Item, F: Filter = ()> {
+    pub(crate) index: usize,
+    pub(crate) segments: Bits,
+    pub(crate) states: Vec<(I::State, usize, usize)>,
+    pub(crate) entities: entities::State,
+    _marker: PhantomData<F>,
 }
 
-pub struct Iterator<'a, 'b, I: Item> {
+pub struct Items<'a, 'b, I: Item, F: Filter> {
     index: usize,
     segment: usize,
-    query: &'b Query<'a, I>,
+    query: &'b Query<'a, I, F>,
 }
 
-pub struct Filter(fn(&Segment) -> bool);
-
-impl Default for Filter {
-    fn default() -> Self {
-        Self::with::<Entity>()
-    }
-}
-
-impl Filter {
-    pub const TRUE: Self = Self(|_| true);
-    pub const FALSE: Self = Self(|_| false);
-
-    #[inline]
-    pub fn new(filter: fn(&Segment) -> bool) -> Self {
-        Self(filter)
-    }
-
-    #[inline]
-    pub fn with<T: Send + 'static>() -> Self {
-        Self::new(|segment| segment.static_store::<T>().is_some())
-    }
-
-    #[inline]
-    pub fn filter(&self, segment: &Segment) -> bool {
-        self.0(segment)
-    }
-}
-
-impl<'a, I: Item> Query<'a, I> {
-    pub fn each<F: FnMut(<I::State as At<'a>>::Item)>(&self, mut each: F) {
-        for (item, segment) in self.states.iter() {
-            let segment = &self.world.segments[*segment];
-            for i in 0..segment.count {
-                each(item.at(i));
+impl<I: Item, F: Filter> Query<'_, I, F> {
+    pub fn each<E: FnMut(<I::State as At<'_>>::Item)>(&self, mut each: E) {
+        for (state, _, count) in self.states {
+            let count = *count;
+            for i in 0..count {
+                each(state.at(i));
             }
         }
     }
 
-    pub fn get(&self, entity: Entity) -> Option<<I::State as At<'a>>::Item> {
-        self.entities.get_datum(entity).and_then(|datum| {
-            let index = datum.index as usize;
-            let segment = datum.segment as usize;
-            for pair in self.states {
-                if pair.1 == segment {
-                    return Some(pair.0.at(index));
+    pub fn get(&self, entity: Entity) -> Option<<I::State as At<'_>>::Item> {
+        match self.entities.get_datum(entity) {
+            Some(datum) => {
+                let index = datum.index as usize;
+                let segment = datum.segment as usize;
+                for pair in self.states {
+                    if pair.1 == segment {
+                        return Some(pair.0.at(index));
+                    }
                 }
+                None
             }
-            None
-        })
+            None => None,
+        }
+    }
+
+    pub fn has(&self, entity: Entity) -> bool {
+        match self.entities.get_datum(entity) {
+            Some(datum) => self.segments.has(datum.segment as usize),
+            None => false,
+        }
     }
 }
 
-impl<'a, 'b, I: Item> IntoIterator for &'b Query<'a, I> {
+impl<'a, 'b: 'a, I: Item, F: Filter> IntoIterator for &'b Query<'a, I, F> {
     type Item = <I::State as At<'a>>::Item;
-    type IntoIter = Iterator<'a, 'b, I>;
+    type IntoIter = Items<'a, 'b, I, F>;
 
     fn into_iter(self) -> Self::IntoIter {
-        Iterator {
-            segment: 0,
+        Items {
             index: 0,
+            segment: 0,
             query: self,
         }
     }
 }
 
-impl<'a, 'b, I: Item> std::iter::Iterator for Iterator<'a, 'b, I> {
+impl<'a, 'b: 'a, I: Item, F: Filter> Iterator for Items<'a, 'b, I, F> {
     type Item = <I::State as At<'a>>::Item;
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some((item, segment)) = self.query.states.get(self.segment) {
-            let segment = &self.query.world.segments[*segment];
-            if self.index < segment.count {
+        while let Some((item, _, count)) = self.query.states.get(self.segment) {
+            if self.index < *count {
                 let item = item.at(self.index);
                 self.index += 1;
                 return Some(item);
@@ -113,26 +98,32 @@ impl<'a, 'b, I: Item> std::iter::Iterator for Iterator<'a, 'b, I> {
     }
 }
 
-impl<'a, I: Item + 'static> Inject for Query<'a, I> {
-    type Input = Filter;
-    type State = State<I>;
+impl<'a, I: Item + 'static, F: Filter + 'static> Inject for Query<'a, I, F> {
+    type Input = ();
+    type State = State<I, F>;
 
-    fn initialize(input: Self::Input, world: &mut World) -> Option<Self::State> {
+    fn initialize(_: Self::Input, world: &mut World) -> Option<Self::State> {
         <Entities as Inject>::initialize((), world).map(|state| State {
             index: 0,
+            segments: Bits::new(),
             states: Vec::new(),
             entities: state,
-            filter: input,
+            _marker: PhantomData,
         })
     }
 
     fn update(state: &mut Self::State, world: &mut World) {
+        for (_, segment, count) in state.states.iter_mut() {
+            *count = world.segments[*segment].count;
+        }
+
         while let Some(segment) = world.segments.get(state.index) {
             state.index += 1;
 
-            if state.filter.filter(segment) {
+            if F::filter(segment, world) {
                 if let Some(item) = I::initialize(&segment, world) {
-                    state.states.push((item, segment.index));
+                    state.segments.add(segment.index);
+                    state.states.push((item, segment.index, segment.count));
                 }
             }
         }
@@ -140,7 +131,7 @@ impl<'a, I: Item + 'static> Inject for Query<'a, I> {
 
     fn depend(state: &Self::State, world: &World) -> Vec<Dependency> {
         let mut dependencies = Vec::new();
-        for (item, segment) in state.states.iter() {
+        for (item, segment, _) in state.states.iter() {
             dependencies.push(Dependency::Read(*segment, TypeId::of::<Entity>()));
             dependencies.append(&mut I::depend(item, world));
         }
@@ -148,14 +139,15 @@ impl<'a, I: Item + 'static> Inject for Query<'a, I> {
     }
 }
 
-impl<'a, I: Item + 'static> Get<'a> for State<I> {
-    type Item = Query<'a, I>;
+impl<'a, I: Item + 'static, F: Filter + 'static> Get<'a> for State<I, F> {
+    type Item = Query<'a, I, F>;
 
     fn get(&'a mut self, world: &'a World) -> Self::Item {
         Query {
+            segments: &self.segments,
             states: &self.states,
             entities: self.entities.get(world),
-            world,
+            _marker: PhantomData,
         }
     }
 }

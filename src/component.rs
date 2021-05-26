@@ -1,11 +1,15 @@
-use crate::item::*;
-use crate::read::*;
-use crate::segment::*;
-use crate::system::*;
-use crate::world::*;
-use crate::write::*;
+use crate::{
+    filter::Filter, item::Item, read::Read, segment::Segment, system::Dependency, world::World,
+    write::Write,
+};
 
 pub trait Component: Send + 'static {}
+
+impl<C: Component> Filter for C {
+    fn filter(segment: &Segment, _: &World) -> bool {
+        segment.static_store::<C>().is_some()
+    }
+}
 
 impl<C: Component> Item for &C {
     type State = <Read<C> as Item>::State;

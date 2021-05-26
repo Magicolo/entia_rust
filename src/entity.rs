@@ -1,7 +1,7 @@
-use crate::item::*;
 use crate::segment::*;
 use crate::system::*;
 use crate::world::*;
+use crate::{filter::Filter, item::*};
 use std::any::TypeId;
 use std::sync::Arc;
 
@@ -10,7 +10,7 @@ pub struct Entity {
     pub(crate) index: u32,
     pub(crate) generation: u32,
 }
-pub struct State(Arc<Store<Entity>>, usize);
+pub struct State(pub(crate) Arc<Store<Entity>>, usize);
 
 impl Entity {
     pub const ZERO: Self = Self {
@@ -26,6 +26,12 @@ impl Default for Entity {
     }
 }
 
+impl Filter for Entity {
+    fn filter(segment: &Segment, _: &World) -> bool {
+        segment.static_store::<Entity>().is_some()
+    }
+}
+
 impl Item for Entity {
     type State = State;
 
@@ -38,7 +44,7 @@ impl Item for Entity {
     }
 }
 
-impl At<'_> for State {
+impl<'a> At<'a> for State {
     type Item = Entity;
 
     #[inline]

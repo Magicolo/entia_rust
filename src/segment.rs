@@ -21,18 +21,18 @@ pub struct Move {
 }
 
 impl Move {
-    pub fn apply(&self, index: usize, world: &mut World) -> Option<usize> {
+    pub fn apply(&self, index: usize, count: usize, world: &mut World) -> Option<usize> {
         if self.source == self.target {
             Some(index)
         } else if let Some((source, target)) =
             get_mut2(&mut world.segments, (self.source, self.target))
         {
-            source.count -= 1;
+            source.count -= count;
             let source_index = source.count;
-            let target_index = target.reserve(1);
+            let target_index = target.reserve(count);
             for (source_store, target_store) in self.copy.iter() {
-                source_store.foreign_copy(index, (target_index, target_store.as_ref()), 1);
-                source_store.local_copy(source_index, index, 1);
+                source_store.foreign_copy(index, (target_index, target_store.as_ref()), count);
+                source_store.local_copy(source_index, index, count);
             }
 
             for store in self.clear.iter() {
@@ -102,6 +102,12 @@ impl Segment {
             true
         } else {
             false
+        }
+    }
+
+    pub fn clear(&mut self) {
+        for (_, store, _) in self.stores.iter() {
+            store.clear(0, self.count);
         }
     }
 

@@ -1,36 +1,12 @@
 use std::marker::PhantomData;
 
-use crate::{
-    item::{At, Item},
-    modify::Modify,
-    segment::Segment,
-    system::Dependency,
-    world::World,
-};
+use crate::{filter::Filter, segment::Segment, world::World};
 
-pub struct Not<M: Modify>(PhantomData<M>);
+pub struct Not<F: Filter>(PhantomData<F>);
 pub struct State<T>(PhantomData<T>);
 
-impl<M: Modify + 'static> Item for Not<M> {
-    type State = State<M>;
-
-    fn initialize(segment: &Segment, world: &World) -> Option<Self::State> {
-        match M::initialize(segment, world) {
-            Some(_) => None,
-            None => Some(State(PhantomData)),
-        }
-    }
-
-    fn depend(_: &Self::State, _: &World) -> Vec<Dependency> {
-        Vec::new()
-    }
-}
-
-impl<M: Modify> At<'_> for State<M> {
-    type Item = Not<M>;
-
-    #[inline]
-    fn at(&self, _: usize) -> Self::Item {
-        Not(PhantomData)
+impl<F: Filter> Filter for Not<F> {
+    fn filter(segment: &Segment, world: &World) -> bool {
+        !F::filter(segment, world)
     }
 }

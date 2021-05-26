@@ -72,9 +72,8 @@ impl<M: Modify + 'static> Inject for Add<'_, M> {
     }
 
     fn resolve(state: &mut Self::State, world: &mut World) {
-        let mut entities = state.entities.entities();
         for (entity, modify) in state.defer.drain(..) {
-            if let Some(datum) = entities.get_datum_mut(entity) {
+            if let Some(datum) = state.entities.get_datum_mut(entity) {
                 let index = datum.index as usize;
                 let source = datum.segment as usize;
                 let targets = state.targets.entry(source).or_insert_with(|| {
@@ -105,7 +104,7 @@ impl<M: Modify + 'static> Inject for Add<'_, M> {
                     .and_then(|index| targets.get(index));
 
                 if let Some(target) = target {
-                    if let Some(index) = target.1.apply(index, world) {
+                    if let Some(index) = target.1.apply(index, 1, world) {
                         modify.modify(&target.0, index);
                         datum.index = index as u32;
                         datum.segment = target.1.target() as u32;
@@ -118,7 +117,7 @@ impl<M: Modify + 'static> Inject for Add<'_, M> {
     fn depend(state: &Self::State, _: &World) -> Vec<Dependency> {
         let mut dependencies = Vec::new();
         for pair in state.targets.values().flat_map(|targets| targets) {
-            dependencies.push(Dependency::Add(pair.1.target(), TypeId::of::<Entity>()));
+            dependencies.push(Dependency::Defer(pair.1.target(), TypeId::of::<Entity>()));
             // for meta in M::static_metas(world) {
             //     dependencies.push(Dependency::Add(pair.1.target(), meta.identifier.clone()));
             // }

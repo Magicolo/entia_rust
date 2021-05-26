@@ -76,7 +76,7 @@ impl<M: Modify + 'static> Inject for Create<'_, M> {
         for &(_, _, target) in state.targets.iter() {
             // No need to consider 'M::depend' since the entity's components can not be seen from other threads until 'resolve' is called.
             // Only the less constraining 'Add' dependency is required to ensure consistency.
-            dependencies.push(Dependency::Add(target, TypeId::of::<Entity>()));
+            dependencies.push(Dependency::Defer(target, TypeId::of::<Entity>()));
         }
         dependencies
     }
