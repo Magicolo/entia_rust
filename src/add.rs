@@ -23,6 +23,7 @@ pub struct State<M: Modify> {
 }
 
 impl<M: Modify> Add<'_, M> {
+    #[inline]
     pub fn add(&mut self, entity: Entity, modify: M) {
         // TODO: Try to optimisticaly resolve here.
         self.defer.push((entity, modify));
@@ -90,7 +91,7 @@ impl<M: Modify> Inject for Add<'_, M> {
                     .or_else(|| {
                         let mut types = world.segments[source].types.clone();
                         for meta in modify.dynamic_metas(world) {
-                            types.add(meta.index);
+                            types.set(meta.index, true);
                         }
 
                         let target = world.get_or_add_segment_by_types(&types, None).index;

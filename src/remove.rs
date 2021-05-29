@@ -48,11 +48,12 @@ impl<M: Modify, F: Filter> Default for Inner<M, F> {
 }
 
 impl<M: Modify, F: Filter> Remove<'_, M, F> {
+    #[inline]
     pub fn remove(&mut self, entity: Entity) {
-        // TODO: Try to optimisticaly resolve here.
         self.0.defer.push(entity);
     }
 
+    #[inline]
     pub fn remove_all(&mut self) {
         self.0.all = true;
     }
@@ -69,19 +70,18 @@ impl<M: Modify, F: Filter> Inject for Remove<'_, M, F> {
     }
 
     fn update(state: &mut Self::State, world: &mut World) {
-        let state = state.inner.as_mut();
-        while let Some(source) = world.segments.get(state.targets.len()) {
+        let inner = state.inner.as_mut();
+        while let Some(source) = world.segments.get(inner.targets.len()) {
             let validate = || {
-                let meta = world.get_meta::<Entity>()?;
-                M::initialize(source, world)
-                    .filter(|_| F::filter(source, world) && source.types.has(meta.index))?;
+                source.static_store::<Entity>()?;
+                M::initialize(source, world).filter(|_| F::filter(source, world))?;
                 Some((source.index, source.types.clone()))
             };
 
             let target = validate()
                 .map(|(source, mut types)| {
                     for meta in M::static_metas(world) {
-                        types.remove(meta.index);
+                        types.set(meta.index, false);
                     }
 
                     let mut complete = || {
@@ -94,7 +94,7 @@ impl<M: Modify, F: Filter> Inject for Remove<'_, M, F> {
                     complete().unwrap_or(Target::Pending(types))
                 })
                 .unwrap_or(Target::Invalid);
-            state.targets.push(target);
+            inner.targets.push(target);
         }
     }
 
@@ -132,11 +132,12 @@ impl<M: Modify, F: Filter> Inject for Remove<'_, M, F> {
                         if let Some(index) = target.apply(0, count, world) {
                             for i in index..index + count {
                                 let entity = *unsafe { store.at(i) };
-                                let datum =
-                                    unsafe { entities.get_datum_at_mut(entity.index as usize) };
-                                datum.index = i as u32;
-                                datum.segment = target.target() as u32;
-                                datum.store = store.clone();
+                                if let Some(datum) =
+                                    entities.get_datum_at_mut(entity.index as usize)
+                                {
+                                    datum.index = i as u32;
+                                    datum.segment = target.target() as u32;
+                                }
                             }
                         }
                     }
@@ -149,11 +150,10 @@ impl<M: Modify, F: Filter> Inject for Remove<'_, M, F> {
                     let index = datum.index as usize;
                     let source = datum.segment as usize;
                     match get(source, &mut state.targets, world) {
-                        Target::Valid(store, target) => {
+                        Target::Valid(_, target) => {
                             if let Some(index) = target.apply(index, 1, world) {
                                 datum.index = index as u32;
                                 datum.segment = target.target() as u32;
-                                datum.store = store.clone();
                             }
                         }
                         _ => {}
@@ -169,7 +169,10 @@ impl<M: Modify, F: Filter> Inject for Remove<'_, M, F> {
             match target {
                 // No need to check 'source != target' since 'get_mut2' already does this check.
                 Target::Valid(_, target) => {
-                    dependencies.push(Dependency::Defer(target.target(), TypeId::of::<Entity>()))
+                    // A 'Read' from 'source' after a 'Remove' must not see removed entities.
+                    dependencies.push(Dependency::Defer(target.source(), TypeId::of::<Entity>()));
+                    // A 'Read' from 'target' after a 'Remove' must see removed entities.
+                    dependencies.push(Dependency::Defer(target.target(), TypeId::of::<Entity>()));
                 }
                 _ => {}
             };

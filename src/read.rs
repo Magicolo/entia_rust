@@ -57,6 +57,20 @@ impl<'a, C: Component> At<'a> for State<C> {
     }
 }
 
+impl<'a, R: Resource> From<&'a State<R>> for Read<R> {
+    #[inline]
+    fn from(state: &'a State<R>) -> Self {
+        Read(state.0.clone())
+    }
+}
+
+impl<'a, R: Resource> From<&'a mut State<R>> for Read<R> {
+    #[inline]
+    fn from(state: &'a mut State<R>) -> Self {
+        Read(state.0.clone())
+    }
+}
+
 impl<R: Resource> AsRef<R> for Read<R> {
     #[inline]
     fn as_ref(&self) -> &R {
@@ -68,11 +82,5 @@ impl<R: Resource> AsRef<R> for State<R> {
     #[inline]
     fn as_ref(&self) -> &R {
         unsafe { self.0.at(0) }
-    }
-}
-
-impl<T> State<T> {
-    pub fn read(&self) -> Read<T> {
-        Read(self.0.clone())
     }
 }

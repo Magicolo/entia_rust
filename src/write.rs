@@ -57,6 +57,13 @@ impl<'a, C: Component> At<'a> for State<C> {
     }
 }
 
+impl<'a, R: Resource> From<&'a mut State<R>> for Write<R> {
+    #[inline]
+    fn from(state: &'a mut State<R>) -> Self {
+        Write(state.0.clone())
+    }
+}
+
 impl<R: Resource> AsRef<R> for Write<R> {
     #[inline]
     fn as_ref(&self) -> &R {
@@ -82,11 +89,5 @@ impl<R: Resource> AsMut<R> for State<R> {
     #[inline]
     fn as_mut(&mut self) -> &mut R {
         unsafe { self.0.at(0) }
-    }
-}
-
-impl<T> State<T> {
-    pub fn write(&self) -> Write<T> {
-        Write(self.0.clone())
     }
 }

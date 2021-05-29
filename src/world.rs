@@ -199,7 +199,7 @@ impl World {
 
     pub fn get_segment_by_metas(&self, metas: &[Meta]) -> Option<&Segment> {
         let mut types = Bits::new();
-        metas.iter().for_each(|meta| types.add(meta.index));
+        metas.iter().for_each(|meta| types.set(meta.index, true));
         self.get_segment_by_types(&types)
     }
 
@@ -212,7 +212,7 @@ impl World {
         let mut metas: Box<[_]> = metas.iter().cloned().collect();
         let mut types = Bits::new();
         metas.sort_by_key(|meta| meta.index);
-        metas.iter().for_each(|meta| types.add(meta.index));
+        metas.iter().for_each(|meta| types.set(meta.index, true));
         self.add_segment(types, &metas, capacity)
     }
 
@@ -242,7 +242,7 @@ impl World {
         capacity: Option<usize>,
     ) -> &mut Segment {
         let mut types = Bits::new();
-        metas.iter().for_each(|meta| types.add(meta.index));
+        metas.iter().for_each(|meta| types.set(meta.index, true));
         self.get_or_add_segment_by_types(&types, capacity)
     }
 

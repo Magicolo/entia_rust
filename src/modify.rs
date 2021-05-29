@@ -19,6 +19,8 @@ pub trait Modify: Send + 'static {
     }
 }
 
+pub trait Homogeneous {}
+
 impl<C: Component> Modify for C {
     type State = (Arc<Store<C>>, usize);
 
@@ -48,6 +50,8 @@ impl<C: Component> Modify for C {
         vec![Dependency::Write(state.1, TypeId::of::<C>())]
     }
 }
+
+impl<C: Component> Homogeneous for C {}
 
 impl<M: Modify> Modify for Option<M> {
     type State = Option<M::State>;
@@ -133,6 +137,8 @@ macro_rules! modify {
                 _dependencies
             }
         }
+
+        impl<$($t: Homogeneous,)*> Homogeneous for ($($t,)*) {}
     };
 }
 

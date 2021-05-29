@@ -8,7 +8,7 @@ use crate::{
 };
 
 pub struct Emit<'a, M: Message>(Query<'a, Write<Messages<M>>>);
-pub struct State<M: Message>(query::State<Write<Messages<M>>>);
+pub struct State<M: Message>(query::State<Write<Messages<M>>, ()>);
 
 impl<M: Message> Emit<'_, M> {
     pub fn emit(&mut self, message: M) {

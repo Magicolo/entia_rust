@@ -23,11 +23,12 @@ pub struct State<F: Filter> {
 }
 
 impl<F: Filter> Destroy<'_, F> {
+    #[inline]
     pub fn destroy(&mut self, entity: Entity) {
-        // TODO: Try to optimisticaly resolve here.
         self.defer.push(entity);
     }
 
+    #[inline]
     pub fn destroy_all(&mut self) {
         *self.all = true;
     }
@@ -50,9 +51,11 @@ impl<F: Filter> Inject for Destroy<'_, F> {
     }
 
     fn resolve(state: &mut Self::State, world: &mut World) {
+        let entities = &mut state.query.entities;
+        let query = state.query.inner.as_mut();
         if state.all.change(false) {
             state.defer.clear();
-            for (item, segment, count) in state.query.states.iter() {
+            for (item, segment, count) in query.states.iter() {
                 let count = *count;
                 if count > 0 {
                     state
@@ -64,12 +67,12 @@ impl<F: Filter> Inject for Destroy<'_, F> {
             }
         } else {
             for entity in state.defer.drain(..) {
-                if let Some(datum) = state.query.entities.get_datum_mut(entity) {
+                if let Some(datum) = entities.get_datum_mut(entity) {
                     let index = datum.index as usize;
                     let segment = datum.segment as usize;
-                    if state.query.segments.has(segment) {
+                    if query.segments.has(segment) {
+                        entities.release(&[entity]);
                         world.segments[segment].clear_at(index);
-                        state.query.entities.release(&[entity]);
                     }
                 }
             }
@@ -77,8 +80,9 @@ impl<F: Filter> Inject for Destroy<'_, F> {
     }
 
     fn depend(state: &Self::State, _: &World) -> Vec<Dependency> {
+        let query = state.query.inner.as_ref();
         let mut dependencies = Vec::new();
-        for segment in &state.query.segments {
+        for segment in &query.segments {
             dependencies.push(Dependency::Defer(segment, TypeId::of::<Entity>()));
         }
         dependencies

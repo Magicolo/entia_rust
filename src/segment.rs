@@ -111,6 +111,7 @@ impl Segment {
         for (_, store, _) in self.stores.iter() {
             store.clear(0, self.count);
         }
+        self.count = 0;
     }
 
     pub fn static_store<T: Send + 'static>(&self) -> Option<Arc<Store<T>>> {
