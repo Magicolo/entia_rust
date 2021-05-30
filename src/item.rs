@@ -5,9 +5,7 @@ use crate::world::*;
 pub trait Item {
     type State: for<'a> At<'a> + Send + 'static;
     fn initialize(segment: &Segment, world: &World) -> Option<Self::State>;
-    fn depend(_: &Self::State, _: &World) -> Vec<Dependency> {
-        vec![Dependency::Unknown]
-    }
+    fn depend(state: &Self::State, world: &World) -> Vec<Dependency>;
 }
 
 pub trait At<'a> {

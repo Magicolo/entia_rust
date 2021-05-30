@@ -1,6 +1,7 @@
 use entia_core::utility::get_mut2;
 
 use crate::{
+    defer::{self, Defer, Resolve},
     entities::{self, Entities},
     entity::Entity,
     inject::{Get, Inject},
@@ -11,22 +12,19 @@ use crate::{
 };
 use std::{any::TypeId, collections::HashMap};
 
-pub struct Add<'a, M: Modify> {
-    defer: &'a mut Vec<(Entity, M)>,
-}
+pub struct Add<'a, M: Modify>(Defer<'a, Addition<M>>);
 
 pub struct State<M: Modify> {
     index: usize,
-    targets: HashMap<usize, Vec<(M::State, Move)>>,
-    defer: Vec<(Entity, M)>,
-    entities: entities::State,
+    defer: defer::State<Addition<M>>,
 }
+
+struct Addition<M: Modify>(Entity, M);
 
 impl<M: Modify> Add<'_, M> {
     #[inline]
     pub fn add(&mut self, entity: Entity, modify: M) {
-        // TODO: Try to optimisticaly resolve here.
-        self.defer.push((entity, modify));
+        self.0.defer(Addition(entity, modify));
     }
 }
 
@@ -35,15 +33,12 @@ impl<M: Modify> Inject for Add<'_, M> {
     type State = State<M>;
 
     fn initialize(_: Self::Input, world: &mut World) -> Option<Self::State> {
-        <Entities as Inject>::initialize((), world).map(|state| State {
-            index: 0,
-            targets: HashMap::new(),
-            defer: Vec::new(),
-            entities: state,
-        })
+        let defer = <Defer<Addition<M>> as Inject>::initialize((), world)?;
+        Some(State { index: 0, defer })
     }
 
     fn update(state: &mut Self::State, world: &mut World) {
+        <Defer<Addition<M>> as Inject>::update(&mut state.defer, world);
         // TODO: Segments must be collected in advance to ensure the order of 'Add' when no resolution have occured.
         /*
         system1: [Add<Position>]
@@ -73,58 +68,15 @@ impl<M: Modify> Inject for Add<'_, M> {
     }
 
     fn resolve(state: &mut Self::State, world: &mut World) {
-        for (entity, modify) in state.defer.drain(..) {
-            if let Some(datum) = state.entities.get_datum_mut(entity) {
-                let index = datum.index as usize;
-                let source = datum.segment as usize;
-                let targets = state.targets.entry(source).or_insert_with(|| {
-                    let mut targets = Vec::new();
-                    let source = &world.segments[source];
-                    if let Some(state) = M::initialize(source, world) {
-                        targets.push((state, source.prepare_move(source)));
-                    }
-                    targets
-                });
-                let target = targets
-                    .iter()
-                    .position(|pair| modify.validate(&pair.0))
-                    .or_else(|| {
-                        let mut types = world.segments[source].types.clone();
-                        for meta in modify.dynamic_metas(world) {
-                            types.set(meta.index, true);
-                        }
-
-                        let target = world.get_or_add_segment_by_types(&types, None).index;
-                        let state = M::initialize(&world.segments[target], world)?;
-                        let indices = (source, target);
-                        let (source, target) = get_mut2(&mut world.segments, indices)?;
-                        let index = targets.len();
-                        targets.push((state, source.prepare_move(target)));
-                        return Some(index);
-                    })
-                    .and_then(|index| targets.get(index));
-
-                if let Some(target) = target {
-                    if let Some(index) = target.1.apply(index, 1, world) {
-                        modify.modify(&target.0, index);
-                        datum.index = index as u32;
-                        datum.segment = target.1.target() as u32;
-                    }
-                }
-            }
-        }
+        <Defer<Addition<M>> as Inject>::resolve(&mut state.defer, world);
     }
 
-    fn depend(state: &Self::State, _: &World) -> Vec<Dependency> {
-        let mut dependencies = Vec::new();
-        for pair in state.targets.values().flat_map(|targets| targets) {
+    fn depend(state: &Self::State, world: &World) -> Vec<Dependency> {
+        let mut dependencies = <Defer<Addition<M>> as Inject>::depend(&state.defer, world);
+        let (_, targets) = state.defer.as_ref();
+        for pair in targets.values().flat_map(|targets| targets) {
             dependencies.push(Dependency::Defer(pair.1.target(), TypeId::of::<Entity>()));
-            // for meta in M::static_metas(world) {
-            //     dependencies.push(Dependency::Add(pair.1.target(), meta.identifier.clone()));
-            // }
-            // dependencies.append(&mut M::depend(&pair.0));
         }
-
         dependencies
     }
 }
@@ -132,9 +84,58 @@ impl<M: Modify> Inject for Add<'_, M> {
 impl<'a, M: Modify> Get<'a> for State<M> {
     type Item = Add<'a, M>;
 
-    fn get(&'a mut self, _: &'a World) -> Self::Item {
-        Add {
-            defer: &mut self.defer,
+    fn get(&'a mut self, world: &'a World) -> Self::Item {
+        Add(self.defer.get(world))
+    }
+}
+
+impl<M: Modify> Resolve for Addition<M> {
+    type State = (entities::State, HashMap<usize, Vec<(M::State, Move)>>);
+
+    fn initialize(world: &mut World) -> Option<Self::State> {
+        let entities = <Entities as Inject>::initialize((), world)?;
+        Some((entities, HashMap::new()))
+    }
+
+    fn resolve(self, (entities, targets): &mut Self::State, world: &mut World) {
+        let Self(entity, modify) = self;
+        if let Some(datum) = entities.get_datum_mut(entity) {
+            let index = datum.index as usize;
+            let source = datum.segment as usize;
+            let targets = targets.entry(source).or_insert_with(|| {
+                let mut targets = Vec::new();
+                let source = &world.segments[source];
+                if let Some(state) = M::initialize(source, world) {
+                    targets.push((state, source.prepare_move(source)));
+                }
+                targets
+            });
+            let target = targets
+                .iter()
+                .position(|pair| modify.validate(&pair.0))
+                .or_else(|| {
+                    let mut types = world.segments[source].types.clone();
+                    for meta in modify.dynamic_metas(world) {
+                        types.set(meta.index, true);
+                    }
+
+                    let target = world.get_or_add_segment_by_types(&types, None).index;
+                    let state = M::initialize(&world.segments[target], world)?;
+                    let indices = (source, target);
+                    let (source, target) = get_mut2(&mut world.segments, indices)?;
+                    let index = targets.len();
+                    targets.push((state, source.prepare_move(target)));
+                    return Some(index);
+                })
+                .and_then(|index| targets.get_mut(index));
+
+            if let Some(target) = target {
+                if let Some(index) = target.1.apply(index, 1, world) {
+                    modify.modify(&target.0, index);
+                    datum.index = index as u32;
+                    datum.segment = target.1.target() as u32;
+                }
+            }
         }
     }
 }

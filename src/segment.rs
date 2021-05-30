@@ -23,12 +23,11 @@ pub struct Move {
 unsafe impl Send for Move {}
 
 impl Move {
-    pub fn apply(&self, index: usize, count: usize, world: &mut World) -> Option<usize> {
-        if self.source == self.target {
+    pub fn apply(&mut self, index: usize, count: usize, world: &mut World) -> Option<usize> {
+        let indices = (self.source, self.target);
+        if indices.0 == indices.1 {
             Some(index)
-        } else if let Some((source, target)) =
-            get_mut2(&mut world.segments, (self.source, self.target))
-        {
+        } else if let Some((source, target)) = get_mut2(&mut world.segments, indices) {
             source.count -= count;
             let source_index = source.count;
             let target_index = target.reserve(count);
@@ -76,20 +75,29 @@ impl Segment {
     }
 
     pub fn prepare_move(&self, target: &Segment) -> Move {
-        let mut copy = Vec::new();
-        let mut clear = Vec::new();
-        for (meta, source, _) in self.stores.iter() {
-            if let Some(target) = target.dynamic_store(meta) {
-                copy.push((source.clone(), target));
-            } else {
-                clear.push(source.clone())
+        if self.index == target.index {
+            Move {
+                source: self.index,
+                target: target.index,
+                copy: Vec::new(),
+                clear: Vec::new(),
             }
-        }
-        Move {
-            source: self.index,
-            target: target.index,
-            copy,
-            clear,
+        } else {
+            let mut copy = Vec::new();
+            let mut clear = Vec::new();
+            for (meta, source, _) in self.stores.iter() {
+                if let Some(target) = target.dynamic_store(meta) {
+                    copy.push((source.clone(), target));
+                } else {
+                    clear.push(source.clone())
+                }
+            }
+            Move {
+                source: self.index,
+                target: target.index,
+                copy,
+                clear,
+            }
         }
     }
 

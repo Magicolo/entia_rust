@@ -12,9 +12,7 @@ pub trait Inject {
     fn update(_: &mut Self::State, _: &mut World) {}
     #[inline]
     fn resolve(_: &mut Self::State, _: &mut World) {}
-    fn depend(_: &Self::State, _: &World) -> Vec<Dependency> {
-        vec![Dependency::Unknown]
-    }
+    fn depend(state: &Self::State, world: &World) -> Vec<Dependency>;
 }
 
 // SAFETY: The implementations of the 'get' method must ensure that no reference the 'World' are kept within 'self'

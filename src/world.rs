@@ -1,5 +1,5 @@
-use crate::inject::*;
 use crate::segment::*;
+use crate::{inject::*, system::Dependency};
 use entia_core::bits::Bits;
 use std::any::Any;
 use std::any::TypeId;
@@ -135,6 +135,10 @@ impl Inject for &World {
 
     fn initialize(_: Self::Input, _: &mut World) -> Option<Self::State> {
         Some(State)
+    }
+
+    fn depend(_: &Self::State, _: &World) -> Vec<Dependency> {
+        vec![Dependency::Unknown]
     }
 }
 

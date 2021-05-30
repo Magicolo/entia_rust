@@ -1,22 +1,18 @@
-use std::{any::TypeId, sync::Arc};
+use std::sync::Arc;
 
 use crate::{
     component::Component,
     segment::Segment,
-    system::Dependency,
     world::{Meta, Store, World},
 };
 
 pub trait Modify: Send + 'static {
-    type State;
+    type State: Send;
     fn initialize(segment: &Segment, world: &World) -> Option<Self::State>;
     fn static_metas(world: &mut World) -> Vec<Meta>;
     fn dynamic_metas(&self, world: &mut World) -> Vec<Meta>;
     fn validate(&self, state: &Self::State) -> bool;
     fn modify(self, state: &Self::State, index: usize);
-    fn depend(_: &Self::State) -> Vec<Dependency> {
-        vec![Dependency::Unknown]
-    }
 }
 
 pub trait Homogeneous {}
@@ -44,10 +40,6 @@ impl<C: Component> Modify for C {
     #[inline]
     fn modify(self, (store, _): &Self::State, index: usize) {
         *unsafe { store.at(index) } = self;
-    }
-
-    fn depend(state: &Self::State) -> Vec<Dependency> {
-        vec![Dependency::Write(state.1, TypeId::of::<C>())]
     }
 }
 
@@ -88,13 +80,6 @@ impl<M: Modify> Modify for Option<M> {
             _ => {}
         }
     }
-
-    fn depend(state: &Self::State) -> Vec<Dependency> {
-        match state {
-            Some(state) => M::depend(state),
-            None => Vec::new(),
-        }
-    }
 }
 
 macro_rules! modify {
@@ -129,12 +114,6 @@ macro_rules! modify {
             fn modify(self, ($($p,)*): &Self::State, _index: usize) {
                 let ($($t,)*) = self;
                 $($t.modify($p, _index);)*
-            }
-
-            fn depend(($($p,)*): &Self::State) -> Vec<Dependency> {
-                let mut _dependencies = Vec::new();
-                $(_dependencies.append(&mut $t::depend($p));)*
-                _dependencies
             }
         }
 

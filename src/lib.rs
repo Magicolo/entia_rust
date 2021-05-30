@@ -1,7 +1,7 @@
 pub mod add;
 pub mod component;
 pub mod create;
-pub mod depend;
+pub mod defer;
 pub mod destroy;
 pub mod emit;
 pub mod entities;

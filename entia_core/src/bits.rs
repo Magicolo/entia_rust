@@ -71,9 +71,7 @@ impl Bits {
     }
 
     pub fn not(&mut self) {
-        for value in self.buckets.iter_mut() {
-            *value = !*value;
-        }
+        self.buckets.iter_mut().for_each(|value| *value = !*value);
         self.shrink();
     }
 
