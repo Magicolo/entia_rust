@@ -1,10 +1,10 @@
 use std::sync::Mutex;
 
 use crate::{
+    depend::{Depend, Dependency},
     entity::Entity,
     inject::{Get, Inject},
     resource::Resource,
-    system::Dependency,
     world::World,
     write::{self, Write},
 };
@@ -14,10 +14,10 @@ pub struct State(write::State<Inner>);
 
 #[derive(Default)]
 pub struct Datum {
-    pub(crate) index: u32,
-    pub(crate) segment: u32,
-    pub(crate) generation: u32,
-    pub(crate) state: u8,
+    index: u32,
+    segment: u32,
+    generation: u32,
+    state: u8,
 }
 
 struct Inner {
@@ -27,6 +27,56 @@ struct Inner {
 }
 
 impl Resource for Inner {}
+
+impl Datum {
+    const FREED: u8 = 0;
+    const RESERVED: u8 = 1;
+    const INITIALIZED: u8 = 2;
+
+    #[inline]
+    pub const fn index(&self) -> u32 {
+        self.index
+    }
+
+    #[inline]
+    pub const fn segment(&self) -> u32 {
+        self.segment
+    }
+
+    #[inline]
+    pub fn reserve(&mut self, generation: u32) -> bool {
+        if self.state == Self::FREED {
+            self.generation = generation;
+            self.state = Self::RESERVED;
+            true
+        } else {
+            false
+        }
+    }
+
+    #[inline]
+    pub fn initialize(&mut self, index: u32, segment: u32) -> bool {
+        if self.state == Self::RESERVED {
+            self.index = index;
+            self.segment = segment;
+            self.state = Self::INITIALIZED;
+            true
+        } else {
+            false
+        }
+    }
+
+    #[inline]
+    pub fn update(&mut self, index: u32, segment: u32) -> bool {
+        if self.state == Self::INITIALIZED {
+            self.index = index;
+            self.segment = segment;
+            true
+        } else {
+            false
+        }
+    }
+}
 
 impl Entities<'_> {
     pub fn reserve(&mut self, entities: &mut [Entity]) {
@@ -125,6 +175,7 @@ impl Inner {
 }
 
 impl Default for Inner {
+    #[inline]
     fn default() -> Self {
         Self::new(32)
     }
@@ -137,17 +188,6 @@ impl Inject for Entities<'_> {
     fn initialize(_: Self::Input, world: &mut World) -> Option<Self::State> {
         <Write<Inner> as Inject>::initialize(None, world).map(|state| State(state))
     }
-
-    fn depend(state: &Self::State, world: &World) -> Vec<Dependency> {
-        <Write<Inner> as Inject>::depend(&state.0, world)
-    }
-}
-
-impl<'a> From<&'a mut State> for Entities<'a> {
-    #[inline]
-    fn from(state: &'a mut State) -> Self {
-        Entities(state.0.as_mut())
-    }
 }
 
 impl<'a> Get<'a> for State {
@@ -156,5 +196,18 @@ impl<'a> Get<'a> for State {
     #[inline]
     fn get(&'a mut self, world: &'a World) -> Self::Item {
         Entities(self.0.get(world))
+    }
+}
+
+impl Depend for State {
+    fn depend(&self, world: &World) -> Vec<Dependency> {
+        self.0.depend(world)
+    }
+}
+
+impl<'a> From<&'a mut State> for Entities<'a> {
+    #[inline]
+    fn from(state: &'a mut State) -> Self {
+        Entities(state.0.as_mut())
     }
 }

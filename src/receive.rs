@@ -1,9 +1,9 @@
 use std::{any::TypeId, collections::VecDeque, sync::Arc};
 
 use crate::{
+    depend::{Depend, Dependency},
     inject::{Get, Inject},
     message::{Message, Messages},
-    system::Dependency,
     world::{Store, World},
 };
 
@@ -42,10 +42,6 @@ impl<M: Message> Inject for Receive<'_, M> {
             segment: segment.index,
         })
     }
-
-    fn depend(state: &Self::State, _: &World) -> Vec<Dependency> {
-        vec![Dependency::Write(state.segment, TypeId::of::<M>())]
-    }
 }
 
 impl<'a, M: Message> Get<'a> for State<M> {
@@ -54,5 +50,11 @@ impl<'a, M: Message> Get<'a> for State<M> {
     #[inline]
     fn get(&'a mut self, _: &World) -> Self::Item {
         Receive(unsafe { self.store.at(self.index) })
+    }
+}
+
+impl<M: Message> Depend for State<M> {
+    fn depend(&self, _: &World) -> Vec<Dependency> {
+        vec![Dependency::Write(self.segment, TypeId::of::<M>())]
     }
 }

@@ -2,13 +2,13 @@ use entia_core::{bits::Bits, utility::get_mut2};
 
 use crate::{
     defer::{self, Defer, Resolve},
-    entities::{self, Entities},
+    depend::{Depend, Dependency},
+    entities::{self, Datum, Entities},
     entity::Entity,
     filter::Filter,
     inject::{Get, Inject},
     modify::Modify,
     segment::{Move, Segment},
-    system::Dependency,
     world::{Store, World},
 };
 use std::{any::TypeId, marker::PhantomData, sync::Arc};
@@ -24,6 +24,7 @@ enum Target {
 
 enum Removal<M: Modify, F: Filter> {
     One(Entity),
+    Many(Box<[Entity]>),
     All(PhantomData<(M, F)>),
 }
 
@@ -31,6 +32,11 @@ impl<M: Modify, F: Filter> Remove<'_, M, F> {
     #[inline]
     pub fn remove(&mut self, entity: Entity) {
         self.0.defer(Removal::One(entity));
+    }
+
+    #[inline]
+    pub fn remove_many(&mut self, entities: &[Entity]) {
+        self.0.defer(Removal::Many(entities.clone().into()));
     }
 
     #[inline]
@@ -55,10 +61,20 @@ impl<M: Modify, F: Filter> Inject for Remove<'_, M, F> {
     fn resolve(State(state): &mut Self::State, world: &mut World) {
         <Defer<Removal<M, F>> as Inject>::resolve(state, world);
     }
+}
 
-    fn depend(State(state): &Self::State, world: &World) -> Vec<Dependency> {
-        let mut dependencies = <Defer<Removal<M, F>> as Inject>::depend(state, world);
-        for target in state.as_ref().1.iter() {
+impl<'a, M: Modify, F: Filter> Get<'a> for State<M, F> {
+    type Item = Remove<'a, M, F>;
+
+    fn get(&'a mut self, world: &'a World) -> Self::Item {
+        Remove(self.0.get(world))
+    }
+}
+
+impl<M: Modify, F: Filter> Depend for State<M, F> {
+    fn depend(&self, world: &World) -> Vec<Dependency> {
+        let mut dependencies = self.0.depend(world);
+        for target in self.0.as_ref().1.iter() {
             match target {
                 Target::Valid(_, target) if target.source() != target.target() => {
                     // A 'Read' from 'source' after a 'Remove' must not see removed entities.
@@ -70,14 +86,6 @@ impl<M: Modify, F: Filter> Inject for Remove<'_, M, F> {
             };
         }
         dependencies
-    }
-}
-
-impl<'a, M: Modify, F: Filter> Get<'a> for State<M, F> {
-    type Item = Remove<'a, M, F>;
-
-    fn get(&'a mut self, world: &'a World) -> Self::Item {
-        Remove(self.0.get(world))
     }
 }
 
@@ -126,6 +134,19 @@ impl<M: Modify, F: Filter> Resolve for Removal<M, F> {
             target
         }
 
+        fn remove(datum: &mut Datum, targets: &mut Vec<Target>, world: &mut World) {
+            let index = datum.index() as usize;
+            let source = datum.segment() as usize;
+            match get(source, targets, world) {
+                Target::Valid(_, target) => {
+                    if let Some(index) = target.apply(index, 1, world) {
+                        datum.update(index as u32, target.target() as u32);
+                    }
+                }
+                _ => {}
+            };
+        }
+
         while let Some(source) = world.segments.get(targets.len()) {
             let target = validate::<M, F>(source, world)
                 .map(|(source, mut types)| {
@@ -141,17 +162,14 @@ impl<M: Modify, F: Filter> Resolve for Removal<M, F> {
         match self {
             Removal::One(entity) => {
                 if let Some(datum) = entities.get_datum_mut(entity) {
-                    let index = datum.index as usize;
-                    let source = datum.segment as usize;
-                    match get(source, targets, world) {
-                        Target::Valid(_, target) => {
-                            if let Some(index) = target.apply(index, 1, world) {
-                                datum.index = index as u32;
-                                datum.segment = target.target() as u32;
-                            }
-                        }
-                        _ => {}
-                    };
+                    remove(datum, targets, world);
+                }
+            }
+            Removal::Many(many) => {
+                for &entity in many.iter() {
+                    if let Some(datum) = entities.get_datum_mut(entity) {
+                        remove(datum, targets, world);
+                    }
                 }
             }
             Removal::All(_) => {
@@ -165,8 +183,7 @@ impl<M: Modify, F: Filter> Resolve for Removal<M, F> {
                                     if let Some(datum) =
                                         entities.get_datum_at_mut(entity.index as usize)
                                     {
-                                        datum.index = i as u32;
-                                        datum.segment = target.target() as u32;
+                                        datum.update(i as u32, target.target() as u32);
                                     }
                                 }
                             }

@@ -1,17 +1,9 @@
-use crate::core::*;
 use crate::world::*;
+use crate::{core::*, depend::Dependency};
 use std::any::TypeId;
 use std::cell::UnsafeCell;
 use std::collections::HashSet;
 use std::sync::Arc;
-
-#[derive(Debug, Clone)]
-pub enum Dependency {
-    Unknown,
-    Read(usize, TypeId),
-    Write(usize, TypeId),
-    Defer(usize, TypeId),
-}
 
 pub struct Runner {
     pub(crate) identifier: usize,

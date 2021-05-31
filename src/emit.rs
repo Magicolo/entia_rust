@@ -1,8 +1,8 @@
 use crate::{
+    depend::{Depend, Dependency},
     inject::{Get, Inject},
     message::{Message, Messages},
     query::{self, Query},
-    system::Dependency,
     world::World,
     write::Write,
 };
@@ -41,10 +41,6 @@ impl<'a, M: Message> Inject for Emit<'a, M> {
     fn resolve(State(state): &mut Self::State, world: &mut World) {
         <Query<'a, Write<Messages<M>>> as Inject>::resolve(state, world);
     }
-
-    fn depend(State(state): &Self::State, world: &World) -> Vec<Dependency> {
-        <Query<'a, Write<Messages<M>>> as Inject>::depend(state, world)
-    }
 }
 
 impl<'a, M: Message> Get<'a> for State<M> {
@@ -53,5 +49,11 @@ impl<'a, M: Message> Get<'a> for State<M> {
     #[inline]
     fn get(&'a mut self, world: &'a World) -> Self::Item {
         Emit(self.0.get(world))
+    }
+}
+
+impl<M: Message> Depend for State<M> {
+    fn depend(&self, world: &World) -> Vec<Dependency> {
+        self.0.depend(world)
     }
 }

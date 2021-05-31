@@ -1,5 +1,3 @@
-use crate::segment::*;
-use crate::{inject::*, system::Dependency};
 use entia_core::bits::Bits;
 use std::any::Any;
 use std::any::TypeId;
@@ -8,6 +6,13 @@ use std::collections::HashMap;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+
+use crate::depend::Depend;
+use crate::{
+    depend::Dependency,
+    inject::{Get, Inject},
+    segment::Segment,
+};
 
 #[derive(Clone)]
 pub struct Meta {
@@ -136,10 +141,6 @@ impl Inject for &World {
     fn initialize(_: Self::Input, _: &mut World) -> Option<Self::State> {
         Some(State)
     }
-
-    fn depend(_: &Self::State, _: &World) -> Vec<Dependency> {
-        vec![Dependency::Unknown]
-    }
 }
 
 impl<'a> Get<'a> for State {
@@ -147,6 +148,12 @@ impl<'a> Get<'a> for State {
 
     fn get(&'a mut self, world: &'a World) -> Self::Item {
         world
+    }
+}
+
+impl Depend for State {
+    fn depend(&self, _: &World) -> Vec<Dependency> {
+        vec![Dependency::Unknown]
     }
 }
 

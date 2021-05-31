@@ -11,6 +11,7 @@ pub mod inject;
 pub mod item;
 pub mod local;
 pub mod message;
+pub mod depend;
 pub mod modify;
 pub mod not;
 pub mod query;

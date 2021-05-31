@@ -1,11 +1,10 @@
+use crate::depend::Depend;
 use crate::segment::*;
-use crate::system::*;
 use crate::world::*;
 
 pub trait Item {
-    type State: for<'a> At<'a> + Send + 'static;
+    type State: for<'a> At<'a> + Depend + Send + 'static;
     fn initialize(segment: &Segment, world: &World) -> Option<Self::State>;
-    fn depend(state: &Self::State, world: &World) -> Vec<Dependency>;
 }
 
 pub trait At<'a> {
@@ -18,13 +17,6 @@ impl<I: Item> Item for Option<I> {
 
     fn initialize(segment: &Segment, world: &World) -> Option<Self::State> {
         Some(I::initialize(segment, world))
-    }
-
-    fn depend(state: &Self::State, world: &World) -> Vec<Dependency> {
-        match state {
-            Some(state) => I::depend(state, world),
-            None => Vec::new(),
-        }
     }
 }
 
@@ -44,12 +36,6 @@ macro_rules! item {
 
             fn initialize(_segment: &Segment, _world: &World) -> Option<Self::State> {
                 Some(($($t::initialize(_segment, _world)?,)*))
-            }
-
-            fn depend(($($p,)*): &Self::State, _world: &World) -> Vec<Dependency> {
-                let mut _dependencies = Vec::new();
-                $(_dependencies.append(&mut $t::depend($p, _world));)*
-                _dependencies
             }
         }
 

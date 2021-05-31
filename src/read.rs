@@ -2,11 +2,11 @@ use std::{any::TypeId, sync::Arc};
 
 use crate::{
     component::Component,
+    depend::{Depend, Dependency},
     inject::{Get, Inject},
     item::{At, Item},
     resource::{initialize, Resource},
     segment::Segment,
-    system::Dependency,
     world::Store,
     world::World,
 };
@@ -20,10 +20,6 @@ impl<R: Resource> Inject for Read<R> {
 
     fn initialize(input: Self::Input, world: &mut World) -> Option<Self::State> {
         initialize(|| input.unwrap_or_default(), world).map(|pair| State(pair.0, pair.1))
-    }
-
-    fn depend(state: &Self::State, _: &World) -> Vec<Dependency> {
-        vec![Dependency::Read(state.1, TypeId::of::<R>())]
     }
 }
 
@@ -42,10 +38,6 @@ impl<C: Component> Item for Read<C> {
     fn initialize(segment: &Segment, _: &World) -> Option<Self::State> {
         Some(State(segment.static_store()?, segment.index))
     }
-
-    fn depend(state: &Self::State, _: &World) -> Vec<Dependency> {
-        vec![Dependency::Read(state.1, TypeId::of::<C>())]
-    }
 }
 
 impl<'a, C: Component> At<'a> for State<C> {
@@ -54,6 +46,12 @@ impl<'a, C: Component> At<'a> for State<C> {
     #[inline]
     fn at(&'a self, index: usize) -> Self::Item {
         unsafe { self.0.at(index) }
+    }
+}
+
+impl<T: 'static> Depend for State<T> {
+    fn depend(&self, world: &World) -> Vec<Dependency> {
+        vec![Dependency::Read(self.1, TypeId::of::<T>())]
     }
 }
 

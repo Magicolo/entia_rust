@@ -1,6 +1,6 @@
-use crate::segment::*;
-use crate::system::*;
+use crate::depend::Depend;
 use crate::world::*;
+use crate::{depend::Dependency, segment::*};
 use crate::{filter::Filter, item::*};
 use std::any::TypeId;
 use std::sync::Arc;
@@ -38,10 +38,6 @@ impl Item for Entity {
     fn initialize(segment: &Segment, _: &World) -> Option<Self::State> {
         Some(State(segment.static_store()?, segment.index))
     }
-
-    fn depend(state: &Self::State, _: &World) -> Vec<Dependency> {
-        vec![Dependency::Read(state.1, TypeId::of::<Entity>())]
-    }
 }
 
 impl<'a> At<'a> for State {
@@ -50,5 +46,11 @@ impl<'a> At<'a> for State {
     #[inline]
     fn at(&self, index: usize) -> Self::Item {
         unsafe { *self.0.at(index) }
+    }
+}
+
+impl Depend for State {
+    fn depend(&self, _: &World) -> Vec<Dependency> {
+        vec![Dependency::Read(self.1, TypeId::of::<Entity>())]
     }
 }

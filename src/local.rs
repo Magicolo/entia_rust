@@ -1,6 +1,6 @@
-use crate::inject::*;
-use crate::system::*;
+use crate::depend::Depend;
 use crate::world::*;
+use crate::{depend::Dependency, inject::*};
 use std::ops::Deref;
 use std::ops::DerefMut;
 
@@ -40,10 +40,6 @@ impl<T: Default + 'static> Inject for Local<'_, T> {
     fn initialize(input: Self::Input, _: &mut World) -> Option<Self::State> {
         Some(State(input.unwrap_or_default()))
     }
-
-    fn depend(_: &Self::State, _: &World) -> Vec<Dependency> {
-        Vec::new()
-    }
 }
 
 impl<'a, T: Default + 'static> Get<'a> for State<T> {
@@ -52,5 +48,11 @@ impl<'a, T: Default + 'static> Get<'a> for State<T> {
     #[inline]
     fn get(&'a mut self, _: &World) -> Self::Item {
         Local(&mut self.0)
+    }
+}
+
+impl<T> Depend for State<T> {
+    fn depend(&self, _: &World) -> Vec<Dependency> {
+        Vec::new()
     }
 }

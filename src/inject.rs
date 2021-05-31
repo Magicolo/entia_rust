@@ -1,18 +1,17 @@
 use crate::core::call::*;
 use crate::core::prepend::*;
+use crate::depend::Depend;
 use crate::schedule::*;
-use crate::system::*;
 use crate::world::*;
 
 pub trait Inject {
     type Input;
-    type State: for<'a> Get<'a>;
+    type State: for<'a> Get<'a> + Depend;
     fn initialize(input: Self::Input, world: &mut World) -> Option<Self::State>;
     #[inline]
     fn update(_: &mut Self::State, _: &mut World) {}
     #[inline]
     fn resolve(_: &mut Self::State, _: &mut World) {}
-    fn depend(state: &Self::State, world: &World) -> Vec<Dependency>;
 }
 
 // SAFETY: The implementations of the 'get' method must ensure that no reference the 'World' are kept within 'self'
@@ -79,12 +78,6 @@ macro_rules! inject {
             #[inline]
             fn resolve(($($p,)*): &mut Self::State, _world: &mut World) {
                 $($t::resolve($p, _world);)*
-            }
-
-            fn depend(($($p,)*): &Self::State, _world: &World) -> Vec<Dependency> {
-                let mut _dependencies = Vec::new();
-                $(_dependencies.append(&mut $t::depend($p, _world));)*
-                _dependencies
             }
         }
 

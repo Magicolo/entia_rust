@@ -2,12 +2,12 @@ use entia_core::utility::get_mut2;
 
 use crate::{
     defer::{self, Defer, Resolve},
+    depend::{Depend, Dependency},
     entities::{self, Entities},
     entity::Entity,
     inject::{Get, Inject},
     modify::Modify,
     segment::Move,
-    system::Dependency,
     world::World,
 };
 use std::{any::TypeId, collections::HashMap};
@@ -70,15 +70,6 @@ impl<M: Modify> Inject for Add<'_, M> {
     fn resolve(state: &mut Self::State, world: &mut World) {
         <Defer<Addition<M>> as Inject>::resolve(&mut state.defer, world);
     }
-
-    fn depend(state: &Self::State, world: &World) -> Vec<Dependency> {
-        let mut dependencies = <Defer<Addition<M>> as Inject>::depend(&state.defer, world);
-        let (_, targets) = state.defer.as_ref();
-        for pair in targets.values().flat_map(|targets| targets) {
-            dependencies.push(Dependency::Defer(pair.1.target(), TypeId::of::<Entity>()));
-        }
-        dependencies
-    }
 }
 
 impl<'a, M: Modify> Get<'a> for State<M> {
@@ -86,6 +77,17 @@ impl<'a, M: Modify> Get<'a> for State<M> {
 
     fn get(&'a mut self, world: &'a World) -> Self::Item {
         Add(self.defer.get(world))
+    }
+}
+
+impl<M: Modify> Depend for State<M> {
+    fn depend(&self, world: &World) -> Vec<Dependency> {
+        let mut dependencies = self.defer.depend(world);
+        let (_, targets) = self.defer.as_ref();
+        for pair in targets.values().flat_map(|targets| targets) {
+            dependencies.push(Dependency::Defer(pair.1.target(), TypeId::of::<Entity>()));
+        }
+        dependencies
     }
 }
 
@@ -100,8 +102,8 @@ impl<M: Modify> Resolve for Addition<M> {
     fn resolve(self, (entities, targets): &mut Self::State, world: &mut World) {
         let Self(entity, modify) = self;
         if let Some(datum) = entities.get_datum_mut(entity) {
-            let index = datum.index as usize;
-            let source = datum.segment as usize;
+            let index = datum.index() as usize;
+            let source = datum.segment() as usize;
             let targets = targets.entry(source).or_insert_with(|| {
                 let mut targets = Vec::new();
                 let source = &world.segments[source];
@@ -132,8 +134,7 @@ impl<M: Modify> Resolve for Addition<M> {
             if let Some(target) = target {
                 if let Some(index) = target.1.apply(index, 1, world) {
                     modify.modify(&target.0, index);
-                    datum.index = index as u32;
-                    datum.segment = target.1.target() as u32;
+                    datum.update(index as u32, target.1.target() as u32);
                 }
             }
         }

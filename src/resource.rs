@@ -1,6 +1,5 @@
 use crate::inject::*;
 use crate::read::*;
-use crate::system::*;
 use crate::world::*;
 use crate::write::*;
 use std::sync::Arc;
@@ -22,10 +21,6 @@ impl<R: Resource> Inject for &R {
     fn resolve(state: &mut Self::State, world: &mut World) {
         <Read<R> as Inject>::resolve(state, world);
     }
-
-    fn depend(state: &Self::State, world: &World) -> Vec<Dependency> {
-        <Read<R> as Inject>::depend(state, world)
-    }
 }
 
 impl<R: Resource> Inject for &mut R {
@@ -42,10 +37,6 @@ impl<R: Resource> Inject for &mut R {
 
     fn resolve(state: &mut Self::State, world: &mut World) {
         <Write<R> as Inject>::resolve(state, world);
-    }
-
-    fn depend(state: &Self::State, world: &World) -> Vec<Dependency> {
-        <Write<R> as Inject>::depend(state, world)
     }
 }
 

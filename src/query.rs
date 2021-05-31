@@ -1,13 +1,13 @@
 use entia_core::bits::Bits;
 
 use crate::{
+    depend::{Depend, Dependency},
     entities::{self, Entities},
     entity::Entity,
     filter::Filter,
     inject::{Get, Inject},
     item::{At, Item},
     resource::Resource,
-    system::Dependency,
     world::World,
     write::{self, Write},
 };
@@ -61,11 +61,11 @@ impl<I: Item, F: Filter> Query<'_, I, F> {
     pub fn get(&self, entity: Entity) -> Option<<I::State as At<'_>>::Item> {
         match self.entities.get_datum(entity) {
             Some(datum) => {
-                let index = datum.index as usize;
-                let segment = datum.segment as usize;
-                for pair in &self.inner.states {
-                    if pair.1 == segment {
-                        return Some(pair.0.at(index));
+                let index = datum.index() as usize;
+                let segment = datum.segment() as usize;
+                for state in &self.inner.states {
+                    if state.1 == segment {
+                        return Some(state.0.at(index));
                     }
                 }
                 None
@@ -76,7 +76,7 @@ impl<I: Item, F: Filter> Query<'_, I, F> {
 
     pub fn has(&self, entity: Entity) -> bool {
         match self.entities.get_datum(entity) {
-            Some(datum) => self.inner.segments.has(datum.segment as usize),
+            Some(datum) => self.inner.segments.has(datum.segment() as usize),
             None => false,
         }
     }
@@ -141,16 +141,6 @@ impl<'a, I: Item + 'static, F: Filter> Inject for Query<'a, I, F> {
             }
         }
     }
-
-    fn depend(state: &Self::State, world: &World) -> Vec<Dependency> {
-        let mut dependencies = Vec::new();
-        let inner = state.inner.as_ref();
-        for (item, segment, _) in inner.states.iter() {
-            dependencies.push(Dependency::Read(*segment, TypeId::of::<Entity>()));
-            dependencies.append(&mut I::depend(item, world));
-        }
-        dependencies
-    }
 }
 
 impl<'a, I: Item + 'static, F: Filter> Get<'a> for State<I, F> {
@@ -161,5 +151,17 @@ impl<'a, I: Item + 'static, F: Filter> Get<'a> for State<I, F> {
             inner: self.inner.get(world),
             entities: self.entities.get(world),
         }
+    }
+}
+
+impl<I: Item + 'static, F: Filter> Depend for State<I, F> {
+    fn depend(&self, world: &World) -> Vec<Dependency> {
+        let mut dependencies = Vec::new();
+        let inner = self.inner.as_ref();
+        for (item, segment, _) in inner.states.iter() {
+            dependencies.push(Dependency::Read(*segment, TypeId::of::<Entity>()));
+            dependencies.append(&mut item.depend(world));
+        }
+        dependencies
     }
 }

@@ -1,10 +1,10 @@
 use crate::{
     defer::{self, Defer, Resolve},
+    depend::{Depend, Dependency},
     entity::Entity,
     filter::Filter,
     inject::{Get, Inject},
     query::{self, Query},
-    system::Dependency,
     world::World,
 };
 use std::{any::TypeId, marker::PhantomData};
@@ -47,15 +47,6 @@ impl<F: Filter> Inject for Destroy<'_, F> {
         <Query<Entity, F> as Inject>::resolve(state.as_mut(), world);
         <Defer<Destruction<F>> as Inject>::resolve(state, world);
     }
-
-    fn depend(State(state): &Self::State, world: &World) -> Vec<Dependency> {
-        let mut dependencies = <Defer<Destruction<F>> as Inject>::depend(state, world);
-        let query = state.as_ref().inner.as_ref();
-        for segment in &query.segments {
-            dependencies.push(Dependency::Defer(segment, TypeId::of::<Entity>()));
-        }
-        dependencies
-    }
 }
 
 impl<'a, F: Filter> Get<'a> for State<F> {
@@ -64,6 +55,17 @@ impl<'a, F: Filter> Get<'a> for State<F> {
     #[inline]
     fn get(&'a mut self, world: &'a World) -> Self::Item {
         Destroy(self.0.get(world))
+    }
+}
+
+impl<F: Filter> Depend for State<F> {
+    fn depend(&self, world: &World) -> Vec<Dependency> {
+        let mut dependencies = self.0.depend(world);
+        let query = self.0.as_ref().inner.as_ref();
+        for segment in &query.segments {
+            dependencies.push(Dependency::Defer(segment, TypeId::of::<Entity>()));
+        }
+        dependencies
     }
 }
 
@@ -80,8 +82,8 @@ impl<F: Filter> Resolve for Destruction<F> {
         match self {
             Destruction::One(entity) => {
                 if let Some(datum) = entities.get_datum_mut(entity) {
-                    let index = datum.index as usize;
-                    let segment = datum.segment as usize;
+                    let index = datum.index() as usize;
+                    let segment = datum.segment() as usize;
                     if query.segments.has(segment) {
                         entities.release(&[entity]);
                         world.segments[segment].clear_at(index);

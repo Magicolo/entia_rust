@@ -1,7 +1,11 @@
-use crate::core::*;
-use crate::inject::*;
-use crate::system::*;
-use crate::world::*;
+use entia_core::Call;
+
+use crate::{
+    depend::Dependency,
+    inject::{Get, Inject, Injector},
+    system::{Runner, System},
+    world::World,
+};
 
 pub struct Scheduler<'a> {
     pub(crate) systems: Vec<Option<System>>,

@@ -5,9 +5,9 @@ use std::{
 };
 
 use crate::{
+    depend::{Depend, Dependency},
     inject::{Get, Inject},
     resource::Resource,
-    system::Dependency,
     world::World,
     write::{self, Write},
 };
@@ -32,7 +32,7 @@ pub trait Resolve: Send + 'static {
 
 struct Resolver {
     state: Box<dyn Any + Send>,
-    resolve: fn(&mut dyn Any, &mut World),
+    resolve: fn(&mut dyn Any, &mut World) -> bool,
 }
 
 #[derive(Default)]
@@ -49,23 +49,29 @@ impl Resolver {
         Resolver {
             state: Box::new((VecDeque::<R>::new(), state)),
             resolve: |state, world| {
-                let (store, state) = state.downcast_mut::<(VecDeque<R>, R::State)>().unwrap();
-                store.pop_front().unwrap().resolve(state, world);
+                if let Some((store, state)) = state.downcast_mut::<(VecDeque<R>, R::State)>() {
+                    if let Some(resolve) = store.pop_front() {
+                        resolve.resolve(state, world);
+                        return true;
+                    }
+                }
+                false
             },
         }
     }
 
-    pub fn defer<R: Resolve>(&mut self, resolve: R) {
-        let (store, _) = &mut self
-            .state
-            .downcast_mut::<(VecDeque<R>, R::State)>()
-            .unwrap();
-        store.push_back(resolve);
+    pub fn defer<R: Resolve>(&mut self, resolve: R) -> bool {
+        if let Some((store, _)) = &mut self.state.downcast_mut::<(VecDeque<R>, R::State)>() {
+            store.push_back(resolve);
+            true
+        } else {
+            false
+        }
     }
 
     #[inline]
-    pub fn resolve(&mut self, world: &mut World) {
-        (self.resolve)(&mut self.state, world);
+    pub fn resolve(&mut self, world: &mut World) -> bool {
+        (self.resolve)(&mut self.state, world)
     }
 }
 
@@ -110,10 +116,6 @@ impl<R: Resolve> Inject for Defer<'_, R> {
             inner.resolvers[index].resolve(world);
         }
     }
-
-    fn depend(_: &Self::State, _: &World) -> Vec<Dependency> {
-        Vec::new()
-    }
 }
 
 impl<'a, R: Resolve> Get<'a> for State<R> {
@@ -125,6 +127,12 @@ impl<'a, R: Resolve> Get<'a> for State<R> {
             index: self.index,
             _marker: PhantomData,
         }
+    }
+}
+
+impl<R: Resolve> Depend for State<R> {
+    fn depend(&self, _: &World) -> Vec<Dependency> {
+        Vec::new()
     }
 }
 
