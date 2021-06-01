@@ -1,5 +1,3 @@
-use std::sync::Mutex;
-
 use crate::{
     depend::{Depend, Dependency},
     entity::Entity,
@@ -23,7 +21,6 @@ pub struct Datum {
 struct Inner {
     pub free: Vec<Entity>,
     pub data: Vec<Datum>,
-    pub lock: Mutex<()>,
 }
 
 impl Resource for Inner {}
@@ -80,8 +77,10 @@ impl Datum {
 
 impl Entities<'_> {
     pub fn reserve(&mut self, entities: &mut [Entity]) {
-        let _ = self.0.lock.lock().unwrap();
+        // TODO: Make this thread-safe
+        // let guard = self.0.lock.lock().unwrap();
         self.0.reserve(entities);
+        // drop(guard);
     }
 
     #[inline]
@@ -114,11 +113,11 @@ impl State {
 
 impl Inner {
     pub fn new(capacity: usize) -> Self {
-        Inner {
-            free: Vec::with_capacity(capacity),
-            data: Vec::with_capacity(capacity),
-            lock: Mutex::new(()),
-        }
+        let mut free = Vec::with_capacity(capacity);
+        let mut data = Vec::with_capacity(capacity);
+        free.push(Entity::ZERO);
+        data.push(Datum::default());
+        Inner { free, data }
     }
 
     pub fn reserve(&mut self, entities: &mut [Entity]) {

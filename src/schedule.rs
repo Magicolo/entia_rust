@@ -92,9 +92,7 @@ impl<'a> Scheduler<'a> {
         // TODO: return a 'Result<Runner<'a>, Error>'
         let mut systems = Vec::new();
         for system in self.systems {
-            let mut system = system?;
-            (system.update)(self.world);
-            systems.push(system);
+            systems.push(system?);
         }
 
         Runner::new(systems, self.world)

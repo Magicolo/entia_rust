@@ -61,7 +61,7 @@ impl Resolver {
     }
 
     pub fn defer<R: Resolve>(&mut self, resolve: R) -> bool {
-        if let Some((store, _)) = &mut self.state.downcast_mut::<(VecDeque<R>, R::State)>() {
+        if let Some((store, _)) = self.state_mut() {
             store.push_back(resolve);
             true
         } else {
@@ -72,6 +72,16 @@ impl Resolver {
     #[inline]
     pub fn resolve(&mut self, world: &mut World) -> bool {
         (self.resolve)(&mut self.state, world)
+    }
+
+    #[inline]
+    pub fn state_ref<R: Resolve>(&self) -> Option<&(VecDeque<R>, R::State)> {
+        self.state.downcast_ref()
+    }
+
+    #[inline]
+    pub fn state_mut<R: Resolve>(&mut self) -> Option<&mut (VecDeque<R>, R::State)> {
+        self.state.downcast_mut()
     }
 }
 
@@ -97,7 +107,7 @@ impl<R: Resolve> Inject for Defer<'_, R> {
                 None => {
                     let state = R::initialize(world)?;
                     let index = inner.resolvers.len();
-                    inner.indices.insert(key, inner.resolvers.len());
+                    inner.indices.insert(key, index);
                     inner.resolvers.push(Resolver::new::<R>(state));
                     index
                 }
@@ -139,8 +149,8 @@ impl<R: Resolve> Depend for State<R> {
 impl<R: Resolve> AsRef<R::State> for State<R> {
     fn as_ref(&self) -> &R::State {
         self.inner.as_ref().resolvers[self.index]
-            .state
-            .downcast_ref()
+            .state_ref::<R>()
+            .map(|(_, state)| state)
             .unwrap()
     }
 }
@@ -148,8 +158,8 @@ impl<R: Resolve> AsRef<R::State> for State<R> {
 impl<R: Resolve> AsMut<R::State> for State<R> {
     fn as_mut(&mut self) -> &mut R::State {
         self.inner.as_mut().resolvers[self.index]
-            .state
-            .downcast_mut()
+            .state_mut::<R>()
+            .map(|(_, state)| state)
             .unwrap()
     }
 }
