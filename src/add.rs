@@ -108,7 +108,7 @@ impl<M: Modify> Resolve for Addition<M> {
                 let mut targets = Vec::new();
                 let source = &world.segments[source];
                 if let Some(state) = M::initialize(source, world) {
-                    targets.push((state, source.prepare_move(source)));
+                    targets.push((state, Move::new(source, source)));
                 }
                 targets
             });
@@ -126,14 +126,14 @@ impl<M: Modify> Resolve for Addition<M> {
                     let indices = (source, target);
                     let (source, target) = get_mut2(&mut world.segments, indices)?;
                     let index = targets.len();
-                    targets.push((state, source.prepare_move(target)));
+                    targets.push((state, Move::new(source, target)));
                     return Some(index);
                 })
                 .and_then(|index| targets.get_mut(index));
 
             if let Some(target) = target {
                 if let Some(index) = target.1.apply(index, 1, world) {
-                    modify.modify(&target.0, index);
+                    modify.modify(&mut target.0, index);
                     datum.update(index as u32, target.1.target() as u32);
                 }
             }

@@ -2,6 +2,7 @@ pub mod add;
 pub mod component;
 pub mod create;
 pub mod defer;
+pub mod depend;
 pub mod destroy;
 pub mod emit;
 pub mod entities;
@@ -11,7 +12,6 @@ pub mod inject;
 pub mod item;
 pub mod local;
 pub mod message;
-pub mod depend;
 pub mod modify;
 pub mod not;
 pub mod query;
@@ -99,35 +99,45 @@ DEPENDENCIES
 mod test {
     use super::prelude::*;
 
-    #[test]
-    fn test() {
-        #[derive(Default)]
-        struct Time(f64);
-        #[derive(Default)]
-        struct Physics;
-        struct Player;
-        struct Enemy;
-        struct Frozen;
-        struct Position(f64, f64, f64);
-        struct Velocity(f64, f64, f64);
-        #[derive(Clone)]
-        struct OnKill(Entity);
-        impl Resource for Time {}
-        impl Resource for Physics {}
-        impl Component for Player {}
-        impl Component for Enemy {}
-        impl Component for Position {}
-        impl Component for Velocity {}
-        impl Component for Frozen {}
-        impl Message for OnKill {}
+    #[derive(Default)]
+    struct Time(f64);
+    #[derive(Default)]
+    struct Physics;
+    struct Player;
+    struct Enemy;
+    struct Frozen;
+    struct Position(f64, f64, f64);
+    struct Velocity(f64, f64, f64);
+    #[derive(Clone)]
+    struct OnKill(Entity);
+    impl Resource for Time {}
+    impl Resource for Physics {}
+    impl Component for Player {}
+    impl Component for Enemy {}
+    impl Component for Position {}
+    impl Component for Velocity {}
+    impl Component for Frozen {}
+    impl Message for OnKill {}
 
+    #[test]
+    fn create_entity() {
+        let mut world = World::new();
+        let mut runner = world
+            .scheduler()
+            .schedule(|mut create: Create<()>| {
+                let entity = create.create(());
+                println!("{:?}", entity);
+            })
+            .runner()
+            .unwrap();
+        runner.run(&mut world);
+    }
+
+    // #[test]
+    fn test() {
         fn physics(scheduler: Scheduler) -> Scheduler {
             scheduler.schedule(|_: ((), ())| {})
         }
-
-        // fn ui(injector: Injector) -> Injector {
-        //     injector.inject::<()>().schedule(|_a| {})
-        // }
 
         fn motion(group: Query<(&mut Position, &Velocity)>) {
             group.each(|(position, velocity)| {

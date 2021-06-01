@@ -2,33 +2,35 @@ use std::sync::Arc;
 
 use crate::{
     component::Component,
-    segment::Segment,
-    world::{Meta, Store, World},
+    segment::{Segment, Store},
+    world::{Meta, World},
 };
 
 pub trait Modify: Send + 'static {
     type State: Send;
     fn initialize(segment: &Segment, world: &World) -> Option<Self::State>;
-    fn static_metas(world: &mut World) -> Vec<Meta>;
-    fn dynamic_metas(&self, world: &mut World) -> Vec<Meta>;
+    fn static_metas(world: &mut World) -> Vec<Arc<Meta>>;
+    fn dynamic_metas(&self, world: &mut World) -> Vec<Arc<Meta>>;
     fn validate(&self, state: &Self::State) -> bool;
-    fn modify(self, state: &Self::State, index: usize);
+    fn modify(self, state: &mut Self::State, index: usize);
 }
 
 pub trait Homogeneous {}
 
 impl<C: Component> Modify for C {
-    type State = (Arc<Store<C>>, usize);
+    type State = (Store, usize);
 
-    fn initialize(segment: &Segment, _: &World) -> Option<Self::State> {
-        Some((segment.static_store()?, segment.index))
+    fn initialize(segment: &Segment, world: &World) -> Option<Self::State> {
+        let meta = world.get_meta::<C>()?;
+        let store = unsafe { segment.store(&meta)?.clone() };
+        Some((store, segment.index))
     }
 
-    fn static_metas(world: &mut World) -> Vec<Meta> {
+    fn static_metas(world: &mut World) -> Vec<Arc<Meta>> {
         vec![world.get_or_add_meta::<C>()]
     }
 
-    fn dynamic_metas(&self, world: &mut World) -> Vec<Meta> {
+    fn dynamic_metas(&self, world: &mut World) -> Vec<Arc<Meta>> {
         Self::static_metas(world)
     }
 
@@ -38,8 +40,8 @@ impl<C: Component> Modify for C {
     }
 
     #[inline]
-    fn modify(self, (store, _): &Self::State, index: usize) {
-        *unsafe { store.at(index) } = self;
+    fn modify(self, (store, _): &mut Self::State, index: usize) {
+        unsafe { store.set(index, self) };
     }
 }
 
@@ -52,11 +54,11 @@ impl<M: Modify> Modify for Option<M> {
         Some(M::initialize(segment, world))
     }
 
-    fn static_metas(world: &mut World) -> Vec<Meta> {
+    fn static_metas(world: &mut World) -> Vec<Arc<Meta>> {
         M::static_metas(world)
     }
 
-    fn dynamic_metas(&self, world: &mut World) -> Vec<Meta> {
+    fn dynamic_metas(&self, world: &mut World) -> Vec<Arc<Meta>> {
         match self {
             Some(modify) => modify.dynamic_metas(world),
             None => Vec::new(),
@@ -74,7 +76,7 @@ impl<M: Modify> Modify for Option<M> {
     }
 
     #[inline]
-    fn modify(self, state: &Self::State, index: usize) {
+    fn modify(self, state: &mut Self::State, index: usize) {
         match (self, state) {
             (Some(modify), Some(state)) => modify.modify(state, index),
             _ => {}
@@ -91,13 +93,13 @@ macro_rules! modify {
                 Some(($($t::initialize(_segment, _world)?,)*))
             }
 
-            fn static_metas(_world: &mut World) -> Vec<Meta> {
+            fn static_metas(_world: &mut World) -> Vec<Arc<Meta>> {
                 let mut _metas = Vec::new();
                 $(_metas.append(&mut $t::static_metas(_world));)*
                 _metas
             }
 
-            fn dynamic_metas(&self, _world: &mut World) -> Vec<Meta> {
+            fn dynamic_metas(&self, _world: &mut World) -> Vec<Arc<Meta>> {
                 let ($($p,)*) = self;
                 let mut _metas = Vec::new();
                 $(_metas.append(&mut $p.dynamic_metas(_world));)*
@@ -111,7 +113,7 @@ macro_rules! modify {
             }
 
             #[inline]
-            fn modify(self, ($($p,)*): &Self::State, _index: usize) {
+            fn modify(self, ($($p,)*): &mut Self::State, _index: usize) {
                 let ($($t,)*) = self;
                 $($t.modify($p, _index);)*
             }

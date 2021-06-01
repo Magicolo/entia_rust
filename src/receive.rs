@@ -1,17 +1,19 @@
-use std::{any::TypeId, collections::VecDeque, sync::Arc};
+use std::{any::TypeId, collections::VecDeque, marker::PhantomData};
 
 use crate::{
     depend::{Depend, Dependency},
     inject::{Get, Inject},
     message::{Message, Messages},
-    world::{Store, World},
+    segment::Store,
+    world::World,
 };
 
 pub struct Receive<'a, M: Message>(&'a mut Messages<M>);
 pub struct State<M: Message> {
     index: usize,
-    store: Arc<Store<Messages<M>>>,
+    store: Store,
     segment: usize,
+    _marker: PhantomData<M>,
 }
 
 impl<M: Message> Iterator for Receive<'_, M> {
@@ -29,17 +31,19 @@ impl<M: Message> Inject for Receive<'_, M> {
 
     fn initialize(input: Self::Input, world: &mut World) -> Option<Self::State> {
         let meta = world.get_or_add_meta::<M>();
-        let segment = world.add_segment_from_metas(&[meta], 8);
-        let store = segment.static_store()?;
+        let segment = world.add_segment_from_metas(vec![meta.clone()], 8);
+        let mut store = unsafe { segment.store(&meta)?.clone() };
         let index = segment.reserve(1);
-        *unsafe { store.at(index) } = Messages {
+        let messages = Messages::<M> {
             messages: VecDeque::new(),
             capacity: input,
         };
+        unsafe { store.set(index, messages) };
         Some(State {
             index,
             store,
             segment: segment.index,
+            _marker: PhantomData,
         })
     }
 }

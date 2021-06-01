@@ -8,10 +8,11 @@ use crate::{
     filter::Filter,
     inject::{Get, Inject},
     modify::Modify,
+    segment::Store,
     segment::{Move, Segment},
-    world::{Store, World},
+    world::World,
 };
-use std::{any::TypeId, marker::PhantomData, sync::Arc};
+use std::{any::TypeId, marker::PhantomData};
 
 pub struct Remove<'a, M: Modify, F: Filter = ()>(Defer<'a, Removal<M, F>>);
 pub struct State<M: Modify, F: Filter>(defer::State<Removal<M, F>>);
@@ -19,7 +20,7 @@ pub struct State<M: Modify, F: Filter>(defer::State<Removal<M, F>>);
 enum Target {
     Invalid,
     Pending(Bits),
-    Valid(Arc<Store<Entity>>, Move),
+    Valid(Store, Move),
 }
 
 enum Removal<M: Modify, F: Filter> {
@@ -102,21 +103,26 @@ impl<M: Modify, F: Filter> Resolve for Removal<M, F> {
             source: &Segment,
             world: &World,
         ) -> Option<(usize, Bits)> {
-            source.static_store::<Entity>()?;
-            M::initialize(source, world).filter(|_| F::filter(source, world))?;
-            Some((source.index, source.types.clone()))
+            let meta = world.get_meta::<Entity>()?;
+            if source.has(&meta) {
+                M::initialize(source, world).filter(|_| F::filter(source, world))?;
+                Some((source.index, source.types.clone()))
+            } else {
+                None
+            }
         }
 
         fn complete(source: usize, types: &Bits, add: bool, world: &mut World) -> Option<Target> {
+            let meta = world.get_meta::<Entity>()?;
             let target = if add {
                 world.get_or_add_segment_by_types(types, None)
             } else {
                 world.get_segment_by_types(types)?
             };
-            let store = target.static_store()?;
+            let store = unsafe { target.store(&meta)?.clone() };
             let target = target.index;
             let (source, target) = get_mut2(&mut world.segments, (source, target))?;
-            Some(Target::Valid(store, source.prepare_move(target)))
+            Some(Target::Valid(store, Move::new(source, target)))
         }
 
         fn get<'a>(
@@ -179,7 +185,7 @@ impl<M: Modify, F: Filter> Resolve for Removal<M, F> {
                             let count = world.segments[i].count;
                             if let Some(index) = target.apply(0, count, world) {
                                 for i in index..index + count {
-                                    let entity = *unsafe { store.at(i) };
+                                    let entity = *unsafe { store.at::<Entity>(i) };
                                     if let Some(datum) =
                                         entities.get_datum_at_mut(entity.index as usize)
                                     {

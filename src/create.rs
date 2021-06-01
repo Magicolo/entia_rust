@@ -1,4 +1,4 @@
-use std::{any::TypeId, sync::Arc};
+use std::any::TypeId;
 
 use entia_core::One;
 
@@ -9,7 +9,8 @@ use crate::{
     entity::Entity,
     inject::{Get, Inject},
     modify::{Homogeneous, Modify},
-    world::{Store, World},
+    segment::Store,
+    world::World,
 };
 
 pub struct Create<'a, M: Modify> {
@@ -135,7 +136,7 @@ impl<M: Modify> Depend for State<M> {
 }
 
 impl<M: Modify> Resolve for Creation<M> {
-    type State = (entities::State, Vec<(M::State, Arc<Store<Entity>>, usize)>);
+    type State = (entities::State, Vec<(M::State, Store, usize)>);
 
     fn initialize(world: &mut World) -> Option<Self::State> {
         let entities = <Entities as Inject>::initialize((), world)?;
@@ -149,23 +150,24 @@ impl<M: Modify> Resolve for Creation<M> {
                     .iter()
                     .position(|pair| modify.validate(&pair.0))
                     .or_else(|| {
-                        let mut metas = vec![world.get_or_add_meta::<Entity>()];
+                        let meta = world.get_or_add_meta::<Entity>();
+                        let mut metas = vec![meta.clone()];
                         metas.append(&mut modify.dynamic_metas(world));
-                        let target = world.get_or_add_segment_by_metas(&metas, None).index;
+                        let target = world.get_or_add_segment_by_metas(metas, None).index;
                         let target = &world.segments[target];
-                        let entities = target.static_store()?;
+                        let entities = unsafe { target.store(&meta)?.clone() };
                         let state = M::initialize(target, world)?;
                         let index = targets.len();
                         targets.push((state, entities, target.index));
                         return Some(index);
                     })
-                    .and_then(|index| targets.get(index));
+                    .and_then(|index| targets.get_mut(index));
 
                 if let Some(datum) = entities.get_datum_mut(entity) {
                     if let Some((state, entities, target)) = target {
                         let target = &mut world.segments[*target];
                         let index = target.reserve(1);
-                        *unsafe { entities.at(index) } = entity;
+                        unsafe { entities.set(index, entity) };
                         modify.modify(state, index);
                         datum.initialize(index as u32, target.index as u32);
                     }

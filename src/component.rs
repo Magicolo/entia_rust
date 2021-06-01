@@ -3,8 +3,12 @@ use crate::{filter::Filter, item::Item, read::Read, segment::Segment, world::Wor
 pub trait Component: Send + 'static {}
 
 impl<C: Component> Filter for C {
-    fn filter(segment: &Segment, _: &World) -> bool {
-        segment.static_store::<C>().is_some()
+    fn filter(segment: &Segment, world: &World) -> bool {
+        if let Some(meta) = world.get_meta::<C>() {
+            segment.has(&meta)
+        } else {
+            false
+        }
     }
 }
 

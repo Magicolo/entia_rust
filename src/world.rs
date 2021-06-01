@@ -1,8 +1,9 @@
 use entia_core::bits::Bits;
-use std::any::Any;
 use std::any::TypeId;
-use std::cell::UnsafeCell;
 use std::collections::HashMap;
+use std::mem::ManuallyDrop;
+use std::ptr::copy;
+use std::ptr::NonNull;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -18,121 +19,20 @@ use crate::{
 pub struct Meta {
     pub(crate) identifier: TypeId,
     pub(crate) index: usize,
-    pub(crate) store: fn(usize) -> (Arc<dyn Storage>, Arc<dyn Any + Send + Sync>),
+    pub(crate) allocate: fn(usize) -> NonNull<()>,
+    pub(crate) copy: fn((NonNull<()>, usize), (NonNull<()>, usize), usize),
+    pub(crate) drop: fn(NonNull<()>, usize, usize),
 }
-
-pub struct Store<T>(pub(crate) UnsafeCell<Vec<T>>);
 
 pub struct World {
     pub(crate) identifier: usize,
     pub(crate) segments: Vec<Segment>,
-    pub(crate) metas: Vec<Meta>,
-    pub(crate) types: HashMap<TypeId, usize>,
-    pub(crate) bits: HashMap<Bits, usize>,
+    pub(crate) metas: Vec<Arc<Meta>>,
+    pub(crate) type_to_meta: HashMap<TypeId, usize>,
+    pub(crate) bits_to_segment: HashMap<Bits, usize>,
 }
 
 pub struct State;
-
-pub trait Storage: Sync + Send {
-    fn ensure(&self, capacity: usize) -> bool;
-    fn foreign_copy(&self, source: usize, target: (usize, &dyn Any), count: usize) -> bool;
-    fn local_copy(&self, source: usize, target: usize, count: usize) -> bool;
-    fn clear(&self, index: usize, count: usize);
-}
-
-impl<T: Send + 'static> Storage for Store<T> {
-    fn ensure(&self, capacity: usize) -> bool {
-        let content = unsafe { self.get() };
-        if content.len() < capacity {
-            content.reserve(capacity - content.len());
-            unsafe { content.set_len(capacity) };
-            true
-        } else {
-            false
-        }
-    }
-
-    fn foreign_copy(&self, source: usize, target: (usize, &dyn Any), count: usize) -> bool {
-        if let Some(store) = target.1.downcast_ref::<Store<T>>() {
-            unsafe { std::ptr::copy_nonoverlapping(self.at(source), store.at(target.0), count) };
-            true
-        } else {
-            false
-        }
-    }
-
-    fn local_copy(&self, source: usize, target: usize, count: usize) -> bool {
-        if source == target {
-            false
-        } else {
-            unsafe { std::ptr::copy_nonoverlapping(self.at(source), self.at(target), count) };
-            true
-        }
-    }
-
-    fn clear(&self, index: usize, mut count: usize) {
-        while count > 0 {
-            count -= 1;
-            drop(unsafe { self.at(index + count) });
-        }
-    }
-}
-
-/*
-Create<(Position, Velocity, Option<Mass>)>(candidates)
-- The filter selects at most 2 segments ([Position, Velocity, Mass], [Position, Velocity]) and selects the appropriate one
-base on the provided 'Mass'.
-- This means that 'Create' has an 'Add' dependency on these 2 segments.
-- When calling 'Create::create<const N: usize>(self, initialize) -> [Entity; N]':
-    let segment = initialize.select_candidate(candidates);
-    let count = segment.count.fetch_add(N);
-    let index = count - N;
-    if count <= segment.capacity {
-        initialize.initialize(segment.index, index, count);
-    } else {
-        self.defer(initialize, segment.index, index, count);
-    }
-- 'Create' can be concurrent to 'Read/Write' within its candidate segments as long as the dependency appears after the 'Read/Write'.
-- 'Create' is incompatible with 'Destroy' when candidates overlap
-- 'Create' is compatible with 'Add(targets)' but not with 'Add(sources)'
-- 'Create' is compatible with 'Remove(targets)' but not with 'Remove(sources)'
-
-Destroy<(Position, Velocity)>(candidates)
-
-
-
-
-- Has a 'Write' dependency on all segments that have at least [Position, Velocity].
-- Has a 'Add' dependency on all segments that
-
-Remove<(Position, Velocity)>({ source: [target] })
-
-fn try_add(segment: &segment, initialize: impl Initialize) {
-    let count = segment.count.fetch_add(some_amount);
-    let index = count - some_amount;
-    if count < segment.capacity {
-        // write to the store
-        initialize.initialize(segment, index, some_amount);
-    } else {
-        // defer the 'resize' and the 'write'
-        defer.initialize(segment.index, index, some_amount, initialize);
-    }
-}
-
-let index = count - some_amount;
-loop {
-    let capacity = segment.capacity.load();
-    if count <= capacity {
-        break;
-    }
-
-    // This doesn't work since there might be live read/write pointers the store...
-    let guard = segment.lock.lock();
-    let capacity = next_power_of_2(count);
-    segment.stores.iter().for_each(|store| store.ensure(capacity));
-    segment.capacity.fetch_max(capacity);
-}
-*/
 
 impl Inject for &World {
     type Input = ();
@@ -157,8 +57,6 @@ impl Depend for State {
     }
 }
 
-unsafe impl<T> Sync for Store<T> {}
-
 impl World {
     pub fn new() -> Self {
         static COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -166,38 +64,51 @@ impl World {
             identifier: COUNTER.fetch_add(1, Ordering::Relaxed),
             segments: Vec::new(),
             metas: Vec::new(),
-            types: HashMap::new(),
-            bits: HashMap::new(),
+            type_to_meta: HashMap::new(),
+            bits_to_segment: HashMap::new(),
         }
     }
 
-    pub fn get_meta<T: Send + 'static>(&self) -> Option<Meta> {
+    pub fn get_meta<T: Send + 'static>(&self) -> Option<Arc<Meta>> {
         let key = TypeId::of::<T>();
-        self.types.get(&key).map(|&index| self.metas[index].clone())
+        self.type_to_meta
+            .get(&key)
+            .map(|&index| self.metas[index].clone())
     }
 
-    pub fn get_or_add_meta<T: Send + 'static>(&mut self) -> Meta {
+    pub fn get_or_add_meta<T: Send + 'static>(&mut self) -> Arc<Meta> {
         match self.get_meta::<T>() {
             Some(meta) => meta,
             None => {
                 let key = TypeId::of::<T>();
                 let index = self.metas.len();
-                let meta = Meta {
+                let meta = Arc::new(Meta {
                     identifier: key.clone(),
                     index,
-                    store: |capacity| {
-                        let store = Arc::new(unsafe { Store::<T>::new(capacity) });
-                        (store.clone(), store)
+                    allocate: |count| unsafe {
+                        let mut store = ManuallyDrop::new(Vec::<T>::with_capacity(count));
+                        NonNull::new_unchecked(store.as_mut_ptr()).cast()
                     },
-                };
+                    copy: |source, target, count| unsafe {
+                        let source = source.0.cast::<T>().as_ptr().add(source.1);
+                        let target = target.0.cast::<T>().as_ptr().add(target.1);
+                        copy(source, target, count);
+                    },
+                    drop: |pointer, index, count| unsafe {
+                        let pointer = pointer.cast::<T>().as_ptr();
+                        for i in index..index + count {
+                            drop(pointer.add(i).read());
+                        }
+                    },
+                });
                 self.metas.push(meta.clone());
-                self.types.insert(key, index);
+                self.type_to_meta.insert(key, index);
                 meta
             }
         }
     }
 
-    pub fn get_metas_from_types(&self, types: &Bits) -> Vec<Meta> {
+    pub fn get_metas_from_types(&self, types: &Bits) -> Vec<Arc<Meta>> {
         types
             .into_iter()
             .map(|index| self.metas[index].clone())
@@ -205,10 +116,12 @@ impl World {
     }
 
     pub fn get_segment_by_types(&self, types: &Bits) -> Option<&Segment> {
-        self.bits.get(types).map(|&index| &self.segments[index])
+        self.bits_to_segment
+            .get(types)
+            .map(|&index| &self.segments[index])
     }
 
-    pub fn get_segment_by_metas(&self, metas: &[Meta]) -> Option<&Segment> {
+    pub fn get_segment_by_metas(&self, metas: Vec<Arc<Meta>>) -> Option<&Segment> {
         let mut types = Bits::new();
         metas.iter().for_each(|meta| types.set(meta.index, true));
         self.get_segment_by_types(&types)
@@ -216,15 +129,18 @@ impl World {
 
     pub fn add_segment_from_types(&mut self, types: &Bits, capacity: usize) -> &mut Segment {
         let metas = self.get_metas_from_types(types);
-        self.add_segment(types.clone(), &metas, capacity)
+        self.add_segment(types.clone(), metas, capacity)
     }
 
-    pub fn add_segment_from_metas(&mut self, metas: &[Meta], capacity: usize) -> &mut Segment {
-        let mut metas: Box<[_]> = metas.iter().cloned().collect();
+    pub fn add_segment_from_metas(
+        &mut self,
+        mut metas: Vec<Arc<Meta>>,
+        capacity: usize,
+    ) -> &mut Segment {
         let mut types = Bits::new();
         metas.sort_by_key(|meta| meta.index);
         metas.iter().for_each(|meta| types.set(meta.index, true));
-        self.add_segment(types, &metas, capacity)
+        self.add_segment(types, metas, capacity)
     }
 
     pub fn get_or_add_segment_by_types(
@@ -249,7 +165,7 @@ impl World {
 
     pub fn get_or_add_segment_by_metas(
         &mut self,
-        metas: &[Meta],
+        metas: Vec<Arc<Meta>>,
         capacity: Option<usize>,
     ) -> &mut Segment {
         let mut types = Bits::new();
@@ -257,28 +173,15 @@ impl World {
         self.get_or_add_segment_by_types(&types, capacity)
     }
 
-    fn add_segment(&mut self, types: Bits, metas: &[Meta], capacity: usize) -> &mut Segment {
+    fn add_segment(
+        &mut self,
+        types: Bits,
+        metas: impl IntoIterator<Item = Arc<Meta>>,
+        capacity: usize,
+    ) -> &mut Segment {
         let index = self.segments.len();
         self.segments
-            .push(Segment::new(index, types, &metas, capacity));
+            .push(Segment::new(index, types, metas, capacity));
         &mut self.segments[index]
-    }
-}
-
-impl<T> Store<T> {
-    pub unsafe fn new(capacity: usize) -> Self {
-        let mut content: Vec<T> = Vec::with_capacity(capacity);
-        content.set_len(capacity);
-        Self(content.into())
-    }
-
-    #[inline]
-    pub unsafe fn at(&self, index: usize) -> &mut T {
-        &mut self.get()[index]
-    }
-
-    #[inline]
-    pub unsafe fn get(&self) -> &mut Vec<T> {
-        (&mut *self.0.get()).as_mut()
     }
 }

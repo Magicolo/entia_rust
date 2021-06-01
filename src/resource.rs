@@ -1,8 +1,8 @@
 use crate::inject::*;
 use crate::read::*;
+use crate::segment::Store;
 use crate::world::*;
 use crate::write::*;
-use std::sync::Arc;
 
 pub trait Resource: Default + Send + 'static {}
 
@@ -43,13 +43,13 @@ impl<R: Resource> Inject for &mut R {
 pub(crate) fn initialize<T: Send + 'static>(
     provide: impl FnOnce() -> T,
     world: &mut World,
-) -> Option<(Arc<Store<T>>, usize)> {
+) -> Option<(Store, usize)> {
     let meta = world.get_or_add_meta::<T>();
-    let segment = world.get_or_add_segment_by_metas(&[meta], Some(1));
-    let store = segment.static_store()?;
+    let segment = world.get_or_add_segment_by_metas(vec![meta.clone()], Some(1));
+    let mut store = unsafe { segment.store(&meta)?.clone() };
     if segment.count == 0 {
         let index = segment.reserve(1);
-        *unsafe { store.at(index) } = provide();
+        unsafe { store.set(index, provide()) };
     }
     Some((store, segment.index))
 }

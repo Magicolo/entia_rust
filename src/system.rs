@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 pub struct Runner {
     pub(crate) identifier: usize,
-    pub(crate) systems: Vec<Vec<System>>,
+    pub(crate) blocks: Vec<Vec<System>>,
     pub(crate) segments: usize,
 }
 
@@ -24,7 +24,7 @@ impl Runner {
     pub fn new(systems: impl IntoIterator<Item = System>, world: &mut World) -> Option<Self> {
         Some(Self {
             identifier: world.identifier,
-            systems: Self::schedule(systems.into_iter(), world)?,
+            blocks: Self::schedule(systems.into_iter(), world)?,
             segments: world.segments.len(),
         })
     }
@@ -36,32 +36,24 @@ impl Runner {
         }
 
         if self.segments.change(world.segments.len()) {
-            self.systems
-                .iter_mut()
-                .flatten()
-                .for_each(|system| (system.update)(world));
             // TODO: rather than calling 'unwrap' return an error if it failed
             // - What to do on next iteration? Add a 'state' field to the runner to indicate failure?
-            self.systems = Self::schedule(self.systems.drain(..).flatten(), world).unwrap();
+            self.blocks = Self::schedule(self.blocks.drain(..).flatten(), world).unwrap();
         }
 
-        for systems in self.systems.iter_mut() {
-            systems.iter_mut().for_each(|system| (system.update)(world));
+        for block in self.blocks.iter_mut() {
+            block.iter_mut().for_each(|system| (system.update)(world));
 
             // If segments have been added to the world, this may mean that the dependencies used to schedule the systems
             // are not be up to date, therefore it is not safe to run the systems in parallel.
-            if self.segments == world.segments.len() && systems.len() > 1 {
+            if self.segments == world.segments.len() && block.len() > 1 {
                 use rayon::prelude::*;
-                systems
-                    .par_iter_mut()
-                    .for_each(|system| (system.run)(world));
+                block.par_iter_mut().for_each(|system| (system.run)(world));
             } else {
-                systems.iter_mut().for_each(|system| (system.run)(world));
+                block.iter_mut().for_each(|system| (system.run)(world));
             }
 
-            systems
-                .iter_mut()
-                .for_each(|system| (system.resolve)(world));
+            block.iter_mut().for_each(|system| (system.resolve)(world));
         }
     }
 
@@ -99,7 +91,7 @@ impl Runner {
 
     pub(crate) fn schedule(
         systems: impl Iterator<Item = System>,
-        world: &World,
+        world: &mut World,
     ) -> Option<Vec<Vec<System>>> {
         let mut pairs = Vec::new();
         let mut sequence = Vec::new();
@@ -109,6 +101,7 @@ impl Runner {
         let mut adds = HashSet::new();
 
         for mut system in systems {
+            (system.update)(world);
             let dependencies = (system.depend)(world);
             if Self::conflicts(&dependencies, &mut reads, &mut writes, &mut adds) {
                 return None;

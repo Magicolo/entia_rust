@@ -1,4 +1,4 @@
-use std::{any::TypeId, sync::Arc};
+use std::{any::TypeId, marker::PhantomData};
 
 use crate::{
     component::Component,
@@ -7,19 +7,20 @@ use crate::{
     item::{At, Item},
     resource::{initialize, Resource},
     segment::Segment,
-    world::Store,
+    segment::Store,
     world::World,
 };
 
-pub struct Read<T>(Arc<Store<T>>);
-pub struct State<T>(Arc<Store<T>>, usize);
+pub struct Read<T>(Store, PhantomData<T>);
+pub struct State<T>(Store, usize, PhantomData<T>);
 
 impl<R: Resource> Inject for Read<R> {
     type Input = Option<R>;
     type State = State<R>;
 
     fn initialize(input: Self::Input, world: &mut World) -> Option<Self::State> {
-        initialize(|| input.unwrap_or_default(), world).map(|pair| State(pair.0, pair.1))
+        let (store, segment) = initialize(|| input.unwrap_or_default(), world)?;
+        Some(State(store, segment, PhantomData))
     }
 }
 
@@ -35,8 +36,10 @@ impl<'a, R: Resource> Get<'a> for State<R> {
 impl<C: Component> Item for Read<C> {
     type State = State<C>;
 
-    fn initialize(segment: &Segment, _: &World) -> Option<Self::State> {
-        Some(State(segment.static_store()?, segment.index))
+    fn initialize(segment: &Segment, world: &World) -> Option<Self::State> {
+        let meta = world.get_meta::<C>()?;
+        let store = unsafe { segment.store(&meta)?.clone() };
+        Some(State(store, segment.index, PhantomData))
     }
 }
 
@@ -50,7 +53,7 @@ impl<'a, C: Component> At<'a> for State<C> {
 }
 
 impl<T: 'static> Depend for State<T> {
-    fn depend(&self, world: &World) -> Vec<Dependency> {
+    fn depend(&self, _: &World) -> Vec<Dependency> {
         vec![Dependency::Read(self.1, TypeId::of::<T>())]
     }
 }
@@ -58,14 +61,14 @@ impl<T: 'static> Depend for State<T> {
 impl<'a, R: Resource> From<&'a State<R>> for Read<R> {
     #[inline]
     fn from(state: &'a State<R>) -> Self {
-        Read(state.0.clone())
+        Read(unsafe { state.0.clone() }, PhantomData)
     }
 }
 
 impl<'a, R: Resource> From<&'a mut State<R>> for Read<R> {
     #[inline]
     fn from(state: &'a mut State<R>) -> Self {
-        Read(state.0.clone())
+        Read(unsafe { state.0.clone() }, PhantomData)
     }
 }
 

@@ -1,7 +1,7 @@
 use entia_core::Call;
 
 use crate::{
-    depend::Dependency,
+    depend::{Depend, Dependency},
     inject::{Get, Inject, Injector},
     system::{Runner, System},
     world::World,
@@ -65,7 +65,7 @@ impl<'a, I: Inject, C: Call<I, ()> + Call<<I::State as Get<'a>>::Item, ()> + 'st
                 |(run, state), world| run.call(state.get(world)),
                 |(_, state), world| I::update(state, world),
                 |(_, state), world| I::resolve(state, world),
-                |(_, state), world| I::depend(state, world),
+                |(_, state), world| state.depend(world),
             )
         });
         scheduler.schedule(system)
