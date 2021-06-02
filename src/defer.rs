@@ -60,13 +60,10 @@ impl Resolver {
         }
     }
 
-    pub fn defer<R: Resolve>(&mut self, resolve: R) -> bool {
-        if let Some((store, _)) = self.state_mut() {
-            store.push_back(resolve);
-            true
-        } else {
-            false
-        }
+    pub fn defer<R: Resolve>(&mut self, resolve: R) -> Option<&R> {
+        let (store, _) = self.state_mut()?;
+        store.push_back(resolve);
+        store.back()
     }
 
     #[inline]
@@ -87,9 +84,10 @@ impl Resolver {
 
 impl<R: Resolve> Defer<'_, R> {
     #[inline]
-    pub fn defer(&mut self, resolve: R) {
-        self.inner.resolvers[self.index].defer(resolve);
+    pub fn defer(&mut self, resolve: R) -> Option<&R> {
+        let resolve = self.inner.resolvers[self.index].defer(resolve)?;
         self.inner.defer.push(self.index);
+        Some(resolve)
     }
 }
 

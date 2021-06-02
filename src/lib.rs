@@ -134,7 +134,7 @@ mod test {
     }
 
     // #[test]
-    fn test() {
+    fn _test() {
         fn physics(scheduler: Scheduler) -> Scheduler {
             scheduler.schedule(|_: ((), ())| {})
         }

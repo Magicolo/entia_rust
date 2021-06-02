@@ -186,11 +186,8 @@ impl<M: Modify, F: Filter> Resolve for Removal<M, F> {
                             if let Some(index) = target.apply(0, count, world) {
                                 for i in index..index + count {
                                     let entity = *unsafe { store.at::<Entity>(i) };
-                                    if let Some(datum) =
-                                        entities.get_datum_at_mut(entity.index as usize)
-                                    {
-                                        datum.update(i as u32, target.target() as u32);
-                                    }
+                                    let datum = entities.get_datum_at_mut(entity.index as usize);
+                                    datum.update(i as u32, target.target() as u32);
                                 }
                             }
                         }

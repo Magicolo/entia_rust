@@ -101,8 +101,8 @@ impl State {
     }
 
     #[inline]
-    pub fn get_datum_at_mut(&mut self, index: usize) -> Option<&mut Datum> {
-        self.0.as_mut().data.get_mut(index)
+    pub fn get_datum_at_mut(&mut self, index: usize) -> &mut Datum {
+        &mut self.0.as_mut().data[index]
     }
 
     #[inline]
