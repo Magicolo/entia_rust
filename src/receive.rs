@@ -38,7 +38,7 @@ impl<M: Message> Inject for Receive<'_, M> {
             messages: VecDeque::new(),
             capacity: input,
         };
-        unsafe { store.set(index, messages) };
+        unsafe { store.set(index, &[messages]) };
         Some(State {
             index,
             store,

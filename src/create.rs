@@ -1,4 +1,4 @@
-use std::{any::TypeId, sync::Arc};
+use std::{any::TypeId, intrinsics::transmute, mem::ManuallyDrop, ops::Deref, sync::Arc};
 
 use crate::{
     defer::{self, Defer, Resolve},
@@ -39,6 +39,10 @@ impl<M: Modify> Create<'_, M> {
     where
         M: Homogeneous,
     {
+        if modifies.len() == 0 {
+            return &[];
+        }
+
         let entities = self.reserve(modifies.len());
         let defer = Creation::Many(entities, modifies);
         if let Some(Creation::Many(entities, ..)) = self.defer.defer(defer) {
@@ -48,12 +52,16 @@ impl<M: Modify> Create<'_, M> {
         }
     }
 
-    pub fn create_clone<const N: usize>(&mut self, modify: M, count: usize) -> &[Entity]
+    pub fn create_clone(&mut self, modify: M, count: usize) -> &[Entity]
     where
         M: Clone,
     {
+        if count == 0 {
+            return &[];
+        }
+
         let entities = self.reserve(count);
-        let defer = Creation::Clone(entities.clone().into(), modify, Clone::clone);
+        let defer = Creation::Clone(entities.clone().into(), modify, M::clone);
         if let Some(Creation::Clone(entities, ..)) = self.defer.defer(defer) {
             &entities
         } else {
@@ -61,10 +69,14 @@ impl<M: Modify> Create<'_, M> {
         }
     }
 
-    pub fn create_default<const N: usize>(&mut self, count: usize) -> &[Entity]
+    pub fn create_default(&mut self, count: usize) -> &[Entity]
     where
         M: Default,
     {
+        if count == 0 {
+            return &[];
+        }
+
         let modify = Default::default();
         let entities = self.reserve(count);
         let defer = Creation::Clone(entities.clone().into(), modify, |_| Default::default());
@@ -126,18 +138,14 @@ impl<M: Modify> Depend for State<M> {
 }
 
 impl<M: Modify> Resolve for Creation<M> {
-    type State = (
-        entities::State,
-        Vec<(M::State, Arc<Store>, usize)>,
-        Vec<usize>,
-    );
+    type State = (entities::State, Vec<(M::State, Arc<Store>, usize)>);
 
     fn initialize(world: &mut World) -> Option<Self::State> {
         let entities = <Entities as Inject>::initialize((), world)?;
-        Some((entities, Vec::new(), Vec::new()))
+        Some((entities, Vec::new()))
     }
 
-    fn resolve(self, (entities, targets, indices): &mut Self::State, world: &mut World) {
+    fn resolve(self, (entities, targets): &mut Self::State, world: &mut World) {
         fn find<'a, M: Modify>(
             modify: &M,
             targets: &'a mut Vec<(M::State, Arc<Store>, usize)>,
@@ -161,80 +169,48 @@ impl<M: Modify> Resolve for Creation<M> {
             targets.get_mut(index)
         }
 
-        fn collect(
-            many: &[Entity],
-            indices: &mut Vec<usize>,
-            entities: &mut entities::State,
-        ) -> bool {
-            indices.clear();
-            for i in 0..many.len() {
-                if let Some(_) = entities.get_datum_mut(many[i]) {
-                    indices.push(i);
-                }
-            }
-            indices.len() > 0
-        }
-
-        fn initialize<M: Modify>(
-            count: usize,
-            provide: impl Fn(usize) -> (Entity, M),
-            target: &mut (M::State, Arc<Store>, usize),
-            entities: &mut entities::State,
-            world: &mut World,
-        ) {
-            let (state, store, target) = target;
-            let target = &mut world.segments[*target];
-            let index = target.reserve(count);
-            for i in 0..count {
-                let index = index + i;
-                let (entity, modify) = provide(i);
-                let datum = entities.get_datum_at_mut(entity.index as usize);
-                unsafe { store.set(index, entity) };
-                modify.modify(state, index);
-                datum.initialize(index as u32, target.index as u32);
-            }
-        }
-
+        // The entities can be assumed have not been destroyed since this operation has been enqueued before any other
+        // operation that could concern them.
         match self {
             Creation::One(entity, modify) => {
-                if let Some(datum) = entities.get_datum_mut(entity) {
-                    let target = find(&modify, targets, world);
-                    if let Some((state, store, target)) = target {
-                        let target = &mut world.segments[*target];
-                        let index = target.reserve(1);
-                        unsafe { store.set(index, entity) };
+                if let Some((state, store, target)) = find(&modify, targets, world) {
+                    let target = &mut world.segments[*target];
+                    let index = target.reserve(1);
+                    unsafe { store.set(index, &[entity]) };
+                    modify.modify(state, index);
+                    let datum = entities.get_datum_at_mut(entity.index as usize);
+                    datum.initialize(index as u32, target.index as u32);
+                }
+            }
+            Creation::Many(many, modifies) => {
+                let mut modifies: Box<[ManuallyDrop<M>]> = unsafe { transmute(modifies) };
+                let modify = modifies[0].deref();
+                if let Some((state, store, target)) = find(modify, targets, world) {
+                    let target = &mut world.segments[*target];
+                    let index = target.reserve(many.len());
+                    unsafe { store.set(index, &many) };
+
+                    for i in 0..many.len() {
+                        let entity = many[i];
+                        let modify = unsafe { ManuallyDrop::take(&mut modifies[i]) };
                         modify.modify(state, index);
+                        let datum = entities.get_datum_at_mut(entity.index as usize);
                         datum.initialize(index as u32, target.index as u32);
                     }
                 }
             }
-            Creation::Many(many, modifies) => {
-                if collect(&many, indices, entities) {
-                    let target = find(&modifies[indices[0]], targets, world);
-                    if let Some(target) = target {
-                        initialize(
-                            indices.len(),
-                            |i| unsafe {
-                                (many[indices[i]], modifies.as_ptr().add(indices[i]).read())
-                            },
-                            target,
-                            entities,
-                            world,
-                        );
-                    }
-                }
-            }
             Creation::Clone(many, modify, clone) => {
-                if collect(&many, indices, entities) {
-                    let target = find(&modify, targets, world);
-                    if let Some(target) = target {
-                        initialize(
-                            indices.len(),
-                            |i| (many[indices[i]], clone(&modify)),
-                            target,
-                            entities,
-                            world,
-                        );
+                if let Some((state, store, target)) = find(&modify, targets, world) {
+                    let target = &mut world.segments[*target];
+                    let index = target.reserve(many.len());
+                    unsafe { store.set(index, &many) };
+
+                    for i in 0..many.len() {
+                        let entity = many[i];
+                        let modify = clone(&modify);
+                        modify.modify(state, index);
+                        let datum = entities.get_datum_at_mut(entity.index as usize);
+                        datum.initialize(index as u32, target.index as u32);
                     }
                 }
             }

@@ -5,40 +5,61 @@ use crate::{
     depend::{Depend, Dependency},
     entities::{self, Entities},
     entity::Entity,
+    filter::Filter,
     inject::{Get, Inject},
     modify::Modify,
     segment::Move,
     world::World,
 };
-use std::{any::TypeId, collections::HashMap};
+use std::{any::TypeId, collections::HashMap, marker::PhantomData};
 
-pub struct Add<'a, M: Modify>(Defer<'a, Addition<M>>);
+pub struct Add<'a, M: Modify, F: Filter = ()>(Defer<'a, Addition<M, F>>);
 
-pub struct State<M: Modify> {
+pub struct State<M: Modify, F: Filter> {
     index: usize,
-    defer: defer::State<Addition<M>>,
+    defer: defer::State<Addition<M, F>>,
 }
 
-struct Addition<M: Modify>(Entity, M);
+enum Addition<M: Modify, F: Filter> {
+    /// Adds the components described by 'M' to the given entity.
+    One(Entity, M, PhantomData<F>),
+    /// Adds the components described by 'M' to all entities that correspond to the filter 'F'.
+    All(M, fn(&M) -> M),
+}
 
-impl<M: Modify> Add<'_, M> {
+impl<M: Modify, F: Filter> Add<'_, M, F> {
     #[inline]
     pub fn add(&mut self, entity: Entity, modify: M) {
-        self.0.defer(Addition(entity, modify));
+        self.0.defer(Addition::One(entity, modify, PhantomData));
+    }
+
+    #[inline]
+    pub fn add_all_clone(&mut self, modify: M)
+    where
+        M: Clone,
+    {
+        self.0.defer(Addition::All(modify, M::clone));
+    }
+
+    pub fn add_all_default(&mut self)
+    where
+        M: Default,
+    {
+        self.0.defer(Addition::All(M::default(), |_| M::default()));
     }
 }
 
-impl<M: Modify> Inject for Add<'_, M> {
+impl<M: Modify, F: Filter> Inject for Add<'_, M, F> {
     type Input = ();
-    type State = State<M>;
+    type State = State<M, F>;
 
     fn initialize(_: Self::Input, world: &mut World) -> Option<Self::State> {
-        let defer = <Defer<Addition<M>> as Inject>::initialize((), world)?;
+        let defer = <Defer<Addition<M, F>> as Inject>::initialize((), world)?;
         Some(State { index: 0, defer })
     }
 
     fn update(state: &mut Self::State, world: &mut World) {
-        <Defer<Addition<M>> as Inject>::update(&mut state.defer, world);
+        <Defer<Addition<M, F>> as Inject>::update(&mut state.defer, world);
         // TODO: Segments must be collected in advance to ensure the order of 'Add' when no resolution have occured.
         /*
         system1: [Add<Position>]
@@ -61,26 +82,27 @@ impl<M: Modify> Inject for Add<'_, M> {
             state.index += 1;
 
             // - check for entity store
-            if let Some(modify) = M::initialize(segment, world) {
+            if let Some(_) = M::initialize(segment, world) {
+                todo!()
                 // state.targets
             }
         }
     }
 
     fn resolve(state: &mut Self::State, world: &mut World) {
-        <Defer<Addition<M>> as Inject>::resolve(&mut state.defer, world);
+        <Defer<Addition<M, F>> as Inject>::resolve(&mut state.defer, world);
     }
 }
 
-impl<'a, M: Modify> Get<'a> for State<M> {
-    type Item = Add<'a, M>;
+impl<'a, M: Modify, F: Filter> Get<'a> for State<M, F> {
+    type Item = Add<'a, M, F>;
 
     fn get(&'a mut self, world: &'a World) -> Self::Item {
         Add(self.defer.get(world))
     }
 }
 
-impl<M: Modify> Depend for State<M> {
+impl<M: Modify, F: Filter> Depend for State<M, F> {
     fn depend(&self, world: &World) -> Vec<Dependency> {
         let mut dependencies = self.defer.depend(world);
         let (_, targets) = self.defer.as_ref();
@@ -91,7 +113,7 @@ impl<M: Modify> Depend for State<M> {
     }
 }
 
-impl<M: Modify> Resolve for Addition<M> {
+impl<M: Modify, F: Filter> Resolve for Addition<M, F> {
     type State = (entities::State, HashMap<usize, Vec<(M::State, Move)>>);
 
     fn initialize(world: &mut World) -> Option<Self::State> {
@@ -100,42 +122,54 @@ impl<M: Modify> Resolve for Addition<M> {
     }
 
     fn resolve(self, (entities, targets): &mut Self::State, world: &mut World) {
-        let Self(entity, modify) = self;
-        if let Some(datum) = entities.get_datum_mut(entity) {
-            let index = datum.index() as usize;
-            let source = datum.segment() as usize;
-            let targets = targets.entry(source).or_insert_with(|| {
-                let mut targets = Vec::new();
-                let source = &world.segments[source];
-                if let Some(state) = M::initialize(source, world) {
-                    targets.push((state, Move::new(source, source)));
-                }
-                targets
-            });
-            let target = targets
-                .iter()
-                .position(|pair| modify.validate(&pair.0))
-                .or_else(|| {
-                    let mut types = world.segments[source].types.clone();
-                    for meta in modify.dynamic_metas(world) {
-                        types.set(meta.index, true);
+        match self {
+            Addition::One(entity, modify, _) => {
+                if let Some(datum) = entities.get_datum_mut(entity) {
+                    let index = datum.index() as usize;
+                    let source = datum.segment() as usize;
+                    let targets = targets.entry(source).or_insert_with(|| {
+                        let mut targets = Vec::new();
+                        let source = &world.segments[source];
+                        if let Some(state) = Some(source)
+                            .filter(|segment| F::filter(segment, world))
+                            .and_then(|segment| M::initialize(segment, world))
+                        {
+                            targets.push((state, Move::new(source, source)));
+                        }
+                        targets
+                    });
+
+                    let target = targets
+                        .iter()
+                        .position(|pair| modify.validate(&pair.0))
+                        .or_else(|| {
+                            let mut types = world.segments[source].types.clone();
+                            for meta in modify.dynamic_metas(world) {
+                                types.set(meta.index, true);
+                            }
+
+                            let target = world.get_or_add_segment_by_types(&types, None).index;
+                            let state = Some(&world.segments[target])
+                                .filter(|segment| F::filter(segment, world))
+                                .and_then(|segment| M::initialize(segment, world))?;
+                            let indices = (source, target);
+                            let (source, target) = get_mut2(&mut world.segments, indices)?;
+                            let index = targets.len();
+                            targets.push((state, Move::new(source, target)));
+                            return Some(index);
+                        })
+                        .and_then(|index| targets.get_mut(index));
+
+                    if let Some(target) = target {
+                        if let Some(index) = target.1.apply(index, 1, world) {
+                            modify.modify(&mut target.0, index);
+                            datum.update(index as u32, target.1.target() as u32);
+                        }
                     }
-
-                    let target = world.get_or_add_segment_by_types(&types, None).index;
-                    let state = M::initialize(&world.segments[target], world)?;
-                    let indices = (source, target);
-                    let (source, target) = get_mut2(&mut world.segments, indices)?;
-                    let index = targets.len();
-                    targets.push((state, Move::new(source, target)));
-                    return Some(index);
-                })
-                .and_then(|index| targets.get_mut(index));
-
-            if let Some(target) = target {
-                if let Some(index) = target.1.apply(index, 1, world) {
-                    modify.modify(&mut target.0, index);
-                    datum.update(index as u32, target.1.target() as u32);
                 }
+            }
+            Addition::All(..) => {
+                todo!()
             }
         }
     }

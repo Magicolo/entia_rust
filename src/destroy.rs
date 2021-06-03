@@ -24,6 +24,13 @@ impl<F: Filter> Destroy<'_, F> {
     }
 
     #[inline]
+    pub fn destroy_many(&mut self, entities: &[Entity]) {
+        for &entity in entities {
+            self.destroy(entity);
+        }
+    }
+
+    #[inline]
     pub fn destroy_all(&mut self) {
         self.0.defer(Destruction::All(PhantomData));
     }
@@ -80,6 +87,7 @@ impl<F: Filter> Resolve for Destruction<F> {
 
         let entities = &mut state.entities;
         let query = state.inner.as_mut();
+
         match self {
             Destruction::One(entity) => {
                 if let Some(datum) = entities.get_datum_mut(entity) {

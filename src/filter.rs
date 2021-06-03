@@ -1,7 +1,17 @@
+use std::marker::PhantomData;
+
 use crate::{segment::Segment, world::World};
 
 pub trait Filter: Send + 'static {
     fn filter(segment: &Segment, world: &World) -> bool;
+}
+
+pub struct Not<F: Filter>(PhantomData<F>);
+
+impl<F: Filter> Filter for Not<F> {
+    fn filter(segment: &Segment, world: &World) -> bool {
+        !F::filter(segment, world)
+    }
 }
 
 macro_rules! filter {

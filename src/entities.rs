@@ -26,7 +26,7 @@ struct Inner {
 impl Resource for Inner {}
 
 impl Datum {
-    const FREED: u8 = 0;
+    const RELEASED: u8 = 0;
     const RESERVED: u8 = 1;
     const INITIALIZED: u8 = 2;
 
@@ -42,9 +42,19 @@ impl Datum {
 
     #[inline]
     pub fn reserve(&mut self, generation: u32) -> bool {
-        if self.state == Self::FREED {
+        if self.state == Self::RELEASED {
             self.generation = generation;
             self.state = Self::RESERVED;
+            true
+        } else {
+            false
+        }
+    }
+
+    #[inline]
+    pub fn release(&mut self) -> bool {
+        if self.state == Self::INITIALIZED {
+            self.state = Self::RELEASED;
             true
         } else {
             false
@@ -155,7 +165,7 @@ impl Inner {
     #[inline]
     pub fn release(&mut self, entities: &[Entity]) {
         for entity in entities {
-            self.data[entity.index as usize].state = 0;
+            self.data[entity.index as usize].release();
         }
         self.free.extend_from_slice(entities);
     }

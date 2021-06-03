@@ -2,7 +2,7 @@ use crate::core::bits::*;
 use crate::core::utility::*;
 use crate::world::*;
 use std::cell::UnsafeCell;
-use std::ptr::NonNull;
+use std::ptr::{copy_nonoverlapping, NonNull};
 use std::slice::from_raw_parts_mut;
 use std::sync::Arc;
 use std::usize;
@@ -120,21 +120,26 @@ impl Store {
         );
     }
 
+    /// SAFETY: The 'count' must be within the bounds of the store.
     #[inline]
     pub unsafe fn get<T>(&self, count: usize) -> &mut [T] {
         from_raw_parts_mut(self.data().cast().as_ptr(), count)
     }
 
+    /// SAFETY: The 'items' reference must not point into 'self' (ex: through usage of 'self.get(usize)').
+    #[inline]
+    pub unsafe fn set<T>(&self, index: usize, items: &[T]) {
+        let pointer = self.data().cast::<T>().as_ptr().add(index);
+        copy_nonoverlapping(items.as_ptr(), pointer, items.len());
+    }
+
+    /// SAFETY: The 'index' must be within the bounds of the store.
     #[inline]
     pub unsafe fn at<T>(&self, index: usize) -> &mut T {
         &mut *self.data().cast::<T>().as_ptr().add(index)
     }
 
-    #[inline]
-    pub unsafe fn set<T>(&self, index: usize, item: T) {
-        self.data().cast::<T>().as_ptr().add(index).write(item);
-    }
-
+    /// SAFETY: Both the 'source' and 'target' indices must be within the bounds of the store.
     #[inline]
     pub unsafe fn squash(&self, source: usize, target: usize) {
         let data = *self.data();

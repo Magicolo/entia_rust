@@ -51,7 +51,7 @@ pub(crate) fn initialize<T: Send + 'static>(
     let store = segment.store(&meta)?;
     if segment.count == 0 {
         let index = segment.reserve(1);
-        unsafe { store.set(index, provide()) };
+        unsafe { store.set(index, &[provide()]) };
     }
     Some((store, segment.index))
 }

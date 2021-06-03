@@ -44,12 +44,15 @@ struct Inner {
 
 impl Resource for Inner {}
 
+#[allow(type_alias_bounds)]
+type Pair<R: Resolve> = (VecDeque<R>, R::State);
+
 impl Resolver {
     pub fn new<R: Resolve>(state: R::State) -> Self {
         Resolver {
             state: Box::new((VecDeque::<R>::new(), state)),
             resolve: |state, world| {
-                if let Some((store, state)) = state.downcast_mut::<(VecDeque<R>, R::State)>() {
+                if let Some((store, state)) = state.downcast_mut::<Pair<R>>() {
                     if let Some(resolve) = store.pop_front() {
                         resolve.resolve(state, world);
                         return true;
@@ -72,12 +75,12 @@ impl Resolver {
     }
 
     #[inline]
-    pub fn state_ref<R: Resolve>(&self) -> Option<&(VecDeque<R>, R::State)> {
+    pub fn state_ref<R: Resolve>(&self) -> Option<&Pair<R>> {
         self.state.downcast_ref()
     }
 
     #[inline]
-    pub fn state_mut<R: Resolve>(&mut self) -> Option<&mut (VecDeque<R>, R::State)> {
+    pub fn state_mut<R: Resolve>(&mut self) -> Option<&mut Pair<R>> {
         self.state.downcast_mut()
     }
 }
