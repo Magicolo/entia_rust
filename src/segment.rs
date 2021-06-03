@@ -1,25 +1,27 @@
 use crate::core::bits::*;
 use crate::core::utility::*;
 use crate::world::*;
+use std::cell::UnsafeCell;
 use std::ptr::NonNull;
+use std::slice::from_raw_parts_mut;
 use std::sync::Arc;
 use std::usize;
 
-pub struct Store(Arc<Meta>, NonNull<()>);
+pub struct Store(Meta, UnsafeCell<NonNull<()>>);
 
 pub struct Segment {
     pub(crate) index: usize,
     pub(crate) count: usize,
     pub(crate) capacity: usize,
     pub(crate) types: Bits,
-    pub(crate) stores: Box<[Store]>,
+    pub(crate) stores: Box<[Arc<Store>]>,
 }
 
 pub struct Move {
     source: usize,
     target: usize,
-    to_copy: Vec<(Store, Store)>,
-    to_drop: Vec<Store>,
+    to_copy: Vec<(Arc<Store>, Arc<Store>)>,
+    to_drop: Vec<Arc<Store>>,
 }
 
 unsafe impl Sync for Store {}
@@ -34,7 +36,7 @@ impl Segment {
     ) -> Self {
         let stores = metas
             .into_iter()
-            .map(|meta| Store::new(meta.clone(), capacity))
+            .map(|meta| Store::new(meta.as_ref().clone(), capacity).into())
             .collect();
         Self {
             index,
@@ -65,16 +67,16 @@ impl Segment {
 
     pub fn clear(&mut self) {
         for store in self.stores.iter_mut() {
-            unsafe { store.drop(0, self.count) };
+            unsafe { store.as_ref().drop(0, self.count) };
         }
         self.count = 0;
     }
 
-    pub fn store(&self, meta: &Meta) -> Option<&Store> {
+    pub fn store(&self, meta: &Meta) -> Option<Arc<Store>> {
         if self.types.has(meta.index) {
             for store in self.stores.iter() {
                 if store.0.identifier == meta.identifier && store.0.index == meta.index {
-                    return Some(store);
+                    return Some(store.clone());
                 }
             }
         }
@@ -92,10 +94,11 @@ impl Segment {
         if self.capacity <= capacity {
             false
         } else {
-            self.capacity = next_power_of_2(capacity as u32) as usize;
-            for store in self.stores.iter_mut() {
-                unsafe { store.resize(self.count, self.capacity) };
+            let capacity = next_power_of_2(capacity as u32) as usize;
+            for store in self.stores.iter() {
+                unsafe { store.resize(self.count, self.capacity, capacity) };
             }
+            self.capacity = capacity;
             true
         }
     }
@@ -103,51 +106,59 @@ impl Segment {
 
 impl Store {
     #[inline]
-    pub fn new(meta: Arc<Meta>, capacity: usize) -> Self {
+    pub fn new(meta: Meta, capacity: usize) -> Self {
         let data = (meta.allocate)(capacity);
-        Self(meta, data)
+        Self(meta, data.into())
     }
 
     #[inline]
     pub unsafe fn copy(source: (&Store, usize), target: (&Store, usize), count: usize) {
-        (source.0 .0.copy)((source.0 .1, source.1), (target.0 .1, target.1), count);
+        (source.0 .0.copy)(
+            (*source.0.data(), source.1),
+            (*target.0.data(), target.1),
+            count,
+        );
     }
 
     #[inline]
-    pub unsafe fn get<T>(&mut self) -> *mut T {
-        self.1.cast().as_ptr()
+    pub unsafe fn get<T>(&self, count: usize) -> &mut [T] {
+        from_raw_parts_mut(self.data().cast().as_ptr(), count)
     }
 
     #[inline]
     pub unsafe fn at<T>(&self, index: usize) -> &mut T {
-        &mut *self.1.cast::<T>().as_ptr().add(index)
+        &mut *self.data().cast::<T>().as_ptr().add(index)
     }
 
     #[inline]
-    pub unsafe fn set<T>(&mut self, index: usize, item: T) {
-        self.1.cast::<T>().as_ptr().add(index).write(item);
+    pub unsafe fn set<T>(&self, index: usize, item: T) {
+        self.data().cast::<T>().as_ptr().add(index).write(item);
     }
 
     #[inline]
-    pub unsafe fn squash(&mut self, source: usize, target: usize) {
-        (self.0.drop)(self.1, target, 1);
-        (self.0.copy)((self.1, source), (self.1, target), 1);
+    pub unsafe fn squash(&self, source: usize, target: usize) {
+        let data = *self.data();
+        (self.0.drop)(data, target, 1);
+        (self.0.copy)((data, source), (data, target), 1);
     }
 
     #[inline]
-    pub unsafe fn resize(&mut self, count: usize, capacity: usize) {
-        let store = (self.0.allocate)(capacity);
-        (self.0.copy)((self.1, 0), (store, 0), count);
-        self.1 = store;
+    pub unsafe fn resize(&self, count: usize, old: usize, new: usize) {
+        let data = self.data();
+        let new = (self.0.allocate)(new);
+        (self.0.copy)((*data, 0), (new, 0), count);
+        (self.0.free)(*data, old);
+        *data = new;
     }
 
     #[inline]
-    pub unsafe fn drop(&mut self, index: usize, count: usize) {
-        (self.0.drop)(self.1, index, count);
+    pub unsafe fn drop(&self, index: usize, count: usize) {
+        (self.0.drop)(*self.data(), index, count);
     }
 
-    pub unsafe fn clone(&self) -> Self {
-        Self(self.0.clone(), self.1)
+    #[inline]
+    unsafe fn data(&self) -> &mut NonNull<()> {
+        &mut *self.1.get()
     }
 }
 
@@ -165,9 +176,9 @@ impl Move {
             let mut to_drop = Vec::new();
             for source in source.stores.iter() {
                 if let Some(target) = target.store(&source.0) {
-                    to_copy.push(unsafe { (source.clone(), target.clone()) });
+                    to_copy.push((source.clone(), target));
                 } else {
-                    to_drop.push(unsafe { source.clone() })
+                    to_drop.push(source.clone())
                 }
             }
             Move {
@@ -193,7 +204,7 @@ impl Move {
             }
 
             for store in self.to_drop.iter_mut() {
-                unsafe { store.drop(source_index, 1) };
+                unsafe { store.as_ref().drop(source_index, 1) };
             }
             Some(target_index)
         } else {

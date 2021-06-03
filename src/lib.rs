@@ -120,21 +120,7 @@ mod test {
     impl Message for OnKill {}
 
     #[test]
-    fn create_entity() {
-        let mut world = World::new();
-        let mut runner = world
-            .scheduler()
-            .schedule(|mut create: Create<()>| {
-                let entity = create.create(());
-                println!("{:?}", entity);
-            })
-            .runner()
-            .unwrap();
-        runner.run(&mut world);
-    }
-
-    // #[test]
-    fn _test() {
+    fn test() {
         fn physics(scheduler: Scheduler) -> Scheduler {
             scheduler.schedule(|_: ((), ())| {})
         }

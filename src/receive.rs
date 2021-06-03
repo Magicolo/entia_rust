@@ -1,4 +1,4 @@
-use std::{any::TypeId, collections::VecDeque, marker::PhantomData};
+use std::{any::TypeId, collections::VecDeque, marker::PhantomData, sync::Arc};
 
 use crate::{
     depend::{Depend, Dependency},
@@ -11,7 +11,7 @@ use crate::{
 pub struct Receive<'a, M: Message>(&'a mut Messages<M>);
 pub struct State<M: Message> {
     index: usize,
-    store: Store,
+    store: Arc<Store>,
     segment: usize,
     _marker: PhantomData<M>,
 }
@@ -32,7 +32,7 @@ impl<M: Message> Inject for Receive<'_, M> {
     fn initialize(input: Self::Input, world: &mut World) -> Option<Self::State> {
         let meta = world.get_or_add_meta::<M>();
         let segment = world.add_segment_from_metas(vec![meta.clone()], 8);
-        let mut store = unsafe { segment.store(&meta)?.clone() };
+        let store = segment.store(&meta)?;
         let index = segment.reserve(1);
         let messages = Messages::<M> {
             messages: VecDeque::new(),

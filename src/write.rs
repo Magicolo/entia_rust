@@ -1,4 +1,4 @@
-use std::{any::TypeId, marker::PhantomData};
+use std::{any::TypeId, marker::PhantomData, sync::Arc};
 
 use crate::{
     component::Component,
@@ -11,8 +11,8 @@ use crate::{
     world::World,
 };
 
-pub struct Write<T>(Store, PhantomData<T>);
-pub struct State<T>(Store, usize, PhantomData<T>);
+pub struct Write<T>(Arc<Store>, PhantomData<T>);
+pub struct State<T>(Arc<Store>, usize, PhantomData<T>);
 
 impl<R: Resource> Inject for Write<R> {
     type Input = Option<R>;
@@ -38,7 +38,7 @@ impl<C: Component> Item for Write<C> {
 
     fn initialize(segment: &Segment, world: &World) -> Option<Self::State> {
         let meta = world.get_meta::<C>()?;
-        let store = unsafe { segment.store(&meta)?.clone() };
+        let store = segment.store(&meta)?;
         Some(State(store, segment.index, PhantomData))
     }
 }
@@ -61,7 +61,7 @@ impl<T: 'static> Depend for State<T> {
 impl<'a, R: Resource> From<&'a mut State<R>> for Write<R> {
     #[inline]
     fn from(state: &'a mut State<R>) -> Self {
-        Write(unsafe { state.0.clone() }, PhantomData)
+        Write(state.0.clone(), PhantomData)
     }
 }
 

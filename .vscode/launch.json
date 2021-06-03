@@ -60,6 +60,43 @@
             },
             "args": [],
             "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'entia'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=entia",
+                    "--package=entia"
+                ],
+                "filter": {
+                    "name": "entia",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'entia'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=entia",
+                    "--package=entia"
+                ],
+                "filter": {
+                    "name": "entia",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
         }
     ]
 }

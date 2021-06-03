@@ -1,4 +1,4 @@
-use std::any::TypeId;
+use std::{any::TypeId, sync::Arc};
 
 use crate::{
     defer::{self, Defer, Resolve},
@@ -126,7 +126,11 @@ impl<M: Modify> Depend for State<M> {
 }
 
 impl<M: Modify> Resolve for Creation<M> {
-    type State = (entities::State, Vec<(M::State, Store, usize)>, Vec<usize>);
+    type State = (
+        entities::State,
+        Vec<(M::State, Arc<Store>, usize)>,
+        Vec<usize>,
+    );
 
     fn initialize(world: &mut World) -> Option<Self::State> {
         let entities = <Entities as Inject>::initialize((), world)?;
@@ -136,9 +140,9 @@ impl<M: Modify> Resolve for Creation<M> {
     fn resolve(self, (entities, targets, indices): &mut Self::State, world: &mut World) {
         fn find<'a, M: Modify>(
             modify: &M,
-            targets: &'a mut Vec<(M::State, Store, usize)>,
+            targets: &'a mut Vec<(M::State, Arc<Store>, usize)>,
             world: &mut World,
-        ) -> Option<&'a mut (M::State, Store, usize)> {
+        ) -> Option<&'a mut (M::State, Arc<Store>, usize)> {
             let index = targets
                 .iter()
                 .position(|pair| modify.validate(&pair.0))
@@ -148,7 +152,7 @@ impl<M: Modify> Resolve for Creation<M> {
                     metas.append(&mut modify.dynamic_metas(world));
                     let target = world.get_or_add_segment_by_metas(metas, None).index;
                     let target = &world.segments[target];
-                    let entities = unsafe { target.store(&meta)?.clone() };
+                    let entities = target.store(&meta)?;
                     let state = M::initialize(target, world)?;
                     let index = targets.len();
                     targets.push((state, entities, target.index));
@@ -174,7 +178,7 @@ impl<M: Modify> Resolve for Creation<M> {
         fn initialize<M: Modify>(
             count: usize,
             provide: impl Fn(usize) -> (Entity, M),
-            target: &mut (M::State, Store, usize),
+            target: &mut (M::State, Arc<Store>, usize),
             entities: &mut entities::State,
             world: &mut World,
         ) {

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::inject::*;
 use crate::read::*;
 use crate::segment::Store;
@@ -43,10 +45,10 @@ impl<R: Resource> Inject for &mut R {
 pub(crate) fn initialize<T: Send + 'static>(
     provide: impl FnOnce() -> T,
     world: &mut World,
-) -> Option<(Store, usize)> {
+) -> Option<(Arc<Store>, usize)> {
     let meta = world.get_or_add_meta::<T>();
     let segment = world.get_or_add_segment_by_metas(vec![meta.clone()], Some(1));
-    let mut store = unsafe { segment.store(&meta)?.clone() };
+    let store = segment.store(&meta)?;
     if segment.count == 0 {
         let index = segment.reserve(1);
         unsafe { store.set(index, provide()) };

@@ -37,6 +37,7 @@ pub(crate) struct Inner<I: Item, F: Filter> {
 }
 
 impl<I: Item + 'static, F: Filter> Resource for Inner<I, F> {}
+
 impl<I: Item, F: Filter> Default for Inner<I, F> {
     fn default() -> Self {
         Self {
@@ -48,8 +49,9 @@ impl<I: Item, F: Filter> Default for Inner<I, F> {
     }
 }
 
-impl<I: Item, F: Filter> Query<'_, I, F> {
-    pub fn each<E: FnMut(<I::State as At<'_>>::Item)>(&self, mut each: E) {
+impl<'a, I: Item, F: Filter> Query<'a, I, F> {
+    #[inline]
+    pub fn each(&'a self, mut each: impl FnMut(<I::State as At<'a>>::Item)) {
         for (state, _, count) in &self.inner.states {
             let count = *count;
             for i in 0..count {

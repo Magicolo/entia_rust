@@ -1,8 +1,11 @@
 use entia_core::bits::Bits;
+use std::any::type_name;
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::mem::ManuallyDrop;
 use std::ptr::copy;
+use std::ptr::drop_in_place;
+use std::ptr::slice_from_raw_parts_mut;
 use std::ptr::NonNull;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
@@ -18,8 +21,10 @@ use crate::{
 #[derive(Clone)]
 pub struct Meta {
     pub(crate) identifier: TypeId,
+    pub(crate) name: &'static str,
     pub(crate) index: usize,
     pub(crate) allocate: fn(usize) -> NonNull<()>,
+    pub(crate) free: fn(NonNull<()>, usize),
     pub(crate) copy: fn((NonNull<()>, usize), (NonNull<()>, usize), usize),
     pub(crate) drop: fn(NonNull<()>, usize, usize),
 }
@@ -84,10 +89,14 @@ impl World {
                 let index = self.metas.len();
                 let meta = Arc::new(Meta {
                     identifier: key.clone(),
+                    name: type_name::<T>(),
                     index,
-                    allocate: |count| unsafe {
-                        let mut store = ManuallyDrop::new(Vec::<T>::with_capacity(count));
-                        NonNull::new_unchecked(store.as_mut_ptr()).cast()
+                    allocate: |capacity| unsafe {
+                        let mut data = ManuallyDrop::new(Vec::<T>::with_capacity(capacity));
+                        NonNull::new_unchecked(data.as_mut_ptr()).cast()
+                    },
+                    free: |pointer, capacity| unsafe {
+                        Vec::from_raw_parts(pointer.cast::<T>().as_ptr(), 0, capacity);
                     },
                     copy: |source, target, count| unsafe {
                         let source = source.0.cast::<T>().as_ptr().add(source.1);
@@ -95,10 +104,8 @@ impl World {
                         copy(source, target, count);
                     },
                     drop: |pointer, index, count| unsafe {
-                        let pointer = pointer.cast::<T>().as_ptr();
-                        for i in index..index + count {
-                            drop(pointer.add(i).read());
-                        }
+                        let pointer = pointer.cast::<T>().as_ptr().add(index);
+                        drop_in_place(slice_from_raw_parts_mut(pointer, count));
                     },
                 });
                 self.metas.push(meta.clone());
@@ -180,8 +187,9 @@ impl World {
         capacity: usize,
     ) -> &mut Segment {
         let index = self.segments.len();
-        self.segments
-            .push(Segment::new(index, types, metas, capacity));
+        let segment = Segment::new(index, types.clone(), metas, capacity);
+        self.segments.push(segment);
+        self.bits_to_segment.insert(types, index);
         &mut self.segments[index]
     }
 }

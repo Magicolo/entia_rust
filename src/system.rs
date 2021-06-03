@@ -42,7 +42,9 @@ impl Runner {
         }
 
         for block in self.blocks.iter_mut() {
-            block.iter_mut().for_each(|system| (system.update)(world));
+            for system in block.iter_mut() {
+                (system.update)(world);
+            }
 
             // If segments have been added to the world, this may mean that the dependencies used to schedule the systems
             // are not be up to date, therefore it is not safe to run the systems in parallel.
@@ -50,10 +52,14 @@ impl Runner {
                 use rayon::prelude::*;
                 block.par_iter_mut().for_each(|system| (system.run)(world));
             } else {
-                block.iter_mut().for_each(|system| (system.run)(world));
+                for system in block.iter_mut() {
+                    (system.run)(world);
+                }
             }
 
-            block.iter_mut().for_each(|system| (system.resolve)(world));
+            for system in block.iter_mut() {
+                (system.resolve)(world);
+            }
         }
     }
 
@@ -103,9 +109,12 @@ impl Runner {
         for mut system in systems {
             (system.update)(world);
             let dependencies = (system.depend)(world);
-            if Self::conflicts(&dependencies, &mut reads, &mut writes, &mut adds) {
-                return None;
-            }
+            // TODO: Detect inner conflicts.
+            // - Detection should differ from 'Self::conflicts' since inner conflicts have slightly different rules:
+            //      - ex: 'Unknown' is valid
+            // if Self::conflicts(&dependencies, &mut reads, &mut writes, &mut adds) {
+            //     return None;
+            // }
             reads.clear();
             writes.clear();
             adds.clear();

@@ -7,7 +7,7 @@ use crate::{
     query::{self, Query},
     world::World,
 };
-use std::{any::TypeId, marker::PhantomData, slice::from_raw_parts};
+use std::{any::TypeId, marker::PhantomData};
 
 pub struct Destroy<'a, F: Filter = ()>(Defer<'a, Destruction<F>>);
 pub struct State<F: Filter>(defer::State<Destruction<F>>);
@@ -39,12 +39,10 @@ impl<F: Filter> Inject for Destroy<'_, F> {
     }
 
     fn update(State(state): &mut Self::State, world: &mut World) {
-        <Query<Entity, F> as Inject>::update(state.as_mut(), world);
         <Defer<Destruction<F>> as Inject>::update(state, world);
     }
 
     fn resolve(State(state): &mut Self::State, world: &mut World) {
-        <Query<Entity, F> as Inject>::resolve(state.as_mut(), world);
         <Defer<Destruction<F>> as Inject>::resolve(state, world);
     }
 }
@@ -77,6 +75,9 @@ impl<F: Filter> Resolve for Destruction<F> {
     }
 
     fn resolve(self, state: &mut Self::State, world: &mut World) {
+        <Query<Entity, F> as Inject>::update(state, world);
+        <Query<Entity, F> as Inject>::resolve(state, world);
+
         let entities = &mut state.entities;
         let query = state.inner.as_mut();
         match self {
@@ -91,11 +92,11 @@ impl<F: Filter> Resolve for Destruction<F> {
                 }
             }
             Destruction::All(_) => {
-                for (item, segment, count) in query.states.iter_mut() {
-                    let count = *count;
-                    if count > 0 {
-                        entities.release(&unsafe { from_raw_parts(item.0.get(), count) });
-                        world.segments[*segment].clear();
+                for (item, segment, _) in query.states.iter_mut() {
+                    let segment = &mut world.segments[*segment];
+                    if segment.count > 0 {
+                        entities.release(unsafe { item.0.get(segment.count) });
+                        segment.clear();
                     }
                 }
             }

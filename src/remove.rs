@@ -12,7 +12,7 @@ use crate::{
     segment::{Move, Segment},
     world::World,
 };
-use std::{any::TypeId, marker::PhantomData};
+use std::{any::TypeId, marker::PhantomData, sync::Arc};
 
 pub struct Remove<'a, M: Modify, F: Filter = ()>(Defer<'a, Removal<M, F>>);
 pub struct State<M: Modify, F: Filter>(defer::State<Removal<M, F>>);
@@ -20,7 +20,7 @@ pub struct State<M: Modify, F: Filter>(defer::State<Removal<M, F>>);
 enum Target {
     Invalid,
     Pending(Bits),
-    Valid(Store, Move),
+    Valid(Arc<Store>, Move),
 }
 
 enum Removal<M: Modify, F: Filter> {
@@ -119,7 +119,7 @@ impl<M: Modify, F: Filter> Resolve for Removal<M, F> {
             } else {
                 world.get_segment_by_types(types)?
             };
-            let store = unsafe { target.store(&meta)?.clone() };
+            let store = target.store(&meta)?;
             let target = target.index;
             let (source, target) = get_mut2(&mut world.segments, (source, target))?;
             Some(Target::Valid(store, Move::new(source, target)))

@@ -68,7 +68,7 @@ impl Resolver {
 
     #[inline]
     pub fn resolve(&mut self, world: &mut World) -> bool {
-        (self.resolve)(&mut self.state, world)
+        (self.resolve)(self.state.as_mut(), world)
     }
 
     #[inline]

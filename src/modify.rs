@@ -2,8 +2,10 @@ use std::sync::Arc;
 
 use crate::{
     component::Component,
-    segment::{Segment, Store},
+    item::{At, Item},
+    segment::Segment,
     world::{Meta, World},
+    write::Write,
 };
 
 pub trait Modify: Send + 'static {
@@ -18,12 +20,10 @@ pub trait Modify: Send + 'static {
 pub trait Homogeneous {}
 
 impl<C: Component> Modify for C {
-    type State = (Store, usize);
+    type State = <Write<C> as Item>::State;
 
     fn initialize(segment: &Segment, world: &World) -> Option<Self::State> {
-        let meta = world.get_meta::<C>()?;
-        let store = unsafe { segment.store(&meta)?.clone() };
-        Some((store, segment.index))
+        <Write<C> as Item>::initialize(segment, world)
     }
 
     fn static_metas(world: &mut World) -> Vec<Arc<Meta>> {
@@ -40,8 +40,9 @@ impl<C: Component> Modify for C {
     }
 
     #[inline]
-    fn modify(self, (store, _): &mut Self::State, index: usize) {
-        unsafe { store.set(index, self) };
+    fn modify(self, state: &mut Self::State, index: usize) {
+        // TODO: This will explode when initializing the store at 'index' since rust will free invalid memory.
+        *state.at(index) = self;
     }
 }
 

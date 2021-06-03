@@ -3,13 +3,14 @@ use crate::world::*;
 use crate::{depend::Dependency, segment::*};
 use crate::{filter::Filter, item::*};
 use std::any::TypeId;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Entity {
     pub(crate) index: u32,
     pub(crate) generation: u32,
 }
-pub struct State(pub(crate) Store, usize);
+pub struct State(pub(crate) Arc<Store>, usize);
 
 impl Entity {
     pub const ZERO: Self = Self {
@@ -40,7 +41,7 @@ impl Item for Entity {
 
     fn initialize(segment: &Segment, world: &World) -> Option<Self::State> {
         let meta = world.get_meta::<Entity>()?;
-        let store = unsafe { segment.store(&meta)?.clone() };
+        let store = segment.store(&meta)?;
         Some(State(store, segment.index))
     }
 }
