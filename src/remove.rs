@@ -6,7 +6,7 @@ use crate::{
     entities::{self, Datum, Entities},
     entity::Entity,
     filter::Filter,
-    inject::{Get, Inject},
+    inject::{Context, Get, Inject},
     modify::Modify,
     segment::Store,
     segment::{Move, Segment},
@@ -50,8 +50,10 @@ impl<M: Modify, F: Filter> Inject for Remove<'_, M, F> {
     type Input = ();
     type State = State<M, F>;
 
-    fn initialize(_: Self::Input, world: &mut World) -> Option<Self::State> {
-        let defer = <Defer<Removal<M, F>> as Inject>::initialize((), world)?;
+    fn initialize(_: Self::Input, context: &Context, world: &mut World) -> Option<Self::State> {
+        let entities = <Entities as Inject>::initialize((), context, world)?;
+        let input = (entities, Vec::new());
+        let defer = <Defer<Removal<M, F>> as Inject>::initialize(input, context, world)?;
         Some(State(defer))
     }
 
@@ -92,11 +94,6 @@ impl<M: Modify, F: Filter> Depend for State<M, F> {
 
 impl<M: Modify, F: Filter> Resolve for Removal<M, F> {
     type State = (entities::State, Vec<Target>);
-
-    fn initialize(world: &mut World) -> Option<Self::State> {
-        let entities = <Entities as Inject>::initialize((), world)?;
-        Some((entities, Vec::new()))
-    }
 
     fn resolve(self, (entities, targets): &mut Self::State, world: &mut World) {
         fn validate<M: Modify, F: Filter>(

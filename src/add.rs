@@ -6,7 +6,7 @@ use crate::{
     entities::{self, Entities},
     entity::Entity,
     filter::Filter,
-    inject::{Get, Inject},
+    inject::{Context, Get, Inject},
     modify::Modify,
     segment::Move,
     world::World,
@@ -53,8 +53,10 @@ impl<M: Modify, F: Filter> Inject for Add<'_, M, F> {
     type Input = ();
     type State = State<M, F>;
 
-    fn initialize(_: Self::Input, world: &mut World) -> Option<Self::State> {
-        let defer = <Defer<Addition<M, F>> as Inject>::initialize((), world)?;
+    fn initialize(_: Self::Input, context: &Context, world: &mut World) -> Option<Self::State> {
+        let entities = <Entities as Inject>::initialize((), context, world)?;
+        let input = (entities, HashMap::new());
+        let defer = <Defer<Addition<M, F>> as Inject>::initialize(input, context, world)?;
         Some(State { index: 0, defer })
     }
 
@@ -115,11 +117,6 @@ impl<M: Modify, F: Filter> Depend for State<M, F> {
 
 impl<M: Modify, F: Filter> Resolve for Addition<M, F> {
     type State = (entities::State, HashMap<usize, Vec<(M::State, Move)>>);
-
-    fn initialize(world: &mut World) -> Option<Self::State> {
-        let entities = <Entities as Inject>::initialize((), world)?;
-        Some((entities, HashMap::new()))
-    }
 
     fn resolve(self, (entities, targets): &mut Self::State, world: &mut World) {
         match self {

@@ -1,6 +1,6 @@
 use crate::{
     depend::{Depend, Dependency},
-    inject::{Get, Inject},
+    inject::{Context, Get, Inject},
     message::{Message, Messages},
     query::{self, Query},
     world::World,
@@ -28,8 +28,9 @@ impl<'a, M: Message> Inject for Emit<'a, M> {
     type Input = ();
     type State = State<M>;
 
-    fn initialize(_: Self::Input, world: &mut World) -> Option<Self::State> {
-        <Query<'a, Write<Messages<M>>> as Inject>::initialize((), world).map(|state| State(state))
+    fn initialize(_: Self::Input, context: &Context, world: &mut World) -> Option<Self::State> {
+        let query = <Query<'a, Write<Messages<M>>> as Inject>::initialize((), context, world)?;
+        Some(State(query))
     }
 
     #[inline]

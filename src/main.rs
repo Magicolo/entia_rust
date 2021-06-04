@@ -41,6 +41,20 @@ Note that the 'Resolver' can be shared such that the 'Resolve::State' is not use
 
 - Find a way to definitely know which segments overlap between deferred operations and 'Read/Write'. Otherwise,
 the deferred operations should have a 'Defer(Entity)' dependency on all segments.
+
+- Allow to declare a segment as 'Static or Dynamic'. 'Static' segment contain entities that will never change their structure
+while 'Dynamic' segments will allow entities to move to another segment. This would allow to allocate/deallocate batches of
+static entities (such as particles) since 'Static' segments guarantee that the indices of the batch will still be valid at
+deallocation time.
+    - Should static entities have a different type? Otherwise, it means that a component 'add' could fail.
+    - Perhaps, only the batch allocation/deallocation mechanism could use static segments?
+    - Should static entities be queried differently than dynamic ones? 'Group<(Entity, And<Static>)>'?
+
+- Find a better name for 'Modify'.
+- Find a way to make 'Component', 'Resource' and 'Message' implementations exclusive.
+- #[derive(Inject/Item/Modify/Filter)] macros that implements the corresponding trait for structs that hold only
+fields that implement it.
+- #[derive(Component/Resource/Message)] macros that implement the corresponding trait for structs.
 */
 
 fn main() {

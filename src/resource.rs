@@ -12,8 +12,8 @@ impl<R: Resource> Inject for &R {
     type Input = <Read<R> as Inject>::Input;
     type State = <Read<R> as Inject>::State;
 
-    fn initialize(input: Self::Input, world: &mut World) -> Option<Self::State> {
-        <Read<R> as Inject>::initialize(input, world)
+    fn initialize(input: Self::Input, context: &Context, world: &mut World) -> Option<Self::State> {
+        <Read<R> as Inject>::initialize(input, context, world)
     }
 
     fn update(state: &mut Self::State, world: &mut World) {
@@ -29,8 +29,8 @@ impl<R: Resource> Inject for &mut R {
     type Input = <Write<R> as Inject>::Input;
     type State = <Write<R> as Inject>::State;
 
-    fn initialize(input: Self::Input, world: &mut World) -> Option<Self::State> {
-        <Write<R> as Inject>::initialize(input, world)
+    fn initialize(input: Self::Input, context: &Context, world: &mut World) -> Option<Self::State> {
+        <Write<R> as Inject>::initialize(input, context, world)
     }
 
     fn update(state: &mut Self::State, world: &mut World) {

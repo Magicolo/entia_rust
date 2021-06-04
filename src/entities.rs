@@ -1,7 +1,7 @@
 use crate::{
     depend::{Depend, Dependency},
     entity::Entity,
-    inject::{Get, Inject},
+    inject::{Context, Get, Inject},
     resource::Resource,
     world::World,
     write::{self, Write},
@@ -194,8 +194,9 @@ impl Inject for Entities<'_> {
     type Input = ();
     type State = State;
 
-    fn initialize(_: Self::Input, world: &mut World) -> Option<Self::State> {
-        <Write<Inner> as Inject>::initialize(None, world).map(|state| State(state))
+    fn initialize(_: Self::Input, context: &Context, world: &mut World) -> Option<Self::State> {
+        let inner = <Write<Inner> as Inject>::initialize(None, context, world)?;
+        Some(State(inner))
     }
 }
 

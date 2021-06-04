@@ -1,12 +1,12 @@
 use std::{
-    any::{Any, TypeId},
+    any::Any,
     collections::{HashMap, VecDeque},
     marker::PhantomData,
 };
 
 use crate::{
     depend::{Depend, Dependency},
-    inject::{Get, Inject},
+    inject::{Context, Get, Inject},
     resource::Resource,
     world::World,
     write::{self, Write},
@@ -26,7 +26,6 @@ pub struct State<R: Resolve> {
 
 pub trait Resolve: Send + 'static {
     type State: Send;
-    fn initialize(world: &mut World) -> Option<Self::State>;
     fn resolve(self, state: &mut Self::State, world: &mut World);
 }
 
@@ -39,7 +38,7 @@ struct Resolver {
 struct Inner {
     defer: Vec<usize>,
     resolvers: Vec<Resolver>,
-    indices: HashMap<TypeId, usize>,
+    indices: HashMap<usize, usize>,
 }
 
 impl Resource for Inner {}
@@ -95,21 +94,19 @@ impl<R: Resolve> Defer<'_, R> {
 }
 
 impl<R: Resolve> Inject for Defer<'_, R> {
-    type Input = ();
+    type Input = R::State;
     type State = State<R>;
 
-    fn initialize(_: Self::Input, world: &mut World) -> Option<Self::State> {
-        let mut inner = <Write<Inner> as Inject>::initialize(None, world)?;
-        let key = TypeId::of::<R>();
+    fn initialize(input: Self::Input, context: &Context, world: &mut World) -> Option<Self::State> {
+        let mut inner = <Write<Inner> as Inject>::initialize(None, context, world)?;
         let index = {
             let inner = inner.as_mut();
-            match inner.indices.get(&key) {
+            match inner.indices.get(&context.identifier) {
                 Some(&index) => index,
                 None => {
-                    let state = R::initialize(world)?;
                     let index = inner.resolvers.len();
-                    inner.indices.insert(key, index);
-                    inner.resolvers.push(Resolver::new::<R>(state));
+                    inner.indices.insert(context.identifier, index);
+                    inner.resolvers.push(Resolver::new::<R>(input));
                     index
                 }
             }

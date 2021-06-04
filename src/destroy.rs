@@ -3,7 +3,7 @@ use crate::{
     depend::{Depend, Dependency},
     entity::Entity,
     filter::Filter,
-    inject::{Get, Inject},
+    inject::{Context, Get, Inject},
     query::{self, Query},
     world::World,
 };
@@ -40,8 +40,9 @@ impl<F: Filter> Inject for Destroy<'_, F> {
     type Input = ();
     type State = State<F>;
 
-    fn initialize(_: Self::Input, world: &mut World) -> Option<Self::State> {
-        let defer = <Defer<Destruction<F>> as Inject>::initialize((), world)?;
+    fn initialize(_: Self::Input, context: &Context, world: &mut World) -> Option<Self::State> {
+        let input = <Query<Entity, F> as Inject>::initialize((), context, world)?;
+        let defer = <Defer<Destruction<F>> as Inject>::initialize(input, context, world)?;
         Some(State(defer))
     }
 
@@ -76,10 +77,6 @@ impl<F: Filter> Depend for State<F> {
 
 impl<F: Filter> Resolve for Destruction<F> {
     type State = query::State<Entity, F>;
-
-    fn initialize(world: &mut World) -> Option<Self::State> {
-        <Query<Entity, F> as Inject>::initialize((), world)
-    }
 
     fn resolve(self, state: &mut Self::State, world: &mut World) {
         <Query<Entity, F> as Inject>::update(state, world);

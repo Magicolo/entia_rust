@@ -5,7 +5,7 @@ use crate::{
     entities::{self, Entities},
     entity::Entity,
     filter::Filter,
-    inject::{Get, Inject},
+    inject::{Context, Get, Inject},
     item::{At, Item},
     resource::Resource,
     world::World,
@@ -120,9 +120,9 @@ impl<'a, I: Item + 'static, F: Filter> Inject for Query<'a, I, F> {
     type Input = ();
     type State = State<I, F>;
 
-    fn initialize(_: Self::Input, world: &mut World) -> Option<Self::State> {
-        let inner = <Write<Inner<I, F>> as Inject>::initialize(None, world)?;
-        let entities = <Entities as Inject>::initialize((), world)?;
+    fn initialize(_: Self::Input, context: &Context, world: &mut World) -> Option<Self::State> {
+        let inner = <Write<Inner<I, F>> as Inject>::initialize(None, context, world)?;
+        let entities = <Entities as Inject>::initialize((), context, world)?;
         Some(State { inner, entities })
     }
 

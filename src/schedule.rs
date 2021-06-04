@@ -2,7 +2,7 @@ use entia_core::Call;
 
 use crate::{
     depend::{Depend, Dependency},
-    inject::{Get, Inject, Injector},
+    inject::{Context, Get, Inject, Injector},
     system::{Runner, System},
     world::World,
 };
@@ -59,8 +59,10 @@ impl<'a, I: Inject, C: Call<I, ()> + Call<<I::State as Get<'a>>::Item, ()> + 'st
 {
     fn schedule(self, scheduler: Scheduler<'a>) -> Scheduler<'a> {
         let (input, run) = self;
-        let system = I::initialize(input, scheduler.world).map(|state| unsafe {
+        let context = Context::new(System::reserve());
+        let system = I::initialize(input, &context, scheduler.world).map(|state| unsafe {
             System::new(
+                Some(context.identifier),
                 (run, state),
                 |(run, state), world| run.call(state.get(world)),
                 |(_, state), world| I::update(state, world),

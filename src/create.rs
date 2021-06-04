@@ -5,7 +5,7 @@ use crate::{
     depend::{Depend, Dependency},
     entities::{self, Entities},
     entity::Entity,
-    inject::{Get, Inject},
+    inject::{Context, Get, Inject},
     modify::{Homogeneous, Modify},
     segment::Store,
     world::World,
@@ -99,9 +99,11 @@ impl<M: Modify> Inject for Create<'_, M> {
     type Input = ();
     type State = State<M>;
 
-    fn initialize(_: Self::Input, world: &mut World) -> Option<Self::State> {
-        let defer = <Defer<Creation<M>> as Inject>::initialize((), world)?;
-        let entities = <Entities as Inject>::initialize((), world)?;
+    fn initialize(_: Self::Input, context: &Context, world: &mut World) -> Option<Self::State> {
+        let entities = <Entities as Inject>::initialize((), context, world)?;
+        let input = (entities, Vec::new());
+        let defer = <Defer<Creation<M>> as Inject>::initialize(input, context, world)?;
+        let entities = <Entities as Inject>::initialize((), context, world)?;
         Some(State { defer, entities })
     }
 
@@ -139,11 +141,6 @@ impl<M: Modify> Depend for State<M> {
 
 impl<M: Modify> Resolve for Creation<M> {
     type State = (entities::State, Vec<(M::State, Arc<Store>, usize)>);
-
-    fn initialize(world: &mut World) -> Option<Self::State> {
-        let entities = <Entities as Inject>::initialize((), world)?;
-        Some((entities, Vec::new()))
-    }
 
     fn resolve(self, (entities, targets): &mut Self::State, world: &mut World) {
         fn find<'a, M: Modify>(

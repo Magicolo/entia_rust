@@ -10,7 +10,6 @@ pub mod entity;
 pub mod filter;
 pub mod inject;
 pub mod item;
-pub mod local;
 pub mod message;
 pub mod modify;
 pub mod query;
@@ -38,7 +37,6 @@ pub mod prelude {
     pub use crate::entity::Entity;
     pub use crate::filter::Not;
     pub use crate::inject::Injector;
-    pub use crate::local::Local;
     pub use crate::message::Message;
     pub use crate::query::Query;
     pub use crate::receive::Receive;
@@ -48,51 +46,6 @@ pub mod prelude {
     pub use crate::system::Runner;
     pub use crate::world::World;
 }
-
-/*
-- Call 'Inject::update' on instances that declared a dependency on the segment. Alternatively, add an 'on_segment_change'
-method to the 'Inject' trait.
-
-- Allow to declare a segment as 'Static or Dynamic'. 'Static' segment contain entities that will never change their structure
-while 'Dynamic' segments will allow entities to move to another segment. This would allow to allocate/deallocate batches of
-static entities (such as particles) since 'Static' segments guarantee that the indices of the batch will still be valid at
-deallocation time.
-    - Should static entities have a different type? Otherwise, it means that a component 'add' could fail.
-    - Perhaps, only the batch allocation/deallocation mechanism could use static segments?
-    - Should static entities be queried differently than dynamic ones? 'Group<(Entity, And<Static>)>'?
-
-- #[derive(Inject)] macro that implements 'Inject' for structs that hold only fields that implement 'Inject'.
-- #[derive(Item)] macro that implements 'Item' for structs that hold only fields that implement 'Item'.
-
-- Keep blanket implementations for 'Component/Resource/Message'?
-*/
-
-/*
-SYSTEMS
-- Runners must be able to re-initialize and re-schedule all systems when a segment is added.
-- This will happen when the 'Defer' module is resolved which occurs at the next synchronization point.
-- There should not be a significant performance hit since segment addition/removal is expected to be rare and happen mainly
-in the first frames of execution.
-
-RESOURCES
-- There will be 1 segment per resource such that the same segment/dependency system can be used for them.
-- Resource segments should only allocate 1 store with 1 slot with the resource in it.
-- Resource entities must not be query-able (could be accomplished with a simple 'bool' in segments).
-
-DEPENDENCIES
-- Design a contract API that ensures that dependencies are well defined.
-- To gain access to a given resource, a user must provide a corresponding 'Contract' that is provided by a 'Contractor'.
-- The 'Contractor' then stores a copy of each emitted contract to later convert them into corresponding dependencies.
-- Ex: System::initialize(contractor: &mut Contractor, world: &mut World) -> Store<Time> {
-    world.get_resource(contractor.resource(TypeId::of::<Time>()))
-        OR
-    world.get_resource::<Time>(contractor)
-        OR
-    contractor.resource::<Time>(world) // This doesn't require the 'World' to know about the 'Contractor'.
-        OR
-    contractor.resource::<Time>() // The contractor can hold its own reference to the 'World'.
-}
-*/
 
 #[cfg(test)]
 mod test {
@@ -220,8 +173,7 @@ mod test {
                 impl Resource for Private {}
 
                 let mut counter = 0;
-                move |mut state: Local<usize>, resource: &mut Private| {
-                    *state += counter;
+                move |resource: &mut Private| {
                     resource.0 += counter;
                     counter += counter;
                 }

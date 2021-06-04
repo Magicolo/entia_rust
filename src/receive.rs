@@ -2,7 +2,7 @@ use std::{any::TypeId, collections::VecDeque, marker::PhantomData, sync::Arc};
 
 use crate::{
     depend::{Depend, Dependency},
-    inject::{Get, Inject},
+    inject::{Context, Get, Inject},
     message::{Message, Messages},
     segment::Store,
     world::World,
@@ -29,7 +29,7 @@ impl<M: Message> Inject for Receive<'_, M> {
     type Input = usize;
     type State = State<M>;
 
-    fn initialize(input: Self::Input, world: &mut World) -> Option<Self::State> {
+    fn initialize(input: Self::Input, _: &Context, world: &mut World) -> Option<Self::State> {
         let meta = world.get_or_add_meta::<M>();
         let segment = world.add_segment_from_metas(vec![meta.clone()], 8);
         let store = segment.store(&meta)?;

@@ -3,7 +3,7 @@ use std::{any::TypeId, marker::PhantomData, sync::Arc};
 use crate::{
     component::Component,
     depend::{Depend, Dependency},
-    inject::{Get, Inject},
+    inject::{Context, Get, Inject},
     item::{At, Item},
     resource::{initialize, Resource},
     segment::Segment,
@@ -18,7 +18,7 @@ impl<R: Resource> Inject for Write<R> {
     type Input = Option<R>;
     type State = State<R>;
 
-    fn initialize(input: Self::Input, world: &mut World) -> Option<Self::State> {
+    fn initialize(input: Self::Input, _: &Context, world: &mut World) -> Option<Self::State> {
         let (store, segment) = initialize(|| input.unwrap_or_default(), world)?;
         Some(State(store, segment, PhantomData))
     }

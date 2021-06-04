@@ -12,6 +12,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use crate::depend::Depend;
+use crate::inject::Context;
 use crate::{
     depend::Dependency,
     inject::{Get, Inject},
@@ -43,7 +44,7 @@ impl Inject for &World {
     type Input = ();
     type State = State;
 
-    fn initialize(_: Self::Input, _: &mut World) -> Option<Self::State> {
+    fn initialize(_: Self::Input, _: &Context, _: &mut World) -> Option<Self::State> {
         Some(State)
     }
 }

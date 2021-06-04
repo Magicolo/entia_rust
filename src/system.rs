@@ -3,6 +3,7 @@ use crate::{core::*, depend::Dependency};
 use std::any::TypeId;
 use std::cell::UnsafeCell;
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 pub struct Runner {
@@ -12,6 +13,7 @@ pub struct Runner {
 }
 
 pub struct System {
+    identifier: usize,
     pub(crate) run: Box<dyn FnMut(&World)>,
     pub(crate) update: Box<dyn FnMut(&mut World)>,
     pub(crate) resolve: Box<dyn FnMut(&mut World)>,
@@ -142,8 +144,14 @@ impl Runner {
 }
 
 impl System {
+    pub fn reserve() -> usize {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    }
+
     #[inline]
     pub unsafe fn new<'a, T: 'static>(
+        identifier: Option<usize>,
         state: T,
         run: fn(&'a mut T, &'a World),
         pre: fn(&'a mut T, &'a mut World),
@@ -159,6 +167,7 @@ impl System {
         // intention.
         let state = Arc::new(UnsafeCell::new(state));
         Self {
+            identifier: identifier.unwrap_or_else(Self::reserve),
             run: {
                 let state = state.clone();
                 Box::new(move |world| unsafe { run(&mut *state.get(), &*(world as *const _)) })
@@ -181,6 +190,7 @@ impl System {
     pub fn depend(dependencies: impl IntoIterator<Item = Dependency>) -> Self {
         unsafe {
             Self::new(
+                None,
                 dependencies.into_iter().collect::<Vec<_>>(),
                 |_, _| {},
                 |_, _| {},
@@ -188,5 +198,10 @@ impl System {
                 |state, _| state.clone(),
             )
         }
+    }
+
+    #[inline]
+    pub const fn identifier(&self) -> usize {
+        self.identifier
     }
 }
