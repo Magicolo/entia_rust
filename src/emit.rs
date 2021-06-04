@@ -1,26 +1,33 @@
+use std::{any::TypeId, collections::VecDeque};
+
 use crate::{
     depend::{Depend, Dependency},
     inject::{Context, Get, Inject},
-    message::{Message, Messages},
-    query::{self, Query},
+    message::Message,
+    resource::Resource,
     world::World,
-    write::Write,
+    write::{self, Write},
 };
 
-pub struct Emit<'a, M: Message>(Query<'a, Write<Messages<M>>>);
-pub struct State<M: Message>(query::State<Write<Messages<M>>, ()>);
+pub struct Emit<'a, M: Message>(&'a mut Vec<M>);
+pub struct State<M: Message>(write::State<Inner<M>>, Vec<M>);
+
+pub(crate) struct Queue<M: Message>(pub usize, pub VecDeque<M>);
+pub(crate) struct Inner<M: Message> {
+    pub queues: Vec<Queue<M>>,
+}
+
+impl<M: Message> Resource for Inner<M> {}
+impl<M: Message> Default for Inner<M> {
+    fn default() -> Self {
+        Self { queues: Vec::new() }
+    }
+}
 
 impl<M: Message> Emit<'_, M> {
+    #[inline]
     pub fn emit(&mut self, message: M) {
-        self.0.each(|messages| {
-            if messages.capacity > 0 {
-                while messages.messages.len() >= messages.capacity {
-                    messages.messages.pop_front();
-                }
-            }
-
-            messages.messages.push_back(message.clone());
-        });
+        self.0.push(message);
     }
 }
 
@@ -29,18 +36,19 @@ impl<'a, M: Message> Inject for Emit<'a, M> {
     type State = State<M>;
 
     fn initialize(_: Self::Input, context: &Context, world: &mut World) -> Option<Self::State> {
-        let query = <Query<'a, Write<Messages<M>>> as Inject>::initialize((), context, world)?;
-        Some(State(query))
+        let inner = <Write<Inner<M>> as Inject>::initialize(None, context, world)?;
+        Some(State(inner, Vec::new()))
     }
 
-    #[inline]
-    fn update(State(state): &mut Self::State, world: &mut World) {
-        <Query<'a, Write<Messages<M>>> as Inject>::update(state, world);
-    }
-
-    #[inline]
-    fn resolve(State(state): &mut Self::State, world: &mut World) {
-        <Query<'a, Write<Messages<M>>> as Inject>::resolve(state, world);
+    fn resolve(state: &mut Self::State, _: &mut World) {
+        let messages = &mut state.1;
+        for queue in state.0.as_mut().queues.iter_mut() {
+            queue.1.extend(messages.iter().cloned());
+            while queue.0 > 0 && queue.1.len() > queue.0 {
+                queue.1.pop_front();
+            }
+        }
+        messages.clear();
     }
 }
 
@@ -48,13 +56,13 @@ impl<'a, M: Message> Get<'a> for State<M> {
     type Item = Emit<'a, M>;
 
     #[inline]
-    fn get(&'a mut self, world: &'a World) -> Self::Item {
-        Emit(self.0.get(world))
+    fn get(&'a mut self, _: &'a World) -> Self::Item {
+        Emit(&mut self.1)
     }
 }
 
-impl<M: Message> Depend for State<M> {
-    fn depend(&self, world: &World) -> Vec<Dependency> {
-        self.0.depend(world)
+unsafe impl<M: Message> Depend for State<M> {
+    fn depend(&self, _: &World) -> Vec<Dependency> {
+        vec![Dependency::Defer(self.0.segment(), TypeId::of::<M>())]
     }
 }

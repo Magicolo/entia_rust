@@ -52,7 +52,7 @@ impl<'a, T: Default + Send + 'static> Get<'a> for State<T> {
     }
 }
 
-impl<T> Depend for State<T> {
+unsafe impl<T> Depend for State<T> {
     fn depend(&self, _: &World) -> Vec<crate::depend::Dependency> {
         Vec::new()
     }

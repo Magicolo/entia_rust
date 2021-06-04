@@ -55,7 +55,7 @@ impl<'a> At<'a> for State {
     }
 }
 
-impl Depend for State {
+unsafe impl Depend for State {
     fn depend(&self, _: &World) -> Vec<Dependency> {
         vec![Dependency::Read(self.1, TypeId::of::<Entity>())]
     }

@@ -2,7 +2,10 @@ use std::any::TypeId;
 
 use crate::world::World;
 
-pub trait Depend {
+/// SAFETY: This trait is unsafe since a wrong implementation of it may lead to undefined behavior. Every
+/// implementor must declare all necessary dependencies in order to properly inform a scheduler of what it
+/// it allowed to do.
+pub unsafe trait Depend {
     fn depend(&self, world: &World) -> Vec<Dependency>;
 }
 
@@ -14,7 +17,7 @@ pub enum Dependency {
     Defer(usize, TypeId),
 }
 
-impl<D: Depend> Depend for Option<D> {
+unsafe impl<D: Depend> Depend for Option<D> {
     fn depend(&self, world: &World) -> Vec<Dependency> {
         match self {
             Some(depend) => depend.depend(world),
@@ -25,7 +28,7 @@ impl<D: Depend> Depend for Option<D> {
 
 macro_rules! depend {
     ($($p:ident, $t:ident),*) => {
-        impl<'a, $($t: Depend,)*> Depend for ($($t,)*) {
+        unsafe impl<'a, $($t: Depend,)*> Depend for ($($t,)*) {
             fn depend(&self, _world: &World) -> Vec<Dependency> {
                 let ($($p,)*) = self;
                 let mut _dependencies = Vec::new();

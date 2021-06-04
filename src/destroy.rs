@@ -64,7 +64,7 @@ impl<'a, F: Filter> Get<'a> for State<F> {
     }
 }
 
-impl<F: Filter> Depend for State<F> {
+unsafe impl<F: Filter> Depend for State<F> {
     fn depend(&self, world: &World) -> Vec<Dependency> {
         let mut dependencies = self.0.depend(world);
         let query = self.0.as_ref().inner.as_ref();

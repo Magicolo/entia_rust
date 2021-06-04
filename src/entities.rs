@@ -41,13 +41,13 @@ impl Datum {
     }
 
     #[inline]
-    pub fn reserve(&mut self, generation: u32) -> bool {
+    pub fn reserve(&mut self) -> Option<u32> {
         if self.state == Self::RELEASED {
-            self.generation = generation;
+            self.generation += 1;
             self.state = Self::RESERVED;
-            true
+            Some(self.generation)
         } else {
-            false
+            None
         }
     }
 
@@ -106,11 +106,6 @@ impl State {
     }
 
     #[inline]
-    pub fn get_datum(&self, entity: Entity) -> Option<&Datum> {
-        self.0.as_ref().get_datum(entity)
-    }
-
-    #[inline]
     pub fn get_datum_at_mut(&mut self, index: usize) -> &mut Datum {
         &mut self.0.as_mut().data[index]
     }
@@ -135,11 +130,11 @@ impl Inner {
         while current < entities.len() {
             if let Some(mut entity) = self.free.pop() {
                 let datum = &mut self.data[entity.index as usize];
-                datum.generation += 1;
-                datum.state = 1;
-                entity.generation = datum.generation;
-                entities[current] = entity;
-                current += 1;
+                if let Some(generation) = datum.reserve() {
+                    entity.generation = generation;
+                    entities[current] = entity;
+                    current += 1;
+                }
             } else {
                 break;
             }
@@ -209,7 +204,7 @@ impl<'a> Get<'a> for State {
     }
 }
 
-impl Depend for State {
+unsafe impl Depend for State {
     fn depend(&self, world: &World) -> Vec<Dependency> {
         self.0.depend(world)
     }

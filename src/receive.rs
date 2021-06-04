@@ -1,27 +1,23 @@
-use std::{any::TypeId, collections::VecDeque, marker::PhantomData, sync::Arc};
+use std::{any::TypeId, collections::VecDeque};
 
 use crate::{
     depend::{Depend, Dependency},
+    emit::{Inner, Queue},
     inject::{Context, Get, Inject},
-    message::{Message, Messages},
-    segment::Store,
+    message::Message,
     world::World,
+    write::{self, Write},
 };
 
-pub struct Receive<'a, M: Message>(&'a mut Messages<M>);
-pub struct State<M: Message> {
-    index: usize,
-    store: Arc<Store>,
-    segment: usize,
-    _marker: PhantomData<M>,
-}
+pub struct Receive<'a, M: Message>(&'a mut Queue<M>);
+pub struct State<M: Message>(usize, write::State<Inner<M>>);
 
 impl<M: Message> Iterator for Receive<'_, M> {
     type Item = M;
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.messages.pop_front()
+        self.0 .1.pop_front()
     }
 }
 
@@ -29,22 +25,15 @@ impl<M: Message> Inject for Receive<'_, M> {
     type Input = usize;
     type State = State<M>;
 
-    fn initialize(input: Self::Input, _: &Context, world: &mut World) -> Option<Self::State> {
-        let meta = world.get_or_add_meta::<M>();
-        let segment = world.add_segment_from_metas(vec![meta.clone()], 8);
-        let store = segment.store(&meta)?;
-        let index = segment.reserve(1);
-        let messages = Messages::<M> {
-            messages: VecDeque::new(),
-            capacity: input,
+    fn initialize(input: Self::Input, context: &Context, world: &mut World) -> Option<Self::State> {
+        let mut inner = <Write<Inner<M>> as Inject>::initialize(None, context, world)?;
+        let index = {
+            let inner = inner.as_mut();
+            let index = inner.queues.len();
+            inner.queues.push(Queue(input, VecDeque::new()));
+            index
         };
-        unsafe { store.set(index, &[messages]) };
-        Some(State {
-            index,
-            store,
-            segment: segment.index,
-            _marker: PhantomData,
-        })
+        Some(State(index, inner))
     }
 }
 
@@ -53,12 +42,12 @@ impl<'a, M: Message> Get<'a> for State<M> {
 
     #[inline]
     fn get(&'a mut self, _: &World) -> Self::Item {
-        Receive(unsafe { self.store.at(self.index) })
+        Receive(&mut self.1.as_mut().queues[self.0])
     }
 }
 
-impl<M: Message> Depend for State<M> {
+unsafe impl<M: Message> Depend for State<M> {
     fn depend(&self, _: &World) -> Vec<Dependency> {
-        vec![Dependency::Write(self.segment, TypeId::of::<M>())]
+        vec![Dependency::Read(self.1.segment(), TypeId::of::<M>())]
     }
 }

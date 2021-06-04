@@ -104,7 +104,7 @@ impl<'a, M: Modify, F: Filter> Get<'a> for State<M, F> {
     }
 }
 
-impl<M: Modify, F: Filter> Depend for State<M, F> {
+unsafe impl<M: Modify, F: Filter> Depend for State<M, F> {
     fn depend(&self, world: &World) -> Vec<Dependency> {
         let mut dependencies = self.defer.depend(world);
         let (_, targets) = self.defer.as_ref();

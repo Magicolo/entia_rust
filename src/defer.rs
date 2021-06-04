@@ -1,7 +1,12 @@
-use std::{any::Any, collections::VecDeque, marker::PhantomData};
+use std::{
+    any::{Any, TypeId},
+    collections::VecDeque,
+    marker::PhantomData,
+};
 
 use crate::{
     depend::{Depend, Dependency},
+    entity::Entity,
     inject::{Context, Get, Inject},
     local::{self, Local},
     world::World,
@@ -125,9 +130,13 @@ impl<'a, R: Resolve> Get<'a> for State<R> {
     }
 }
 
-impl<R: Resolve> Depend for State<R> {
-    fn depend(&self, _: &World) -> Vec<Dependency> {
-        Vec::new()
+unsafe impl<R: Resolve> Depend for State<R> {
+    fn depend(&self, world: &World) -> Vec<Dependency> {
+        world
+            .segments
+            .iter()
+            .map(|segment| Dependency::Defer(segment.index, TypeId::of::<Entity>()))
+            .collect()
     }
 }
 

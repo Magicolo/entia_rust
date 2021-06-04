@@ -156,7 +156,7 @@ impl<'a, I: Item + 'static, F: Filter> Get<'a> for State<I, F> {
     }
 }
 
-impl<I: Item + 'static, F: Filter> Depend for State<I, F> {
+unsafe impl<I: Item + 'static, F: Filter> Depend for State<I, F> {
     fn depend(&self, world: &World) -> Vec<Dependency> {
         let mut dependencies = Vec::new();
         let inner = self.inner.as_ref();

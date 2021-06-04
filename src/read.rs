@@ -43,6 +43,13 @@ impl<C: Component> Item for Read<C> {
     }
 }
 
+impl<T> State<T> {
+    #[inline]
+    pub const fn segment(&self) -> usize {
+        self.1
+    }
+}
+
 impl<'a, C: Component> At<'a> for State<C> {
     type Item = &'a C;
 
@@ -52,7 +59,7 @@ impl<'a, C: Component> At<'a> for State<C> {
     }
 }
 
-impl<T: 'static> Depend for State<T> {
+unsafe impl<T: 'static> Depend for State<T> {
     fn depend(&self, _: &World) -> Vec<Dependency> {
         vec![Dependency::Read(self.1, TypeId::of::<T>())]
     }

@@ -127,7 +127,7 @@ impl<'a, M: Modify> Get<'a> for State<M> {
     }
 }
 
-impl<M: Modify> Depend for State<M> {
+unsafe impl<M: Modify> Depend for State<M> {
     fn depend(&self, world: &World) -> Vec<Dependency> {
         let mut dependencies = self.defer.depend(world);
         for &(_, _, target) in self.defer.as_ref().1.iter() {
