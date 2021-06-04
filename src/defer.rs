@@ -1,15 +1,10 @@
-use std::{
-    any::Any,
-    collections::{HashMap, VecDeque},
-    marker::PhantomData,
-};
+use std::{any::Any, collections::VecDeque, marker::PhantomData};
 
 use crate::{
     depend::{Depend, Dependency},
     inject::{Context, Get, Inject},
-    resource::Resource,
+    local::{self, Local},
     world::World,
-    write::{self, Write},
 };
 
 pub struct Defer<'a, R: Resolve> {
@@ -19,7 +14,7 @@ pub struct Defer<'a, R: Resolve> {
 }
 
 pub struct State<R: Resolve> {
-    inner: write::State<Inner>,
+    inner: local::State<Inner>,
     index: usize,
     _marker: PhantomData<R>,
 }
@@ -38,10 +33,7 @@ struct Resolver {
 struct Inner {
     defer: Vec<usize>,
     resolvers: Vec<Resolver>,
-    indices: HashMap<usize, usize>,
 }
-
-impl Resource for Inner {}
 
 #[allow(type_alias_bounds)]
 type Pair<R: Resolve> = (VecDeque<R>, R::State);
@@ -98,19 +90,14 @@ impl<R: Resolve> Inject for Defer<'_, R> {
     type State = State<R>;
 
     fn initialize(input: Self::Input, context: &Context, world: &mut World) -> Option<Self::State> {
-        let mut inner = <Write<Inner> as Inject>::initialize(None, context, world)?;
+        let mut inner = <Local<Inner> as Inject>::initialize((), context, world)?;
         let index = {
             let inner = inner.as_mut();
-            match inner.indices.get(&context.identifier) {
-                Some(&index) => index,
-                None => {
-                    let index = inner.resolvers.len();
-                    inner.indices.insert(context.identifier, index);
-                    inner.resolvers.push(Resolver::new::<R>(input));
-                    index
-                }
-            }
+            let index = inner.resolvers.len();
+            inner.resolvers.push(Resolver::new::<R>(input));
+            index
         };
+
         Some(State {
             inner,
             index,
@@ -129,9 +116,9 @@ impl<R: Resolve> Inject for Defer<'_, R> {
 impl<'a, R: Resolve> Get<'a> for State<R> {
     type Item = Defer<'a, R>;
 
-    fn get(&'a mut self, world: &'a World) -> Self::Item {
+    fn get(&'a mut self, _: &'a World) -> Self::Item {
         Defer {
-            inner: self.inner.get(world),
+            inner: self.inner.as_mut(),
             index: self.index,
             _marker: PhantomData,
         }
