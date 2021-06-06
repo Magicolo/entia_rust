@@ -63,23 +63,18 @@ fn main() {
         .scheduler()
         .schedule(|mut create: Create<()>| {
             println!("A");
-            let entity = create.create(());
-            println!("A1: {:?}", entity);
-            let entities = create.create_default(100);
-            println!("A2: {:?}", entities);
+            create.create(());
+            create.create_default(1000);
         })
-        .synchronize()
         .schedule(|query: Query<Entity>| {
             println!("B");
             query.each(|entity: Entity| println!("B1: {:?}", entity));
             query.each(|entity: Entity| println!("B2: {:?}", entity));
         })
-        .synchronize()
         .schedule(|mut destroy: Destroy| {
             println!("C");
             destroy.destroy_all();
         })
-        .synchronize()
         .schedule(|query: Query<Entity>| {
             println!("D");
             query.each(|entity: Entity| println!("D1: {:?}", entity));
@@ -87,5 +82,8 @@ fn main() {
         })
         .runner()
         .unwrap();
-    runner.run(&mut world);
+
+    for _ in 0..10 {
+        runner.run(&mut world);
+    }
 }

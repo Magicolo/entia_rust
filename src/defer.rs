@@ -131,12 +131,9 @@ impl<'a, R: Resolve> Get<'a> for State<R> {
 }
 
 unsafe impl<R: Resolve> Depend for State<R> {
-    fn depend(&self, world: &World) -> Vec<Dependency> {
-        world
-            .segments
-            .iter()
-            .map(|segment| Dependency::Defer(segment.index, TypeId::of::<Entity>()))
-            .collect()
+    fn depend(&self, _: &World) -> Vec<Dependency> {
+        // TODO: Find a way to reduce dependencies.
+        vec![Dependency::Defer(usize::MAX, TypeId::of::<Entity>())]
     }
 }
 

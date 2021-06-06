@@ -6,7 +6,6 @@ use std::mem::ManuallyDrop;
 use std::ptr::copy;
 use std::ptr::drop_in_place;
 use std::ptr::slice_from_raw_parts_mut;
-use std::ptr::NonNull;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -24,10 +23,10 @@ pub struct Meta {
     pub(crate) identifier: TypeId,
     pub(crate) name: &'static str,
     pub(crate) index: usize,
-    pub(crate) allocate: fn(usize) -> NonNull<()>,
-    pub(crate) free: fn(NonNull<()>, usize),
-    pub(crate) copy: fn((NonNull<()>, usize), (NonNull<()>, usize), usize),
-    pub(crate) drop: fn(NonNull<()>, usize, usize),
+    pub(crate) allocate: fn(usize) -> *mut (),
+    pub(crate) free: fn(*mut (), usize),
+    pub(crate) copy: fn((*const (), usize), (*mut (), usize), usize),
+    pub(crate) drop: fn(*mut (), usize, usize),
 }
 
 pub struct World {
@@ -92,20 +91,20 @@ impl World {
                     identifier: key.clone(),
                     name: type_name::<T>(),
                     index,
-                    allocate: |capacity| unsafe {
+                    allocate: |capacity| {
                         let mut data = ManuallyDrop::new(Vec::<T>::with_capacity(capacity));
-                        NonNull::new_unchecked(data.as_mut_ptr()).cast()
+                        data.as_mut_ptr().cast()
                     },
                     free: |pointer, capacity| unsafe {
-                        Vec::from_raw_parts(pointer.cast::<T>().as_ptr(), 0, capacity);
+                        Vec::from_raw_parts(pointer.cast::<T>(), 0, capacity);
                     },
                     copy: |source, target, count| unsafe {
-                        let source = source.0.cast::<T>().as_ptr().add(source.1);
-                        let target = target.0.cast::<T>().as_ptr().add(target.1);
+                        let source = source.0.cast::<T>().add(source.1);
+                        let target = target.0.cast::<T>().add(target.1);
                         copy(source, target, count);
                     },
                     drop: |pointer, index, count| unsafe {
-                        let pointer = pointer.cast::<T>().as_ptr().add(index);
+                        let pointer = pointer.cast::<T>().add(index);
                         drop_in_place(slice_from_raw_parts_mut(pointer, count));
                     },
                 });

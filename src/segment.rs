@@ -2,12 +2,13 @@ use crate::core::bits::*;
 use crate::core::utility::*;
 use crate::world::*;
 use std::cell::UnsafeCell;
-use std::ptr::{copy_nonoverlapping, NonNull};
+use std::intrinsics::transmute;
+use std::mem::ManuallyDrop;
 use std::slice::from_raw_parts_mut;
 use std::sync::Arc;
 use std::usize;
 
-pub struct Store(Meta, UnsafeCell<NonNull<()>>);
+pub struct Store(Meta, UnsafeCell<*mut ()>);
 
 pub struct Segment {
     pub(crate) index: usize,
@@ -90,16 +91,13 @@ impl Segment {
         index
     }
 
-    pub fn ensure(&mut self, capacity: usize) -> bool {
-        if self.capacity <= capacity {
-            false
-        } else {
+    pub fn ensure(&mut self, capacity: usize) {
+        if self.capacity < capacity {
             let capacity = next_power_of_2(capacity as u32) as usize;
             for store in self.stores.iter() {
                 unsafe { store.resize(self.count, self.capacity, capacity) };
             }
             self.capacity = capacity;
-            true
         }
     }
 }
@@ -107,15 +105,15 @@ impl Segment {
 impl Store {
     #[inline]
     pub fn new(meta: Meta, capacity: usize) -> Self {
-        let data = (meta.allocate)(capacity);
-        Self(meta, data.into())
+        let pointer = (meta.allocate)(capacity);
+        Self(meta, pointer.into())
     }
 
     #[inline]
     pub unsafe fn copy(source: (&Store, usize), target: (&Store, usize), count: usize) {
         (source.0 .0.copy)(
-            (*source.0.data(), source.1),
-            (*target.0.data(), target.1),
+            (source.0.pointer(), source.1),
+            (target.0.pointer(), target.1),
             count,
         );
     }
@@ -123,47 +121,59 @@ impl Store {
     /// SAFETY: The 'count' must be within the bounds of the store.
     #[inline]
     pub unsafe fn get<T>(&self, count: usize) -> &mut [T] {
-        from_raw_parts_mut(self.data().cast().as_ptr(), count)
+        from_raw_parts_mut(self.pointer().cast(), count)
     }
 
     /// SAFETY: The 'items' reference must not point into 'self' (ex: through usage of 'self.get(usize)').
     #[inline]
-    pub unsafe fn set<T>(&self, index: usize, items: &[T]) {
-        let pointer = self.data().cast::<T>().as_ptr().add(index);
-        copy_nonoverlapping(items.as_ptr(), pointer, items.len());
+    pub unsafe fn set<T>(&self, index: usize, item: T) {
+        self.pointer().cast::<T>().add(index).write(item);
+    }
+
+    /// SAFETY: The 'items' reference must not point into 'self' (ex: through usage of 'self.get(usize)').
+    #[inline]
+    pub unsafe fn set_all<T>(&self, index: usize, items: Box<[T]>) {
+        let items: Box<[ManuallyDrop<T>]> = transmute(items);
+        let source = items.as_ptr().cast();
+        let target = self.pointer();
+        (self.0.copy)((source, 0), (target, index), items.len());
     }
 
     /// SAFETY: The 'index' must be within the bounds of the store.
     #[inline]
     pub unsafe fn at<T>(&self, index: usize) -> &mut T {
-        &mut *self.data().cast::<T>().as_ptr().add(index)
+        &mut *self.pointer().cast::<T>().add(index)
     }
 
     /// SAFETY: Both the 'source' and 'target' indices must be within the bounds of the store.
     #[inline]
     pub unsafe fn squash(&self, source: usize, target: usize) {
-        let data = *self.data();
+        let data = self.pointer();
         (self.0.drop)(data, target, 1);
         (self.0.copy)((data, source), (data, target), 1);
     }
 
     #[inline]
     pub unsafe fn resize(&self, count: usize, old: usize, new: usize) {
-        let data = self.data();
-        let new = (self.0.allocate)(new);
-        (self.0.copy)((*data, 0), (new, 0), count);
-        (self.0.free)(*data, old);
-        *data = new;
+        let pointer = self.pointer();
+        let data = (self.0.allocate)(new);
+        (self.0.copy)((pointer, 0), (data, 0), count);
+        (self.0.free)(pointer, old);
+        *self.1.get() = data;
     }
 
     #[inline]
     pub unsafe fn drop(&self, index: usize, count: usize) {
-        (self.0.drop)(*self.data(), index, count);
+        (self.0.drop)(self.pointer(), index, count);
     }
 
     #[inline]
-    unsafe fn data(&self) -> &mut NonNull<()> {
-        &mut *self.1.get()
+    unsafe fn pointer(&self) -> *mut () {
+        *self.1.get()
+    }
+
+    pub fn boba<T>(&self) -> *mut T {
+        unsafe { self.pointer().cast() }
     }
 }
 

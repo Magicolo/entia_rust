@@ -173,7 +173,7 @@ impl<M: Modify> Resolve for Creation<M> {
                 if let Some((state, store, target)) = find(&modify, targets, world) {
                     let target = &mut world.segments[*target];
                     let index = target.reserve(1);
-                    unsafe { store.set(index, &[entity]) };
+                    unsafe { store.set(index, entity) };
                     modify.modify(state, index);
                     let datum = entities.get_datum_at_mut(entity.index as usize);
                     datum.initialize(index as u32, target.index as u32);
@@ -185,8 +185,6 @@ impl<M: Modify> Resolve for Creation<M> {
                 if let Some((state, store, target)) = find(modify, targets, world) {
                     let target = &mut world.segments[*target];
                     let index = target.reserve(many.len());
-                    unsafe { store.set(index, &many) };
-
                     for i in 0..many.len() {
                         let entity = many[i];
                         let modify = unsafe { ManuallyDrop::take(&mut modifies[i]) };
@@ -194,14 +192,14 @@ impl<M: Modify> Resolve for Creation<M> {
                         let datum = entities.get_datum_at_mut(entity.index as usize);
                         datum.initialize(index as u32, target.index as u32);
                     }
+
+                    unsafe { store.set_all(index, many) };
                 }
             }
             Creation::Clone(many, modify, clone) => {
                 if let Some((state, store, target)) = find(&modify, targets, world) {
                     let target = &mut world.segments[*target];
                     let index = target.reserve(many.len());
-                    unsafe { store.set(index, &many) };
-
                     for i in 0..many.len() {
                         let entity = many[i];
                         let modify = clone(&modify);
@@ -209,6 +207,8 @@ impl<M: Modify> Resolve for Creation<M> {
                         let datum = entities.get_datum_at_mut(entity.index as usize);
                         datum.initialize(index as u32, target.index as u32);
                     }
+
+                    unsafe { store.set_all(index, many) };
                 }
             }
         }

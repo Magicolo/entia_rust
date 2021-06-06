@@ -158,10 +158,9 @@ impl<'a, I: Item + 'static, F: Filter> Get<'a> for State<I, F> {
 
 unsafe impl<I: Item + 'static, F: Filter> Depend for State<I, F> {
     fn depend(&self, world: &World) -> Vec<Dependency> {
-        let mut dependencies = Vec::new();
+        let mut dependencies = vec![Dependency::Read(usize::MAX, TypeId::of::<Entity>())];
         let inner = self.inner.as_ref();
-        for (item, segment, _) in inner.states.iter() {
-            dependencies.push(Dependency::Read(*segment, TypeId::of::<Entity>()));
+        for (item, _, _) in inner.states.iter() {
             dependencies.append(&mut item.depend(world));
         }
         dependencies

@@ -142,17 +142,16 @@ impl Inner {
 
         while current < entities.len() {
             let index = self.data.len();
-            let datum = Datum {
+            self.data.push(Datum {
                 index: 0,
                 segment: 0,
                 generation: 0,
                 state: 1,
-            };
+            });
             entities[current] = Entity {
                 index: index as u32,
-                generation: datum.generation,
+                generation: 0,
             };
-            self.data.push(datum);
             current += 1;
         }
     }

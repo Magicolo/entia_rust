@@ -1,8 +1,11 @@
-use crate::world::*;
-use crate::{core::*, depend::Dependency};
+use entia_core::Change;
+
+use crate::{depend::Dependency, world::World};
 use std::any::TypeId;
 use std::cell::UnsafeCell;
 use std::collections::HashSet;
+use std::mem::replace;
+use std::mem::swap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -65,75 +68,114 @@ impl Runner {
         }
     }
 
-    fn conflicts(
-        dependencies: &Vec<Dependency>,
-        reads: &mut HashSet<(usize, TypeId)>,
-        writes: &mut HashSet<(usize, TypeId)>,
-        adds: &mut HashSet<(usize, TypeId)>,
-    ) -> bool {
-        for dependency in dependencies {
-            match dependency {
-                Dependency::Unknown => return true,
-                &Dependency::Read(segment, store) => {
-                    let pair = (segment, store);
-                    if adds.contains(&pair) || writes.contains(&pair) {
-                        return true;
-                    }
-                    reads.insert(pair);
-                }
-                &Dependency::Write(segment, store) => {
-                    let pair = (segment, store);
-                    if adds.contains(&pair) || reads.contains(&pair) || writes.contains(&pair) {
-                        return true;
-                    }
-                    writes.insert(pair);
-                }
-                &Dependency::Defer(segment, store) => {
-                    let pair = (segment, store);
-                    adds.insert(pair);
-                }
-            }
-        }
-        false
-    }
-
     pub(crate) fn schedule(
         systems: impl Iterator<Item = System>,
         world: &mut World,
     ) -> Option<Vec<Vec<System>>> {
-        let mut pairs = Vec::new();
+        #[derive(Debug, Default)]
+        struct State {
+            unknown: bool,
+            reads: HashSet<(usize, TypeId)>,
+            writes: HashSet<(usize, TypeId)>,
+            defers: HashSet<(usize, TypeId)>,
+        }
+
+        impl State {
+            pub fn inner_conflicts(&mut self, dependencies: &Vec<Dependency>) -> bool {
+                let State {
+                    unknown,
+                    reads,
+                    writes,
+                    defers,
+                } = self;
+
+                for dependency in dependencies {
+                    if match *dependency {
+                        Dependency::Unknown => {
+                            *unknown = true;
+                            false
+                        }
+                        Dependency::Read(segment, store) => {
+                            let key = (segment, store);
+                            reads.insert(key);
+                            writes.contains(&key)
+                        }
+                        Dependency::Write(segment, store) => {
+                            let key = (segment, store);
+                            reads.contains(&key) || !writes.insert(key)
+                        }
+                        Dependency::Defer(segment, store) => {
+                            defers.insert((segment, store));
+                            false
+                        }
+                    } {
+                        return true;
+                    }
+                }
+                false
+            }
+
+            pub fn outer_conflicts(&mut self, dependencies: &Vec<Dependency>) -> bool {
+                let State {
+                    unknown,
+                    reads,
+                    writes,
+                    defers,
+                } = self;
+                if *unknown {
+                    return true;
+                }
+
+                for dependency in dependencies {
+                    if match *dependency {
+                        Dependency::Unknown => true,
+                        Dependency::Read(segment, store) => {
+                            let key = (segment, store);
+                            reads.insert(key);
+                            defers.contains(&key) || writes.contains(&key)
+                        }
+                        Dependency::Write(segment, store) => {
+                            let key = (segment, store);
+                            defers.contains(&key) || reads.contains(&key) || writes.insert(key)
+                        }
+                        Dependency::Defer(segment, store) => {
+                            defers.insert((segment, store));
+                            false
+                        }
+                    } {
+                        return true;
+                    }
+                }
+                false
+            }
+
+            pub fn clear(&mut self) {
+                self.unknown = false;
+                self.reads.clear();
+                self.writes.clear();
+                self.defers.clear();
+            }
+        }
+
         let mut sequence = Vec::new();
         let mut parallel = Vec::new();
-        let mut reads = HashSet::new();
-        let mut writes = HashSet::new();
-        let mut adds = HashSet::new();
+        let mut inner = State::default();
+        let mut outer = State::default();
 
         for mut system in systems {
             (system.update)(world);
             let dependencies = (system.depend)(world);
-            // TODO: Detect inner conflicts.
-            // - Detection should differ from 'Self::conflicts' since inner conflicts have slightly different rules:
-            //      - ex: 'Unknown' is valid
-            // if Self::conflicts(&dependencies, &mut reads, &mut writes, &mut adds) {
-            //     return None;
-            // }
-            reads.clear();
-            writes.clear();
-            adds.clear();
-            pairs.push((system, dependencies));
-        }
-
-        for (system, dependencies) in pairs {
-            if Self::conflicts(&dependencies, &mut reads, &mut writes, &mut adds) {
+            if inner.inner_conflicts(&dependencies) {
+                return None;
+            } else if outer.outer_conflicts(&dependencies) {
                 if parallel.len() > 0 {
-                    sequence.push(std::mem::replace(&mut parallel, Vec::new()));
+                    sequence.push(replace(&mut parallel, Vec::new()));
                 }
-                reads.clear();
-                writes.clear();
-                adds.clear();
-            } else {
-                parallel.push(system);
+                swap(&mut inner, &mut outer);
             }
+
+            parallel.push(system);
+            inner.clear();
         }
 
         if parallel.len() > 0 {
