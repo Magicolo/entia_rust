@@ -51,6 +51,11 @@ impl<I: Item, F: Filter> Default for Inner<I, F> {
 
 impl<'a, I: Item, F: Filter> Query<'a, I, F> {
     #[inline]
+    pub fn len(&self) -> usize {
+        self.inner.states.iter().map(|(_, _, count)| count).sum()
+    }
+
+    #[inline]
     pub fn each(&'a self, mut each: impl FnMut(<I::State as At<'a>>::Item)) {
         for (state, _, count) in &self.inner.states {
             let count = *count;
@@ -141,6 +146,15 @@ impl<'a, I: Item + 'static, F: Filter> Inject for Query<'a, I, F> {
                     inner.states.push((item, segment.index, segment.count));
                 }
             }
+        }
+    }
+}
+
+impl<I: Item, F: Filter> Clone for State<I, F> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            entities: self.entities.clone(),
         }
     }
 }

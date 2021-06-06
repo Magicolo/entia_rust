@@ -37,6 +37,12 @@ impl<M: Message> Inject for Receive<'_, M> {
     }
 }
 
+impl<M: Message> Clone for State<M> {
+    fn clone(&self) -> Self {
+        Self(self.0, self.1.clone())
+    }
+}
+
 impl<'a, M: Message> Get<'a> for State<M> {
     type Item = Receive<'a, M>;
 

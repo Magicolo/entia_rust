@@ -52,6 +52,12 @@ impl<'a, M: Message> Inject for Emit<'a, M> {
     }
 }
 
+impl<M: Message> Clone for State<M> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone(), self.1.clone())
+    }
+}
+
 impl<'a, M: Message> Get<'a> for State<M> {
     type Item = Emit<'a, M>;
 

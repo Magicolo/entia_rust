@@ -37,6 +37,7 @@ pub struct World {
     pub(crate) bits_to_segment: HashMap<Bits, usize>,
 }
 
+#[derive(Clone)]
 pub struct State;
 
 impl Inject for &World {

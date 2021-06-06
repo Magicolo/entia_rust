@@ -44,6 +44,12 @@ impl<T: Default + Send + 'static> Inject for Local<'_, T> {
     }
 }
 
+impl<T> Clone for State<T> {
+    fn clone(&self) -> Self {
+        Self(self.0, self.1.clone(), PhantomData)
+    }
+}
+
 impl<'a, T: Default + Send + 'static> Get<'a> for State<T> {
     type Item = Local<'a, T>;
 

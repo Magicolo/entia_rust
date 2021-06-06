@@ -101,9 +101,8 @@ impl<M: Modify> Inject for Create<'_, M> {
 
     fn initialize(_: Self::Input, context: &Context, world: &mut World) -> Option<Self::State> {
         let entities = <Entities as Inject>::initialize((), context, world)?;
-        let input = (entities, Vec::new());
+        let input = (entities.clone(), Vec::new());
         let defer = <Defer<Creation<M>> as Inject>::initialize(input, context, world)?;
-        let entities = <Entities as Inject>::initialize((), context, world)?;
         Some(State { defer, entities })
     }
 
@@ -113,6 +112,16 @@ impl<M: Modify> Inject for Create<'_, M> {
 
     fn resolve(state: &mut Self::State, world: &mut World) {
         <Defer<Creation<M>> as Inject>::resolve(&mut state.defer, world);
+    }
+}
+
+impl<M: Modify> Clone for State<M> {
+    #[inline]
+    fn clone(&self) -> Self {
+        Self {
+            defer: self.defer.clone(),
+            entities: self.entities.clone(),
+        }
     }
 }
 
@@ -142,7 +151,11 @@ unsafe impl<M: Modify> Depend for State<M> {
 impl<M: Modify> Resolve for Creation<M> {
     type State = (entities::State, Vec<(M::State, Arc<Store>, usize)>);
 
-    fn resolve(self, (entities, targets): &mut Self::State, world: &mut World) {
+    fn resolve(
+        items: impl Iterator<Item = Self>,
+        (entities, targets): &mut Self::State,
+        world: &mut World,
+    ) {
         fn find<'a, M: Modify>(
             modify: &M,
             targets: &'a mut Vec<(M::State, Arc<Store>, usize)>,
@@ -166,49 +179,51 @@ impl<M: Modify> Resolve for Creation<M> {
             targets.get_mut(index)
         }
 
-        // The entities can be assumed have not been destroyed since this operation has been enqueued before any other
-        // operation that could concern them.
-        match self {
-            Creation::One(entity, modify) => {
-                if let Some((state, store, target)) = find(&modify, targets, world) {
-                    let target = &mut world.segments[*target];
-                    let index = target.reserve(1);
-                    unsafe { store.set(index, entity) };
-                    modify.modify(state, index);
-                    let datum = entities.get_datum_at_mut(entity.index as usize);
-                    datum.initialize(index as u32, target.index as u32);
-                }
-            }
-            Creation::Many(many, modifies) => {
-                let mut modifies: Box<[ManuallyDrop<M>]> = unsafe { transmute(modifies) };
-                let modify = modifies[0].deref();
-                if let Some((state, store, target)) = find(modify, targets, world) {
-                    let target = &mut world.segments[*target];
-                    let index = target.reserve(many.len());
-                    for i in 0..many.len() {
-                        let entity = many[i];
-                        let modify = unsafe { ManuallyDrop::take(&mut modifies[i]) };
+        for item in items {
+            // The entities can be assumed have not been destroyed since this operation has been enqueued before any other
+            // operation that could concern them.
+            match item {
+                Creation::One(entity, modify) => {
+                    if let Some((state, store, target)) = find(&modify, targets, world) {
+                        let target = &mut world.segments[*target];
+                        let index = target.reserve(1);
+                        unsafe { store.set(index, entity) };
                         modify.modify(state, index);
                         let datum = entities.get_datum_at_mut(entity.index as usize);
                         datum.initialize(index as u32, target.index as u32);
                     }
-
-                    unsafe { store.set_all(index, many) };
                 }
-            }
-            Creation::Clone(many, modify, clone) => {
-                if let Some((state, store, target)) = find(&modify, targets, world) {
-                    let target = &mut world.segments[*target];
-                    let index = target.reserve(many.len());
-                    for i in 0..many.len() {
-                        let entity = many[i];
-                        let modify = clone(&modify);
-                        modify.modify(state, index);
-                        let datum = entities.get_datum_at_mut(entity.index as usize);
-                        datum.initialize(index as u32, target.index as u32);
-                    }
+                Creation::Many(many, modifies) => {
+                    let mut modifies: Box<[ManuallyDrop<M>]> = unsafe { transmute(modifies) };
+                    let modify = modifies[0].deref();
+                    if let Some((state, store, target)) = find(modify, targets, world) {
+                        let target = &mut world.segments[*target];
+                        let index = target.reserve(many.len());
+                        for i in 0..many.len() {
+                            let entity = many[i];
+                            let modify = unsafe { ManuallyDrop::take(&mut modifies[i]) };
+                            modify.modify(state, index);
+                            let datum = entities.get_datum_at_mut(entity.index as usize);
+                            datum.initialize(index as u32, target.index as u32);
+                        }
 
-                    unsafe { store.set_all(index, many) };
+                        unsafe { store.set_all(index, many) };
+                    }
+                }
+                Creation::Clone(many, modify, clone) => {
+                    if let Some((state, store, target)) = find(&modify, targets, world) {
+                        let target = &mut world.segments[*target];
+                        let index = target.reserve(many.len());
+                        for i in 0..many.len() {
+                            let entity = many[i];
+                            let modify = clone(&modify);
+                            modify.modify(state, index);
+                            let datum = entities.get_datum_at_mut(entity.index as usize);
+                            datum.initialize(index as u32, target.index as u32);
+                        }
+
+                        unsafe { store.set_all(index, many) };
+                    }
                 }
             }
         }

@@ -96,6 +96,16 @@ impl<M: Modify, F: Filter> Inject for Add<'_, M, F> {
     }
 }
 
+impl<M: Modify, F: Filter> Clone for State<M, F> {
+    #[inline]
+    fn clone(&self) -> Self {
+        Self {
+            defer: self.defer.clone(),
+            index: self.index,
+        }
+    }
+}
+
 impl<'a, M: Modify, F: Filter> Get<'a> for State<M, F> {
     type Item = Add<'a, M, F>;
 
@@ -118,55 +128,61 @@ unsafe impl<M: Modify, F: Filter> Depend for State<M, F> {
 impl<M: Modify, F: Filter> Resolve for Addition<M, F> {
     type State = (entities::State, HashMap<usize, Vec<(M::State, Move)>>);
 
-    fn resolve(self, (entities, targets): &mut Self::State, world: &mut World) {
-        match self {
-            Addition::One(entity, modify, _) => {
-                if let Some(datum) = entities.get_datum_mut(entity) {
-                    let index = datum.index() as usize;
-                    let source = datum.segment() as usize;
-                    let targets = targets.entry(source).or_insert_with(|| {
-                        let mut targets = Vec::new();
-                        let source = &world.segments[source];
-                        if let Some(state) = Some(source)
-                            .filter(|segment| F::filter(segment, world))
-                            .and_then(|segment| M::initialize(segment, world))
-                        {
-                            targets.push((state, Move::new(source, source)));
-                        }
-                        targets
-                    });
-
-                    let target = targets
-                        .iter()
-                        .position(|pair| modify.validate(&pair.0))
-                        .or_else(|| {
-                            let mut types = world.segments[source].types.clone();
-                            for meta in modify.dynamic_metas(world) {
-                                types.set(meta.index, true);
-                            }
-
-                            let target = world.get_or_add_segment_by_types(&types, None).index;
-                            let state = Some(&world.segments[target])
+    fn resolve(
+        items: impl Iterator<Item = Self>,
+        (entities, targets): &mut Self::State,
+        world: &mut World,
+    ) {
+        for item in items {
+            match item {
+                Addition::One(entity, modify, _) => {
+                    if let Some(datum) = entities.get_datum_mut(entity) {
+                        let index = datum.index() as usize;
+                        let source = datum.segment() as usize;
+                        let targets = targets.entry(source).or_insert_with(|| {
+                            let mut targets = Vec::new();
+                            let source = &world.segments[source];
+                            if let Some(state) = Some(source)
                                 .filter(|segment| F::filter(segment, world))
-                                .and_then(|segment| M::initialize(segment, world))?;
-                            let indices = (source, target);
-                            let (source, target) = get_mut2(&mut world.segments, indices)?;
-                            let index = targets.len();
-                            targets.push((state, Move::new(source, target)));
-                            return Some(index);
-                        })
-                        .and_then(|index| targets.get_mut(index));
+                                .and_then(|segment| M::initialize(segment, world))
+                            {
+                                targets.push((state, Move::new(source, source)));
+                            }
+                            targets
+                        });
 
-                    if let Some(target) = target {
-                        if let Some(index) = target.1.apply(index, 1, world) {
-                            modify.modify(&mut target.0, index);
-                            datum.update(index as u32, target.1.target() as u32);
+                        let target = targets
+                            .iter()
+                            .position(|pair| modify.validate(&pair.0))
+                            .or_else(|| {
+                                let mut types = world.segments[source].types.clone();
+                                for meta in modify.dynamic_metas(world) {
+                                    types.set(meta.index, true);
+                                }
+
+                                let target = world.get_or_add_segment_by_types(&types, None).index;
+                                let state = Some(&world.segments[target])
+                                    .filter(|segment| F::filter(segment, world))
+                                    .and_then(|segment| M::initialize(segment, world))?;
+                                let indices = (source, target);
+                                let (source, target) = get_mut2(&mut world.segments, indices)?;
+                                let index = targets.len();
+                                targets.push((state, Move::new(source, target)));
+                                return Some(index);
+                            })
+                            .and_then(|index| targets.get_mut(index));
+
+                        if let Some(target) = target {
+                            if let Some(index) = target.1.apply(index, 1, world) {
+                                modify.modify(&mut target.0, index);
+                                datum.update(index as u32, target.1.target() as u32);
+                            }
                         }
                     }
                 }
-            }
-            Addition::All(..) => {
-                todo!()
+                Addition::All(..) => {
+                    todo!()
+                }
             }
         }
     }

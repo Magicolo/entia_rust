@@ -26,17 +26,17 @@ pub struct State<R: Resolve> {
 
 pub trait Resolve: Send + 'static {
     type State: Send;
-    fn resolve(self, state: &mut Self::State, world: &mut World);
+    fn resolve(items: impl Iterator<Item = Self>, state: &mut Self::State, world: &mut World);
 }
 
 struct Resolver {
     state: Box<dyn Any + Send>,
-    resolve: fn(&mut dyn Any, &mut World) -> bool,
+    resolve: fn(usize, &mut dyn Any, &mut World),
 }
 
 #[derive(Default)]
 struct Inner {
-    defer: Vec<usize>,
+    defer: Vec<(usize, usize)>,
     resolvers: Vec<Resolver>,
 }
 
@@ -47,14 +47,10 @@ impl Resolver {
     pub fn new<R: Resolve>(state: R::State) -> Self {
         Resolver {
             state: Box::new((VecDeque::<R>::new(), state)),
-            resolve: |state, world| {
+            resolve: |count, state, world| {
                 if let Some((store, state)) = state.downcast_mut::<Pair<R>>() {
-                    if let Some(resolve) = store.pop_front() {
-                        resolve.resolve(state, world);
-                        return true;
-                    }
+                    R::resolve(store.drain(..count), state, world);
                 }
-                false
             },
         }
     }
@@ -66,8 +62,8 @@ impl Resolver {
     }
 
     #[inline]
-    pub fn resolve(&mut self, world: &mut World) -> bool {
-        (self.resolve)(self.state.as_mut(), world)
+    pub fn resolve(&mut self, count: usize, world: &mut World) {
+        (self.resolve)(count, self.state.as_mut(), world);
     }
 
     #[inline]
@@ -85,7 +81,10 @@ impl<R: Resolve> Defer<'_, R> {
     #[inline]
     pub fn defer(&mut self, resolve: R) -> Option<&R> {
         let resolve = self.inner.resolvers[self.index].defer(resolve)?;
-        self.inner.defer.push(self.index);
+        match self.inner.defer.last_mut() {
+            Some((index, count)) if *index == self.index => *count += 1,
+            _ => self.inner.defer.push((self.index, 1)),
+        }
         Some(resolve)
     }
 }
@@ -112,8 +111,19 @@ impl<R: Resolve> Inject for Defer<'_, R> {
 
     fn resolve(state: &mut Self::State, world: &mut World) {
         let inner = state.inner.as_mut();
-        for index in inner.defer.drain(..) {
-            inner.resolvers[index].resolve(world);
+        for (index, count) in inner.defer.drain(..) {
+            inner.resolvers[index].resolve(count, world);
+        }
+    }
+}
+
+impl<R: Resolve> Clone for State<R> {
+    #[inline]
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            index: self.index,
+            _marker: PhantomData,
         }
     }
 }

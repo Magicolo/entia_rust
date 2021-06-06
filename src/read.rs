@@ -29,7 +29,7 @@ impl<'a, R: Resource> Get<'a> for State<R> {
 
     #[inline]
     fn get(&'a mut self, _: &World) -> Self::Item {
-        unsafe { self.0.at(0) }
+        unsafe { self.0.get(0) }
     }
 }
 
@@ -50,12 +50,19 @@ impl<T> State<T> {
     }
 }
 
+impl<T> Clone for State<T> {
+    #[inline]
+    fn clone(&self) -> Self {
+        Self(self.0.clone(), self.1, PhantomData)
+    }
+}
+
 impl<'a, C: Component> At<'a> for State<C> {
     type Item = &'a C;
 
     #[inline]
     fn at(&'a self, index: usize) -> Self::Item {
-        unsafe { self.0.at(index) }
+        unsafe { self.0.get(index) }
     }
 }
 
@@ -82,13 +89,13 @@ impl<'a, R: Resource> From<&'a mut State<R>> for Read<R> {
 impl<R: Resource> AsRef<R> for Read<R> {
     #[inline]
     fn as_ref(&self) -> &R {
-        unsafe { self.0.at(0) }
+        unsafe { self.0.get(0) }
     }
 }
 
 impl<R: Resource> AsRef<R> for State<R> {
     #[inline]
     fn as_ref(&self) -> &R {
-        unsafe { self.0.at(0) }
+        unsafe { self.0.get(0) }
     }
 }

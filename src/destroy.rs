@@ -24,8 +24,8 @@ impl<F: Filter> Destroy<'_, F> {
     }
 
     #[inline]
-    pub fn destroy_many(&mut self, entities: &[Entity]) {
-        for &entity in entities {
+    pub fn destroy_many(&mut self, entities: impl IntoIterator<Item = Entity>) {
+        for entity in entities {
             self.destroy(entity);
         }
     }
@@ -47,11 +47,20 @@ impl<F: Filter> Inject for Destroy<'_, F> {
     }
 
     fn update(State(state): &mut Self::State, world: &mut World) {
+        <Query<Entity, F> as Inject>::update(state.as_mut(), world);
         <Defer<Destruction<F>> as Inject>::update(state, world);
     }
 
     fn resolve(State(state): &mut Self::State, world: &mut World) {
+        <Query<Entity, F> as Inject>::resolve(state.as_mut(), world);
         <Defer<Destruction<F>> as Inject>::resolve(state, world);
+    }
+}
+
+impl<F: Filter> Clone for State<F> {
+    #[inline]
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
     }
 }
 
@@ -78,30 +87,31 @@ unsafe impl<F: Filter> Depend for State<F> {
 impl<F: Filter> Resolve for Destruction<F> {
     type State = query::State<Entity, F>;
 
-    fn resolve(self, state: &mut Self::State, world: &mut World) {
+    fn resolve(items: impl Iterator<Item = Self>, state: &mut Self::State, world: &mut World) {
         <Query<Entity, F> as Inject>::update(state, world);
-        <Query<Entity, F> as Inject>::resolve(state, world);
 
         let entities = &mut state.entities;
         let query = state.inner.as_mut();
 
-        match self {
-            Destruction::One(entity) => {
-                if let Some(datum) = entities.get_datum_mut(entity) {
-                    let index = datum.index() as usize;
-                    let segment = datum.segment() as usize;
-                    if query.segments.has(segment) {
-                        entities.release(&[entity]);
-                        world.segments[segment].remove_at(index);
+        for item in items {
+            match item {
+                Destruction::One(entity) => {
+                    if let Some(datum) = entities.get_datum_mut(entity) {
+                        let index = datum.index() as usize;
+                        let segment = datum.segment() as usize;
+                        if query.segments.has(segment) {
+                            entities.release(&[entity]);
+                            world.segments[segment].remove_at(index);
+                        }
                     }
                 }
-            }
-            Destruction::All(_) => {
-                for (item, segment, _) in query.states.iter_mut() {
-                    let segment = &mut world.segments[*segment];
-                    if segment.count > 0 {
-                        entities.release(unsafe { item.0.get(segment.count) });
-                        segment.clear();
+                Destruction::All(_) => {
+                    for (item, segment, _) in query.states.iter_mut() {
+                        let segment = &mut world.segments[*segment];
+                        if segment.count > 0 {
+                            entities.release(unsafe { item.0.get_all(0, segment.count) });
+                            segment.clear();
+                        }
                     }
                 }
             }

@@ -118,10 +118,16 @@ impl Store {
         );
     }
 
-    /// SAFETY: The 'count' must be within the bounds of the store.
+    /// SAFETY: The 'index' must be within the bounds of the store.
     #[inline]
-    pub unsafe fn get<T>(&self, count: usize) -> &mut [T] {
-        from_raw_parts_mut(self.pointer().cast(), count)
+    pub unsafe fn get<T>(&self, index: usize) -> &mut T {
+        &mut *self.pointer().cast::<T>().add(index)
+    }
+
+    /// SAFETY: Both 'index' and 'count' must be within the bounds of the store.
+    #[inline]
+    pub unsafe fn get_all<T>(&self, index: usize, count: usize) -> &mut [T] {
+        from_raw_parts_mut(self.pointer().cast::<T>().add(index), count)
     }
 
     /// SAFETY: The 'items' reference must not point into 'self' (ex: through usage of 'self.get(usize)').
@@ -137,12 +143,6 @@ impl Store {
         let source = items.as_ptr().cast();
         let target = self.pointer();
         (self.0.copy)((source, 0), (target, index), items.len());
-    }
-
-    /// SAFETY: The 'index' must be within the bounds of the store.
-    #[inline]
-    pub unsafe fn at<T>(&self, index: usize) -> &mut T {
-        &mut *self.pointer().cast::<T>().add(index)
     }
 
     /// SAFETY: Both the 'source' and 'target' indices must be within the bounds of the store.
@@ -170,10 +170,6 @@ impl Store {
     #[inline]
     unsafe fn pointer(&self) -> *mut () {
         *self.1.get()
-    }
-
-    pub fn boba<T>(&self) -> *mut T {
-        unsafe { self.pointer().cast() }
     }
 }
 

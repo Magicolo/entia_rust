@@ -8,6 +8,7 @@ use crate::{
 };
 
 pub struct Entities<'a>(&'a mut Inner);
+#[derive(Clone)]
 pub struct State(write::State<Inner>);
 
 #[derive(Default)]

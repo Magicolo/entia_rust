@@ -66,6 +66,12 @@ impl<M: Modify, F: Filter> Inject for Remove<'_, M, F> {
     }
 }
 
+impl<M: Modify, F: Filter> Clone for State<M, F> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
 impl<'a, M: Modify, F: Filter> Get<'a> for State<M, F> {
     type Item = Remove<'a, M, F>;
 
@@ -95,7 +101,11 @@ unsafe impl<M: Modify, F: Filter> Depend for State<M, F> {
 impl<M: Modify, F: Filter> Resolve for Removal<M, F> {
     type State = (entities::State, Vec<Target>);
 
-    fn resolve(self, (entities, targets): &mut Self::State, world: &mut World) {
+    fn resolve(
+        items: impl Iterator<Item = Self>,
+        (entities, targets): &mut Self::State,
+        world: &mut World,
+    ) {
         fn validate<M: Modify, F: Filter>(
             source: &Segment,
             world: &World,
@@ -162,33 +172,36 @@ impl<M: Modify, F: Filter> Resolve for Removal<M, F> {
             targets.push(target);
         }
 
-        match self {
-            Removal::One(entity) => {
-                if let Some(datum) = entities.get_datum_mut(entity) {
-                    remove(datum, targets, world);
-                }
-            }
-            Removal::Many(many) => {
-                for &entity in many.iter() {
+        for item in items {
+            match item {
+                Removal::One(entity) => {
                     if let Some(datum) = entities.get_datum_mut(entity) {
                         remove(datum, targets, world);
                     }
                 }
-            }
-            Removal::All(_) => {
-                for i in 0..targets.len() {
-                    match get(i, targets, world) {
-                        Target::Valid(store, target) => {
-                            let count = world.segments[i].count;
-                            if let Some(index) = target.apply(0, count, world) {
-                                for i in index..index + count {
-                                    let entity = *unsafe { store.at::<Entity>(i) };
-                                    let datum = entities.get_datum_at_mut(entity.index as usize);
-                                    datum.update(i as u32, target.target() as u32);
+                Removal::Many(many) => {
+                    for &entity in many.iter() {
+                        if let Some(datum) = entities.get_datum_mut(entity) {
+                            remove(datum, targets, world);
+                        }
+                    }
+                }
+                Removal::All(_) => {
+                    for i in 0..targets.len() {
+                        match get(i, targets, world) {
+                            Target::Valid(store, target) => {
+                                let count = world.segments[i].count;
+                                if let Some(index) = target.apply(0, count, world) {
+                                    for i in index..index + count {
+                                        let entity = *unsafe { store.get::<Entity>(i) };
+                                        let datum =
+                                            entities.get_datum_at_mut(entity.index as usize);
+                                        datum.update(i as u32, target.target() as u32);
+                                    }
                                 }
                             }
+                            _ => {}
                         }
-                        _ => {}
                     }
                 }
             }

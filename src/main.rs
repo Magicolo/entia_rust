@@ -55,6 +55,7 @@ deallocation time.
 - #[derive(Inject/Item/Modify/Filter)] macros that implements the corresponding trait for structs that hold only
 fields that implement it.
 - #[derive(Component/Resource/Message)] macros that implement the corresponding trait for structs.
+- Clean up unnecessary #[inline].
 */
 
 fn main() {
@@ -63,27 +64,26 @@ fn main() {
         .scheduler()
         .schedule(|mut create: Create<()>| {
             println!("A");
-            create.create(());
-            create.create_default(1000);
+            // create.create(());
+            create.create_default(100);
+        })
+        // .schedule(|query: Query<Entity>| {
+        //     println!("B");
+        //     query.each(|entity: Entity| println!("B1: {:?}", entity));
+        // })
+        .schedule(|query: Query<Entity>, mut destroy: Destroy| {
+            println!("C: {:?}", query.len());
+            // destroy.destroy_many(&query);
+            destroy.destroy_many(query.into_iter().take(query.len() / 2));
         })
         .schedule(|query: Query<Entity>| {
-            println!("B");
-            query.each(|entity: Entity| println!("B1: {:?}", entity));
-            query.each(|entity: Entity| println!("B2: {:?}", entity));
-        })
-        .schedule(|mut destroy: Destroy| {
-            println!("C");
-            destroy.destroy_all();
-        })
-        .schedule(|query: Query<Entity>| {
-            println!("D");
-            query.each(|entity: Entity| println!("D1: {:?}", entity));
-            query.each(|entity: Entity| println!("D2: {:?}", entity));
+            println!("D: {:?}", query.len());
+            // query.each(|entity: Entity| println!("D1: {:?}", entity));
         })
         .runner()
         .unwrap();
 
-    for _ in 0..10 {
+    for _ in 0..100 {
         runner.run(&mut world);
     }
 }
