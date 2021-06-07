@@ -187,10 +187,10 @@ impl<M: Modify> Resolve for Creation<M> {
                     if let Some((state, store, target)) = find(&modify, targets, world) {
                         let target = &mut world.segments[*target];
                         let index = target.reserve(1);
-                        unsafe { store.set(index, entity) };
                         modify.modify(state, index);
-                        let datum = entities.get_datum_at_mut(entity.index as usize);
+                        let datum = unsafe { entities.get_datum_mut_unchecked(entity) };
                         datum.initialize(index as u32, target.index as u32);
+                        unsafe { store.set(index, entity) };
                     }
                 }
                 Creation::Many(many, modifies) => {
@@ -200,13 +200,13 @@ impl<M: Modify> Resolve for Creation<M> {
                         let target = &mut world.segments[*target];
                         let index = target.reserve(many.len());
                         for i in 0..many.len() {
+                            let index = index + i;
                             let entity = many[i];
                             let modify = unsafe { ManuallyDrop::take(&mut modifies[i]) };
                             modify.modify(state, index);
-                            let datum = entities.get_datum_at_mut(entity.index as usize);
+                            let datum = unsafe { entities.get_datum_mut_unchecked(entity) };
                             datum.initialize(index as u32, target.index as u32);
                         }
-
                         unsafe { store.set_all(index, many) };
                     }
                 }
@@ -215,13 +215,13 @@ impl<M: Modify> Resolve for Creation<M> {
                         let target = &mut world.segments[*target];
                         let index = target.reserve(many.len());
                         for i in 0..many.len() {
+                            let index = index + i;
                             let entity = many[i];
                             let modify = clone(&modify);
                             modify.modify(state, index);
-                            let datum = entities.get_datum_at_mut(entity.index as usize);
-                            datum.initialize(index as u32, target.index as u32);
+                            unsafe { entities.get_datum_mut_unchecked(entity) }
+                                .initialize(index as u32, target.index as u32);
                         }
-
                         unsafe { store.set_all(index, many) };
                     }
                 }

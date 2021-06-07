@@ -1,12 +1,15 @@
-use crate::core::bits::*;
-use crate::core::utility::*;
-use crate::world::*;
 use std::cell::UnsafeCell;
 use std::intrinsics::transmute;
 use std::mem::ManuallyDrop;
 use std::slice::from_raw_parts_mut;
 use std::sync::Arc;
 use std::usize;
+
+use entia_core::bits::Bits;
+use entia_core::utility::get_mut2;
+use entia_core::utility::next_power_of_2;
+
+use crate::world::{Meta, World};
 
 pub struct Store(Meta, UnsafeCell<*mut ()>);
 
@@ -56,11 +59,18 @@ impl Segment {
     pub fn remove_at(&mut self, index: usize) -> bool {
         if index < self.count {
             self.count -= 1;
-            let last = self.count;
-            for store in self.stores.iter_mut() {
-                unsafe { store.squash(last, index) };
+            let count = self.count;
+            if index == count {
+                for store in self.stores.iter_mut() {
+                    unsafe { store.as_ref().drop(index, 1) };
+                }
+                false
+            } else {
+                for store in self.stores.iter_mut() {
+                    unsafe { store.squash(count, index) };
+                }
+                true
             }
-            true
         } else {
             false
         }

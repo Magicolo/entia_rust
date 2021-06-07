@@ -195,7 +195,7 @@ impl<M: Modify, F: Filter> Resolve for Removal<M, F> {
                                     for i in index..index + count {
                                         let entity = *unsafe { store.get::<Entity>(i) };
                                         let datum =
-                                            entities.get_datum_at_mut(entity.index as usize);
+                                            unsafe { entities.get_datum_mut_unchecked(entity) };
                                         datum.update(i as u32, target.target() as u32);
                                     }
                                 }

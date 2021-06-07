@@ -59,31 +59,26 @@ fields that implement it.
 */
 
 fn main() {
+    let create = || {
+        let mut counter = 0;
+        move |mut create: Create<()>| {
+            counter += counter / 1000 + 1;
+            create.create(());
+            create.create_default(counter);
+        }
+    };
+
     let mut world = World::new();
     let mut runner = world
         .scheduler()
-        .schedule(|mut create: Create<()>| {
-            println!("A");
-            // create.create(());
-            create.create_default(100);
-        })
-        // .schedule(|query: Query<Entity>| {
-        //     println!("B");
-        //     query.each(|entity: Entity| println!("B1: {:?}", entity));
-        // })
-        .schedule(|query: Query<Entity>, mut destroy: Destroy| {
-            println!("C: {:?}", query.len());
-            // destroy.destroy_many(&query);
-            destroy.destroy_many(query.into_iter().take(query.len() / 2));
-        })
-        .schedule(|query: Query<Entity>| {
-            println!("D: {:?}", query.len());
-            // query.each(|entity: Entity| println!("D1: {:?}", entity));
-        })
+        .schedule(create())
+        .schedule(|query: Query<Entity>| println!("C: {:?}", query.len()))
+        .schedule(create())
+        .schedule(|mut destroy: Destroy| destroy.destroy_all())
         .runner()
         .unwrap();
 
-    for _ in 0..100 {
+    for _ in 0..1000000 {
         runner.run(&mut world);
     }
 }

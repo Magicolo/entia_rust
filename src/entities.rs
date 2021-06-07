@@ -87,11 +87,9 @@ impl Datum {
 }
 
 impl Entities<'_> {
+    #[inline]
     pub fn reserve(&mut self, entities: &mut [Entity]) {
-        // TODO: Make this thread-safe
-        // let guard = self.0.lock.lock().unwrap();
         self.0.reserve(entities);
-        // drop(guard);
     }
 
     #[inline]
@@ -107,13 +105,25 @@ impl State {
     }
 
     #[inline]
-    pub fn get_datum_at_mut(&mut self, index: usize) -> &mut Datum {
-        &mut self.0.as_mut().data[index]
+    #[allow(dead_code)]
+    pub fn get_datum(&mut self, entity: Entity) -> Option<&Datum> {
+        self.0.as_ref().get_datum(entity)
     }
 
     #[inline]
     pub fn get_datum_mut(&mut self, entity: Entity) -> Option<&mut Datum> {
         self.0.as_mut().get_datum_mut(entity)
+    }
+
+    #[inline]
+    #[allow(dead_code)]
+    pub unsafe fn get_datum_unchecked(&mut self, entity: Entity) -> &Datum {
+        self.0.as_ref().get_datum_unchecked(entity)
+    }
+
+    #[inline]
+    pub unsafe fn get_datum_mut_unchecked(&mut self, entity: Entity) -> &mut Datum {
+        self.0.as_mut().get_datum_mut_unchecked(entity)
     }
 }
 
@@ -127,6 +137,7 @@ impl Inner {
     }
 
     pub fn reserve(&mut self, entities: &mut [Entity]) {
+        // TODO: make this thread safe
         let mut current = 0;
         while current < entities.len() {
             if let Some(mut entity) = self.free.pop() {
@@ -166,15 +177,25 @@ impl Inner {
     }
 
     pub fn get_datum(&self, entity: Entity) -> Option<&Datum> {
-        self.data
-            .get(entity.index as usize)
-            .filter(|datum| entity.generation == datum.generation)
+        self.data.get(entity.index as usize).filter(|datum| {
+            entity.generation == datum.generation && datum.state == Datum::INITIALIZED
+        })
     }
 
     pub fn get_datum_mut(&mut self, entity: Entity) -> Option<&mut Datum> {
-        self.data
-            .get_mut(entity.index as usize)
-            .filter(|datum| entity.generation == datum.generation)
+        self.data.get_mut(entity.index as usize).filter(|datum| {
+            entity.generation == datum.generation && datum.state == Datum::INITIALIZED
+        })
+    }
+
+    #[inline]
+    pub unsafe fn get_datum_unchecked(&self, entity: Entity) -> &Datum {
+        &self.data[entity.index as usize]
+    }
+
+    #[inline]
+    pub unsafe fn get_datum_mut_unchecked(&mut self, entity: Entity) -> &mut Datum {
+        &mut self.data[entity.index as usize]
     }
 }
 

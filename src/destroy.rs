@@ -92,7 +92,6 @@ impl<F: Filter> Resolve for Destruction<F> {
 
         let entities = &mut state.entities;
         let query = state.inner.as_mut();
-
         for item in items {
             match item {
                 Destruction::One(entity) => {
@@ -101,7 +100,14 @@ impl<F: Filter> Resolve for Destruction<F> {
                         let segment = datum.segment() as usize;
                         if query.segments.has(segment) {
                             entities.release(&[entity]);
-                            world.segments[segment].remove_at(index);
+                            let segment = &mut world.segments[segment];
+                            if segment.remove_at(index) {
+                                // SAFETY: When it exists, the entity store is always the first. This segment must have
+                                // an entity store since the destroyed entity was in it.
+                                let moved = *unsafe { segment.stores[0].get::<Entity>(index) };
+                                unsafe { entities.get_datum_mut_unchecked(moved) }
+                                    .update(index as u32, segment.index as u32);
+                            }
                         }
                     }
                 }

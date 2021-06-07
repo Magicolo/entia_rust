@@ -2,6 +2,8 @@ use entia_core::bits::Bits;
 use std::any::type_name;
 use std::any::TypeId;
 use std::collections::HashMap;
+use std::mem::needs_drop;
+use std::mem::size_of;
 use std::mem::ManuallyDrop;
 use std::ptr::copy;
 use std::ptr::drop_in_place;
@@ -14,6 +16,7 @@ use crate::depend::Depend;
 use crate::inject::Context;
 use crate::{
     depend::Dependency,
+    entity::Entity,
     inject::{Get, Inject},
     segment::Segment,
 };
@@ -39,6 +42,40 @@ pub struct World {
 
 #[derive(Clone)]
 pub struct State;
+
+impl Meta {
+    pub(crate) fn new<T: 'static>(index: usize) -> Self {
+        Self {
+            identifier: TypeId::of::<T>(),
+            name: type_name::<T>(),
+            index,
+            allocate: |capacity| {
+                let mut data = ManuallyDrop::new(Vec::<T>::with_capacity(capacity));
+                data.as_mut_ptr().cast()
+            },
+            free: |pointer, capacity| unsafe {
+                Vec::from_raw_parts(pointer.cast::<T>(), 0, capacity);
+            },
+            copy: if size_of::<T>() > 0 {
+                |source, target, count| unsafe {
+                    let source = source.0.cast::<T>().add(source.1);
+                    let target = target.0.cast::<T>().add(target.1);
+                    copy(source, target, count);
+                }
+            } else {
+                |_, _, _| {}
+            },
+            drop: if needs_drop::<T>() {
+                |pointer, index, count| unsafe {
+                    let pointer = pointer.cast::<T>().add(index);
+                    drop_in_place(slice_from_raw_parts_mut(pointer, count));
+                }
+            } else {
+                |_, _, _| {}
+            },
+        }
+    }
+}
 
 impl Inject for &World {
     type Input = ();
@@ -69,7 +106,7 @@ impl World {
         Self {
             identifier: COUNTER.fetch_add(1, Ordering::Relaxed),
             segments: Vec::new(),
-            metas: Vec::new(),
+            metas: vec![Arc::new(Meta::new::<Entity>(0))],
             type_to_meta: HashMap::new(),
             bits_to_segment: HashMap::new(),
         }
@@ -86,31 +123,10 @@ impl World {
         match self.get_meta::<T>() {
             Some(meta) => meta,
             None => {
-                let key = TypeId::of::<T>();
                 let index = self.metas.len();
-                let meta = Arc::new(Meta {
-                    identifier: key.clone(),
-                    name: type_name::<T>(),
-                    index,
-                    allocate: |capacity| {
-                        let mut data = ManuallyDrop::new(Vec::<T>::with_capacity(capacity));
-                        data.as_mut_ptr().cast()
-                    },
-                    free: |pointer, capacity| unsafe {
-                        Vec::from_raw_parts(pointer.cast::<T>(), 0, capacity);
-                    },
-                    copy: |source, target, count| unsafe {
-                        let source = source.0.cast::<T>().add(source.1);
-                        let target = target.0.cast::<T>().add(target.1);
-                        copy(source, target, count);
-                    },
-                    drop: |pointer, index, count| unsafe {
-                        let pointer = pointer.cast::<T>().add(index);
-                        drop_in_place(slice_from_raw_parts_mut(pointer, count));
-                    },
-                });
+                let meta = Arc::new(Meta::new::<T>(index));
                 self.metas.push(meta.clone());
-                self.type_to_meta.insert(key, index);
+                self.type_to_meta.insert(meta.identifier.clone(), index);
                 meta
             }
         }
