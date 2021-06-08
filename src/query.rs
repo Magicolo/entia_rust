@@ -132,6 +132,8 @@ impl<'a, I: Item + 'static, F: Filter> Inject for Query<'a, I, F> {
     }
 
     fn update(state: &mut Self::State, world: &mut World) {
+        <Entities as Inject>::update(&mut state.entities, world);
+
         let inner = state.inner.as_mut();
         for (_, segment, count) in inner.states.iter_mut() {
             *count = world.segments[*segment].count;
@@ -147,6 +149,10 @@ impl<'a, I: Item + 'static, F: Filter> Inject for Query<'a, I, F> {
                 }
             }
         }
+    }
+
+    fn resolve(state: &mut Self::State, world: &mut World) {
+        <Entities as Inject>::resolve(&mut state.entities, world);
     }
 }
 

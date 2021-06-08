@@ -107,10 +107,12 @@ impl<M: Modify> Inject for Create<'_, M> {
     }
 
     fn update(state: &mut Self::State, world: &mut World) {
+        <Entities as Inject>::update(&mut state.entities, world);
         <Defer<Creation<M>> as Inject>::update(&mut state.defer, world);
     }
 
     fn resolve(state: &mut Self::State, world: &mut World) {
+        <Entities as Inject>::resolve(&mut state.entities, world);
         <Defer<Creation<M>> as Inject>::resolve(&mut state.defer, world);
     }
 }
@@ -178,6 +180,8 @@ impl<M: Modify> Resolve for Creation<M> {
                 })?;
             targets.get_mut(index)
         }
+
+        <Entities as Inject>::resolve(entities, world);
 
         for item in items {
             // The entities can be assumed have not been destroyed since this operation has been enqueued before any other

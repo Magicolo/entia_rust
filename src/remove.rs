@@ -58,10 +58,12 @@ impl<M: Modify, F: Filter> Inject for Remove<'_, M, F> {
     }
 
     fn update(State(state): &mut Self::State, world: &mut World) {
+        <Entities as Inject>::update(&mut state.as_mut().0, world);
         <Defer<Removal<M, F>> as Inject>::update(state, world);
     }
 
     fn resolve(State(state): &mut Self::State, world: &mut World) {
+        <Entities as Inject>::resolve(&mut state.as_mut().0, world);
         <Defer<Removal<M, F>> as Inject>::resolve(state, world);
     }
 }
@@ -159,6 +161,8 @@ impl<M: Modify, F: Filter> Resolve for Removal<M, F> {
                 _ => {}
             };
         }
+
+        <Entities as Inject>::resolve(entities, world);
 
         while let Some(source) = world.segments.get(targets.len()) {
             let target = validate::<M, F>(source, world)

@@ -1,3 +1,8 @@
+use std::{
+    cmp::{max, min},
+    sync::atomic::{AtomicIsize, AtomicUsize, Ordering},
+};
+
 use crate::{
     depend::{Depend, Dependency},
     entity::Entity,
@@ -11,7 +16,7 @@ pub struct Entities<'a>(&'a mut Inner);
 #[derive(Clone)]
 pub struct State(write::State<Inner>);
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Datum {
     index: u32,
     segment: u32,
@@ -20,8 +25,8 @@ pub struct Datum {
 }
 
 struct Inner {
-    pub free: Vec<Entity>,
-    pub data: Vec<Datum>,
+    pub free: (Vec<Entity>, AtomicIsize),
+    pub data: (Vec<Datum>, AtomicUsize),
 }
 
 impl Resource for Inner {}
@@ -42,14 +47,10 @@ impl Datum {
     }
 
     #[inline]
-    pub fn reserve(&mut self) -> Option<u32> {
-        if self.state == Self::RELEASED {
-            self.generation += 1;
-            self.state = Self::RESERVED;
-            Some(self.generation)
-        } else {
-            None
-        }
+    pub fn reserve(&mut self) -> u32 {
+        self.state = Self::RESERVED;
+        self.generation += 1;
+        self.generation
     }
 
     #[inline]
@@ -133,69 +134,69 @@ impl Inner {
         let mut data = Vec::with_capacity(capacity);
         free.push(Entity::ZERO);
         data.push(Datum::default());
-        Inner { free, data }
+        Inner {
+            free: (free, 0.into()),
+            data: (data, 0.into()),
+        }
     }
 
     pub fn reserve(&mut self, entities: &mut [Entity]) {
-        // TODO: make this thread safe
-        let mut current = 0;
-        while current < entities.len() {
-            if let Some(mut entity) = self.free.pop() {
-                let datum = &mut self.data[entity.index as usize];
-                if let Some(generation) = datum.reserve() {
-                    entity.generation = generation;
-                    entities[current] = entity;
-                    current += 1;
-                }
-            } else {
-                break;
-            }
+        if entities.len() == 0 {
+            return;
         }
 
-        while current < entities.len() {
-            let index = self.data.len();
-            self.data.push(Datum {
-                index: 0,
-                segment: 0,
-                generation: 0,
-                state: 1,
-            });
-            entities[current] = Entity {
-                index: index as u32,
+        let count = entities.len() as isize;
+        let last = self.free.1.fetch_sub(count, Ordering::Relaxed);
+        let count = max(min(count, last), 0) as usize;
+        for i in 0..count {
+            let index = last as usize - i;
+            let mut entity = self.free.0[index];
+            entity.generation = self.data.0[entity.index as usize].reserve();
+            entities[i] = entity;
+        }
+
+        let remaining = entities.len() - count;
+        if remaining == 0 {
+            return;
+        }
+
+        let index = self.data.1.fetch_add(remaining, Ordering::Relaxed);
+        for i in 0..remaining {
+            entities[i] = Entity {
+                index: (index + i) as u32,
                 generation: 0,
             };
-            current += 1;
         }
     }
 
-    #[inline]
     pub fn release(&mut self, entities: &[Entity]) {
         for entity in entities {
-            self.data[entity.index as usize].release();
+            self.data.0[entity.index as usize].release();
         }
-        self.free.extend_from_slice(entities);
+        self.free.0.extend_from_slice(entities);
+        *self.free.1.get_mut() = self.free.0.len() as isize;
     }
 
     pub fn get_datum(&self, entity: Entity) -> Option<&Datum> {
-        self.data.get(entity.index as usize).filter(|datum| {
+        self.data.0.get(entity.index as usize).filter(|datum| {
             entity.generation == datum.generation && datum.state == Datum::INITIALIZED
         })
     }
 
     pub fn get_datum_mut(&mut self, entity: Entity) -> Option<&mut Datum> {
-        self.data.get_mut(entity.index as usize).filter(|datum| {
+        self.data.0.get_mut(entity.index as usize).filter(|datum| {
             entity.generation == datum.generation && datum.state == Datum::INITIALIZED
         })
     }
 
     #[inline]
     pub unsafe fn get_datum_unchecked(&self, entity: Entity) -> &Datum {
-        &self.data[entity.index as usize]
+        &self.data.0[entity.index as usize]
     }
 
     #[inline]
     pub unsafe fn get_datum_mut_unchecked(&mut self, entity: Entity) -> &mut Datum {
-        &mut self.data[entity.index as usize]
+        &mut self.data.0[entity.index as usize]
     }
 }
 
@@ -213,6 +214,22 @@ impl Inject for Entities<'_> {
     fn initialize(_: Self::Input, context: &Context, world: &mut World) -> Option<Self::State> {
         let inner = <Write<Inner> as Inject>::initialize(None, context, world)?;
         Some(State(inner))
+    }
+
+    fn resolve(State(state): &mut Self::State, _: &mut World) {
+        let inner = state.as_mut();
+        let count = max(*inner.free.1.get_mut(), 0);
+        inner.free.0.truncate(count as usize);
+        *inner.free.1.get_mut() = inner.free.0.len() as isize;
+
+        let count = *inner.data.1.get_mut();
+        let datum = Datum {
+            index: 0,
+            segment: 0,
+            generation: 0,
+            state: 1,
+        };
+        inner.data.0.resize(count, datum);
     }
 }
 

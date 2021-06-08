@@ -61,6 +61,7 @@ impl<M: Modify, F: Filter> Inject for Add<'_, M, F> {
     }
 
     fn update(state: &mut Self::State, world: &mut World) {
+        <Entities as Inject>::update(&mut state.defer.as_mut().0, world);
         <Defer<Addition<M, F>> as Inject>::update(&mut state.defer, world);
         // TODO: Segments must be collected in advance to ensure the order of 'Add' when no resolution have occured.
         /*
@@ -92,6 +93,7 @@ impl<M: Modify, F: Filter> Inject for Add<'_, M, F> {
     }
 
     fn resolve(state: &mut Self::State, world: &mut World) {
+        <Entities as Inject>::resolve(&mut state.defer.as_mut().0, world);
         <Defer<Addition<M, F>> as Inject>::resolve(&mut state.defer, world);
     }
 }
@@ -133,6 +135,8 @@ impl<M: Modify, F: Filter> Resolve for Addition<M, F> {
         (entities, targets): &mut Self::State,
         world: &mut World,
     ) {
+        <Entities as Inject>::resolve(entities, world);
+
         for item in items {
             match item {
                 Addition::One(entity, modify, _) => {
