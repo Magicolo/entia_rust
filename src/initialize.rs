@@ -8,14 +8,14 @@ use crate::{
     write::Write,
 };
 
-pub trait Set: Send + 'static {
+pub trait Initialize: Send + 'static {
     type State: Send;
     fn initialize(segment: &Segment, world: &World) -> Option<Self::State>;
     fn metas(world: &mut World) -> Vec<Arc<Meta>>;
     fn set(self, state: &mut Self::State, index: usize);
 }
 
-impl<C: Component> Set for C {
+impl<C: Component> Initialize for C {
     type State = <Write<C> as Item>::State;
 
     fn initialize(segment: &Segment, world: &World) -> Option<Self::State> {
@@ -35,7 +35,7 @@ impl<C: Component> Set for C {
 
 macro_rules! modify {
     ($($p:ident, $t:ident),*) => {
-        impl<$($t: Set,)*> Set for ($($t,)*) {
+        impl<$($t: Initialize,)*> Initialize for ($($t,)*) {
             type State = ($($t::State,)*);
 
             fn initialize(_segment: &Segment, _world: &World) -> Option<Self::State> {
