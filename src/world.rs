@@ -151,60 +151,41 @@ impl World {
         self.get_segment_by_types(&types)
     }
 
-    pub fn add_segment_from_types(&mut self, types: &Bits, capacity: usize) -> &mut Segment {
+    pub fn add_segment_from_types(&mut self, types: &Bits) -> &mut Segment {
         let metas = self.get_metas_from_types(types);
-        self.add_segment(types.clone(), metas, capacity)
+        self.add_segment(types.clone(), metas)
     }
 
-    pub fn add_segment_from_metas(
-        &mut self,
-        mut metas: Vec<Arc<Meta>>,
-        capacity: usize,
-    ) -> &mut Segment {
+    pub fn add_segment_from_metas(&mut self, mut metas: Vec<Arc<Meta>>) -> &mut Segment {
         let mut types = Bits::new();
         metas.sort_by_key(|meta| meta.index);
         metas.iter().for_each(|meta| types.set(meta.index, true));
-        self.add_segment(types, metas, capacity)
+        self.add_segment(types, metas)
     }
 
-    pub fn get_or_add_segment_by_types(
-        &mut self,
-        types: &Bits,
-        capacity: Option<usize>,
-    ) -> &mut Segment {
+    pub fn get_or_add_segment_by_types(&mut self, types: &Bits) -> &mut Segment {
         match self
             .get_segment_by_types(types)
             .map(|segment| segment.index)
         {
-            Some(index) => {
-                let segment = &mut self.segments[index];
-                if let Some(capacity) = capacity {
-                    segment.ensure(capacity);
-                }
-                segment
-            }
-            None => self.add_segment_from_types(types, capacity.unwrap_or(32)),
+            Some(index) => &mut self.segments[index],
+            None => self.add_segment_from_types(types),
         }
     }
 
-    pub fn get_or_add_segment_by_metas(
-        &mut self,
-        metas: Vec<Arc<Meta>>,
-        capacity: Option<usize>,
-    ) -> &mut Segment {
+    pub fn get_or_add_segment_by_metas(&mut self, metas: Vec<Arc<Meta>>) -> &mut Segment {
         let mut types = Bits::new();
         metas.iter().for_each(|meta| types.set(meta.index, true));
-        self.get_or_add_segment_by_types(&types, capacity)
+        self.get_or_add_segment_by_types(&types)
     }
 
     fn add_segment(
         &mut self,
         types: Bits,
         metas: impl IntoIterator<Item = Arc<Meta>>,
-        capacity: usize,
     ) -> &mut Segment {
         let index = self.segments.len();
-        let segment = Segment::new(index, types.clone(), metas, capacity);
+        let segment = Segment::new(index, types.clone(), metas, 0);
         self.segments.push(segment);
         self.bits_to_segment.insert(types, index);
         &mut self.segments[index]

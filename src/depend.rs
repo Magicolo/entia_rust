@@ -2,7 +2,7 @@ use std::any::TypeId;
 
 use crate::world::World;
 
-/// SAFETY: This trait is unsafe since a wrong implementation of it may lead to undefined behavior. Every
+/// SAFETY: This trait is unsafe since a wrong implementation may lead to undefined behavior. Every
 /// implementor must declare all necessary dependencies in order to properly inform a scheduler of what it
 /// it allowed to do.
 pub unsafe trait Depend {

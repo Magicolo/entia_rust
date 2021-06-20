@@ -1,235 +1,158 @@
-use std::{any::TypeId, intrinsics::transmute, mem::ManuallyDrop, ops::Deref, sync::Arc};
+use std::{any::TypeId, array::IntoIter, cmp::min};
 
 use crate::{
     defer::{self, Defer, Resolve},
     depend::{Depend, Dependency},
-    entities::{self, Entities},
+    entities::Entities,
     entity::Entity,
     inject::{Context, Get, Inject},
-    modify::{Homogeneous, Modify},
-    segment::Store,
+    set::Set,
     world::World,
+    write::{self, Write},
 };
 
-pub struct Create<'a, M: Modify> {
-    defer: Defer<'a, Creation<M>>,
-    entities: Entities<'a>,
-}
+pub struct Create<'a, S: Set>(Defer<'a, Creation<S>>, &'a World);
+pub struct State<S: Set>(defer::State<Creation<S>>);
 
-pub struct State<M: Modify> {
-    defer: defer::State<Creation<M>>,
-    entities: entities::State,
-}
+struct Creation<S>(Vec<Entity>, Vec<S>, usize);
 
-enum Creation<M> {
-    One(Entity, M),
-    Many(Box<[Entity]>, Box<[M]>),
-    Clone(Box<[Entity]>, M, fn(&M) -> M),
-}
+/*
+TODO:
+- Queries must store the segment count at update time.
+- Create and Destroy should be exclusive if they overlap. They might not strictly need to be exclusive, but lets assume it for now.
+- As long as a Create operation does not resize a segment, it can be resolved at run time, otherwise it is deferred.
 
-impl<M: Modify> Create<'_, M> {
-    pub fn create(&mut self, modify: M) -> Entity {
-        let mut entities = [Entity::ZERO];
-        self.entities.reserve(&mut entities);
-        self.defer.defer(Creation::One(entities[0], modify));
-        entities[0]
+*/
+
+impl<S: Set> Create<'_, S> {
+    pub fn one(&mut self, set: S) -> Entity {
+        self.many(IntoIter::new([set]))[0]
     }
 
-    pub fn create_many(&mut self, modifies: Box<[M]>) -> &[Entity]
-    where
-        M: Homogeneous,
-    {
-        if modifies.len() == 0 {
-            return &[];
-        }
-
-        let entities = self.reserve(modifies.len());
-        let defer = Creation::Many(entities, modifies);
-        if let Some(Creation::Many(entities, ..)) = self.defer.defer(defer) {
-            &entities
-        } else {
-            unreachable!()
-        }
-    }
-
-    pub fn create_clone(&mut self, modify: M, count: usize) -> &[Entity]
-    where
-        M: Clone,
-    {
+    pub fn many(&mut self, mut sets: impl ExactSizeIterator<Item = S>) -> &[Entity] {
+        let count = sets.len();
         if count == 0 {
             return &[];
         }
 
-        let entities = self.reserve(count);
-        let defer = Creation::Clone(entities.clone().into(), modify, M::clone);
-        if let Some(Creation::Clone(entities, ..)) = self.defer.defer(defer) {
-            &entities
-        } else {
-            unreachable!()
+        let state = self.0.state();
+        let entities = state.0.as_mut();
+        let mut buffer = vec![Entity::ZERO; count];
+        let valid = entities.reserve(&mut buffer);
+        let segment = &self.1.segments[state.2];
+        let pair = segment.prepare(count);
+        let ready = min(valid, pair.1);
+        if ready > 0 {
+            for i in 0..ready {
+                let set = sets.next().unwrap();
+                let entity = buffer[i];
+                let index = pair.0 + i;
+                set.set(&mut state.1, index);
+                entities
+                    .get_datum_mut_unchecked(entity)
+                    .initialize(index as u32, segment.index as u32);
+            }
+            unsafe { segment.stores[0].set_all(pair.0, &buffer[..ready]) };
         }
+
+        let defer = Creation(buffer, sets.collect(), pair.0 + ready);
+        &self.0.defer(defer).0
     }
 
-    pub fn create_default(&mut self, count: usize) -> &[Entity]
+    #[inline]
+    pub fn many_clone(&mut self, set: S, count: usize) -> &[Entity]
     where
-        M: Default,
+        S: Clone,
     {
-        if count == 0 {
-            return &[];
-        }
-
-        let modify = Default::default();
-        let entities = self.reserve(count);
-        let defer = Creation::Clone(entities.clone().into(), modify, |_| Default::default());
-        if let Some(Creation::Clone(entities, ..)) = self.defer.defer(defer) {
-            &entities
-        } else {
-            unreachable!()
-        }
+        self.many((0..count).map(move |_| set.clone()))
     }
 
-    fn reserve(&mut self, count: usize) -> Box<[Entity]> {
-        let mut entities = Vec::with_capacity(count);
-        unsafe { entities.set_len(count) };
-        self.entities.reserve(&mut entities);
-        entities.into_boxed_slice()
+    #[inline]
+    pub fn many_default(&mut self, count: usize) -> &[Entity]
+    where
+        S: Default,
+    {
+        self.many((0..count).map(|_| S::default()))
     }
 }
 
-impl<M: Modify> Inject for Create<'_, M> {
+impl<S: Set> Inject for Create<'_, S> {
     type Input = ();
-    type State = State<M>;
+    type State = State<S>;
 
     fn initialize(_: Self::Input, context: &Context, world: &mut World) -> Option<Self::State> {
-        let entities = <Entities as Inject>::initialize((), context, world)?;
-        let input = (entities.clone(), Vec::new());
-        let defer = <Defer<Creation<M>> as Inject>::initialize(input, context, world)?;
-        Some(State { defer, entities })
+        let meta = world.get_or_add_meta::<Entity>();
+        let mut metas = S::metas(world);
+        metas.push(meta);
+
+        let segment = world.get_or_add_segment_by_metas(metas).index;
+        let state = S::initialize(&world.segments[segment], world)?;
+        let entities = <Write<Entities> as Inject>::initialize(None, context, world)?;
+        let input = (entities, state, segment);
+        let defer = <Defer<Creation<S>> as Inject>::initialize(input, context, world)?;
+        Some(State(defer))
     }
 
-    fn update(state: &mut Self::State, world: &mut World) {
-        <Entities as Inject>::update(&mut state.entities, world);
-        <Defer<Creation<M>> as Inject>::update(&mut state.defer, world);
+    fn update(State(state): &mut Self::State, world: &mut World) {
+        <Defer<Creation<S>> as Inject>::update(state, world);
     }
 
-    fn resolve(state: &mut Self::State, world: &mut World) {
-        <Entities as Inject>::resolve(&mut state.entities, world);
-        <Defer<Creation<M>> as Inject>::resolve(&mut state.defer, world);
+    fn resolve(State(state): &mut Self::State, world: &mut World) {
+        <Defer<Creation<S>> as Inject>::resolve(state, world);
     }
 }
 
-impl<M: Modify> Clone for State<M> {
+impl<S: Set> Clone for State<S> {
     #[inline]
     fn clone(&self) -> Self {
-        Self {
-            defer: self.defer.clone(),
-            entities: self.entities.clone(),
-        }
+        Self(self.0.clone())
     }
 }
 
-impl<'a, M: Modify> Get<'a> for State<M> {
-    type Item = Create<'a, M>;
+impl<'a, S: Set> Get<'a> for State<S> {
+    type Item = Create<'a, S>;
 
     fn get(&'a mut self, world: &'a World) -> Self::Item {
-        Create {
-            defer: self.defer.get(world),
-            entities: self.entities.get(world),
-        }
+        Create(self.0.get(world), world)
     }
 }
 
-unsafe impl<M: Modify> Depend for State<M> {
+unsafe impl<S: Set> Depend for State<S> {
     fn depend(&self, world: &World) -> Vec<Dependency> {
-        let mut dependencies = self.defer.depend(world);
-        for &(_, _, target) in self.defer.as_ref().1.iter() {
-            // No need to consider 'M::depend' since the entity's components can not be seen from other threads until 'resolve' is called.
-            // Only the less constraining 'Add' dependency is required to ensure consistency.
-            dependencies.push(Dependency::Defer(target, TypeId::of::<Entity>()));
-        }
+        let mut dependencies = self.0.depend(world);
+        let state = self.0.as_ref();
+        dependencies.push(Dependency::Defer(state.2, TypeId::of::<Entity>()));
         dependencies
     }
 }
 
-impl<M: Modify> Resolve for Creation<M> {
-    type State = (entities::State, Vec<(M::State, Arc<Store>, usize)>);
+impl<S: Set> Resolve for Creation<S> {
+    type State = (write::State<Entities>, S::State, usize);
 
-    fn resolve(
-        items: impl Iterator<Item = Self>,
-        (entities, targets): &mut Self::State,
-        world: &mut World,
-    ) {
-        fn find<'a, M: Modify>(
-            modify: &M,
-            targets: &'a mut Vec<(M::State, Arc<Store>, usize)>,
-            world: &mut World,
-        ) -> Option<&'a mut (M::State, Arc<Store>, usize)> {
-            let index = targets
-                .iter()
-                .position(|pair| modify.validate(&pair.0))
-                .or_else(|| {
-                    let meta = world.get_or_add_meta::<Entity>();
-                    let mut metas = vec![meta.clone()];
-                    metas.append(&mut modify.dynamic_metas(world));
-                    let target = world.get_or_add_segment_by_metas(metas, None).index;
-                    let target = &world.segments[target];
-                    let entities = target.store(&meta)?;
-                    let state = M::initialize(target, world)?;
-                    let index = targets.len();
-                    targets.push((state, entities, target.index));
-                    return Some(index);
-                })?;
-            targets.get_mut(index)
-        }
+    fn resolve(items: impl Iterator<Item = Self>, state: &mut Self::State, world: &mut World) {
+        let entities = state.0.as_mut();
+        let segment = &mut world.segments[state.2];
+        let store = segment.stores[0].clone();
+        entities.resolve();
+        segment.resolve();
 
-        <Entities as Inject>::resolve(entities, world);
-
-        for item in items {
-            // The entities can be assumed have not been destroyed since this operation has been enqueued before any other
-            // operation that could concern them.
-            match item {
-                Creation::One(entity, modify) => {
-                    if let Some((state, store, target)) = find(&modify, targets, world) {
-                        let target = &mut world.segments[*target];
-                        let index = target.reserve(1);
-                        modify.modify(state, index);
-                        let datum = unsafe { entities.get_datum_mut_unchecked(entity) };
-                        datum.initialize(index as u32, target.index as u32);
-                        unsafe { store.set(index, entity) };
-                    }
-                }
-                Creation::Many(many, modifies) => {
-                    let mut modifies: Box<[ManuallyDrop<M>]> = unsafe { transmute(modifies) };
-                    let modify = modifies[0].deref();
-                    if let Some((state, store, target)) = find(modify, targets, world) {
-                        let target = &mut world.segments[*target];
-                        let index = target.reserve(many.len());
-                        for i in 0..many.len() {
-                            let index = index + i;
-                            let entity = many[i];
-                            let modify = unsafe { ManuallyDrop::take(&mut modifies[i]) };
-                            modify.modify(state, index);
-                            let datum = unsafe { entities.get_datum_mut_unchecked(entity) };
-                            datum.initialize(index as u32, target.index as u32);
-                        }
-                        unsafe { store.set_all(index, many) };
-                    }
-                }
-                Creation::Clone(many, modify, clone) => {
-                    if let Some((state, store, target)) = find(&modify, targets, world) {
-                        let target = &mut world.segments[*target];
-                        let index = target.reserve(many.len());
-                        for i in 0..many.len() {
-                            let index = index + i;
-                            let entity = many[i];
-                            let modify = clone(&modify);
-                            modify.modify(state, index);
-                            unsafe { entities.get_datum_mut_unchecked(entity) }
-                                .initialize(index as u32, target.index as u32);
-                        }
-                        unsafe { store.set_all(index, many) };
-                    }
-                }
+        for mut item in items {
+            if item.0.len() == 0 || item.1.len() == 0 {
+                continue;
             }
+
+            // The entities can be assumed to have not been destroyed since this operation has been enqueued before any other
+            // destroy operation that could concern them.
+            let offset = item.0.len() - item.1.len();
+            for (i, set) in item.1.drain(..).enumerate() {
+                let index = item.2 + i;
+                let entity = item.0[offset + i];
+                set.set(&mut state.1, index);
+                entities
+                    .get_datum_mut_unchecked(entity)
+                    .initialize(index as u32, segment.index as u32);
+            }
+            unsafe { store.set_all(item.2, &item.0[offset..]) };
         }
     }
 }

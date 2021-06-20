@@ -1,8 +1,10 @@
+use std::convert::TryInto;
+use std::iter::FromIterator;
+use std::mem::size_of;
 use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not};
 use std::{cmp::min, hash::Hash};
-use std::{hash::Hasher, mem::size_of};
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Bits {
     buckets: Vec<u128>,
 }
@@ -51,11 +53,6 @@ impl Bits {
             .iter()
             .zip(bits.buckets.iter())
             .any(|(&left, &right)| left & right > 0)
-    }
-
-    #[inline]
-    pub fn has_none(&self, bits: &Bits) -> bool {
-        !self.has_any(bits)
     }
 
     pub fn set(&mut self, index: usize, value: bool) {
@@ -234,27 +231,14 @@ impl Not for Bits {
     }
 }
 
-impl PartialEq<Bits> for Bits {
-    fn eq(&self, other: &Bits) -> bool {
-        if self.buckets.len() == other.buckets.len() {
-            for i in 0..self.buckets.len() {
-                if self.buckets[i] != other.buckets[i] {
-                    return false;
-                }
+impl<I: TryInto<usize>> FromIterator<I> for Bits {
+    fn from_iter<T: IntoIterator<Item = I>>(iter: T) -> Self {
+        let mut bits = Bits::new();
+        for index in iter {
+            if let Ok(index) = index.try_into() {
+                bits.set(index, true);
             }
-            true
-        } else {
-            false
         }
-    }
-}
-
-impl Eq for Bits {}
-
-impl Hash for Bits {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        for &value in self.buckets.iter() {
-            state.write_u128(value);
-        }
+        bits
     }
 }

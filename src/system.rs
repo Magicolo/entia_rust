@@ -82,7 +82,7 @@ impl Runner {
 
         impl State {
             pub fn inner_conflicts(&mut self, dependencies: &Vec<Dependency>) -> bool {
-                let State {
+                let Self {
                     unknown,
                     reads,
                     writes,
@@ -116,7 +116,7 @@ impl Runner {
             }
 
             pub fn outer_conflicts(&mut self, dependencies: &Vec<Dependency>) -> bool {
-                let State {
+                let Self {
                     unknown,
                     reads,
                     writes,

@@ -33,9 +33,28 @@ they don't force an ordering.
 *2: Coherence is satisfied by those operations since the outcome is deterministic.
 *3: Coherence is satisfied as long as components are not observed.
 
+STATIC VS DYNAMIC:
+- Static allows all segments to be known at initialization time, ensuring that scheduling is most efficient and knowns all dependencies.
+- Dynamic makes entities hard to debug since a removed component loses all its data.
+
+// PROS
+// - Batch operations can be implemented efficiently if a whole segment is modified.
+
+// CONS:
+// - Adds many more segments and spreads entities more.
+// - Adds many deferred operations that will be hard or inefficient to parallelize.
+// - Adds a lot of complexity when trying to figure out where a component comes from.
+// - Probably does not add much performance when taking into account the loss in parallelization and resolution factors.
+// - Probably does not add much memory efficiency and is probably worse. While segments stores *might* be smaller overall,
+// chances are that a lot of entity slots will be reserved more than once.
+// - Make dependency management more complex.
+
 TODO:
 - Deferred operations must share the same defer queue but each system should have its own defer queue. This way,
 resolution order will be preserved between systems and no thread safety is needed.
+
+- Make deferral more explicit and extensible by enforcing the format: 'Defer<Add<Freeze>>'?
+
 'Local' could be repurposed to represent system-wide shared data.
 Note that the 'Resolver' can be shared such that the 'Resolve::State' is not uselessly duplicated.
 
@@ -59,12 +78,20 @@ fields that implement it.
 */
 
 fn main() {
+    #[derive(Default, Clone)]
+    struct Position(Vec<usize>);
+    #[derive(Default, Clone)]
+    struct Frozen;
+    impl Component for Position {}
+    impl Component for Frozen {}
+
     let create = || {
         let mut counter = 0;
-        move |mut create: Create<()>| {
-            counter += counter / 1000 + 1;
-            create.create(());
-            create.create_default(counter);
+        move |mut create: Create<(Position, Frozen)>| {
+            let position = Position(Vec::with_capacity(counter));
+            counter += counter / 100 + 1;
+            create.one((position.clone(), Frozen));
+            create.many_clone((position, Frozen), counter);
         }
     };
 
@@ -72,13 +99,19 @@ fn main() {
     let mut runner = world
         .scheduler()
         .schedule(create())
-        .schedule(|query: Query<Entity>| println!("C: {:?}", query.len()))
         .schedule(create())
-        .schedule(|mut destroy: Destroy| destroy.destroy_all())
+        .schedule(create())
+        .schedule(create())
+        .schedule(create())
+        .schedule(create())
+        .schedule(create())
+        .schedule(create())
+        .schedule(|query: Query<Entity>| println!("C: {:?}", query.len()))
+        .schedule(|mut destroy: Destroy| destroy.all())
         .runner()
         .unwrap();
 
-    for _ in 0..1000000 {
+    for _ in 0..10_000_000 {
         runner.run(&mut world);
     }
 }

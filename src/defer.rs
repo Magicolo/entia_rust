@@ -13,9 +13,10 @@ use crate::{
 };
 
 pub struct Defer<'a, R: Resolve> {
-    inner: &'a mut Inner,
+    defer: &'a mut Vec<(usize, usize)>,
+    store: &'a mut VecDeque<R>,
+    state: &'a mut R::State,
     index: usize,
-    _marker: PhantomData<R>,
 }
 
 pub struct State<R: Resolve> {
@@ -55,12 +56,6 @@ impl Resolver {
         }
     }
 
-    pub fn defer<R: Resolve>(&mut self, resolve: R) -> Option<&R> {
-        let (store, _) = self.state_mut()?;
-        store.push_back(resolve);
-        store.back()
-    }
-
     #[inline]
     pub fn resolve(&mut self, count: usize, world: &mut World) {
         (self.resolve)(count, self.state.as_mut(), world);
@@ -78,14 +73,19 @@ impl Resolver {
 }
 
 impl<R: Resolve> Defer<'_, R> {
-    #[inline]
-    pub fn defer(&mut self, resolve: R) -> Option<&R> {
-        let resolve = self.inner.resolvers[self.index].defer(resolve)?;
-        match self.inner.defer.last_mut() {
+    pub fn defer(&mut self, resolve: R) -> &R {
+        self.store.push_back(resolve);
+        let resolve = self.store.back().unwrap();
+        match self.defer.last_mut() {
             Some((index, count)) if *index == self.index => *count += 1,
-            _ => self.inner.defer.push((self.index, 1)),
+            _ => self.defer.push((self.index, 1)),
         }
-        Some(resolve)
+        resolve
+    }
+
+    #[inline]
+    pub fn state(&mut self) -> &mut R::State {
+        self.state
     }
 }
 
@@ -132,10 +132,13 @@ impl<'a, R: Resolve> Get<'a> for State<R> {
     type Item = Defer<'a, R>;
 
     fn get(&'a mut self, _: &'a World) -> Self::Item {
+        let inner = self.inner.as_mut();
+        let (store, state) = inner.resolvers[self.index].state_mut().unwrap();
         Defer {
-            inner: self.inner.as_mut(),
+            defer: &mut inner.defer,
+            store,
+            state,
             index: self.index,
-            _marker: PhantomData,
         }
     }
 }

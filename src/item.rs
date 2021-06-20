@@ -2,7 +2,7 @@ use crate::depend::Depend;
 use crate::segment::*;
 use crate::world::*;
 
-pub trait Item {
+pub trait Item: Send {
     type State: for<'a> At<'a> + Depend + Send + 'static;
     fn initialize(segment: &Segment, world: &World) -> Option<Self::State>;
 }

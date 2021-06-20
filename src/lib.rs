@@ -1,4 +1,3 @@
-pub mod add;
 pub mod component;
 pub mod create;
 pub mod defer;
@@ -12,14 +11,13 @@ pub mod inject;
 pub mod item;
 mod local;
 pub mod message;
-pub mod modify;
 pub mod query;
 pub mod read;
 pub mod receive;
-pub mod remove;
 pub mod resource;
 pub mod schedule;
 pub mod segment;
+pub mod set;
 pub mod system;
 pub mod world;
 pub mod write;
@@ -30,7 +28,6 @@ pub mod core {
 }
 
 pub mod prelude {
-    pub use crate::add::Add;
     pub use crate::component::Component;
     pub use crate::create::Create;
     pub use crate::destroy::Destroy;
@@ -41,7 +38,6 @@ pub mod prelude {
     pub use crate::message::Message;
     pub use crate::query::Query;
     pub use crate::receive::Receive;
-    pub use crate::remove::Remove;
     pub use crate::resource::Resource;
     pub use crate::schedule::Scheduler;
     pub use crate::system::Runner;
@@ -184,40 +180,40 @@ mod test {
             .schedule(((8,), |on_kill: Receive<OnKill>| for _ in on_kill {}))
             .schedule(|on_kill: Receive<OnKill>| for _ in on_kill {})
             .schedule(|mut on_kill: Receive<OnKill>| while let Some(_) = on_kill.next() {})
-            .schedule(
-                |query: Query<Entity>, mut add: Add<(Position, Option<Velocity>)>| {
-                    for entity in &query {
-                        add.add(entity, (Position(1., 2., 3.), None));
-                        add.add(entity, (Position(1., 2., 3.), Some(Velocity(3., 2., 1.))));
-                    }
-                },
-            )
-            .schedule(
-                |mut create: Create<(Position, Option<Velocity>)>, mut add: Add<Frozen>| {
-                    let _ = create.create((Position(1., 2., 3.), None));
-                    let entity = create.create((Position(1., 2., 3.), Some(Velocity(3., 2., 1.))));
-                    add.add(entity, Frozen);
-                },
-            )
-            .schedule(
-                |query: Query<Entity>, mut remove: Remove<(Position, Option<Velocity>)>| {
-                    for entity in &query {
-                        remove.remove(entity);
-                    }
-                },
-            )
+            // .schedule(
+            //     |query: Query<Entity>, mut add: Add<(Position, Option<Velocity>)>| {
+            //         for entity in &query {
+            //             add.add(entity, (Position(1., 2., 3.), None));
+            //             add.add(entity, (Position(1., 2., 3.), Some(Velocity(3., 2., 1.))));
+            //         }
+            //     },
+            // )
+            // .schedule(
+            //     |mut create: Create<(Position, Option<Velocity>)>, mut add: Add<Frozen>| {
+            //         let _ = create.one((Position(1., 2., 3.), None));
+            //         let entity = create.one((Position(1., 2., 3.), Some(Velocity(3., 2., 1.))));
+            //         add.add(entity, Frozen);
+            //     },
+            // )
+            // .schedule(
+            //     |query: Query<Entity>, mut remove: Remove<(Position, Option<Velocity>)>| {
+            //         for entity in &query {
+            //             remove.remove(entity);
+            //         }
+            //     },
+            // )
             // Removes the 'Position' component of all entities that don't have a 'Player' component and that have a 'Frozen' component.
-            .schedule(|mut remove: Remove<Position, (Not<Player>, Frozen)>| remove.remove_all())
+            // .schedule(|mut remove: Remove<Position, (Not<Player>, Frozen)>| remove.remove_all())
             .schedule(
-                |query: Query<Entity>, mut destroy: Destroy<(Position, Velocity)>| {
+                |query: Query<Entity>, mut destroy: Destroy<(), (Position, Velocity)>| {
                     for entity in &query {
-                        destroy.destroy(entity);
+                        destroy.one(entity);
                     }
                 },
             )
             .schedule(|query: Query<Entity>, mut destroy: Destroy| {
                 for entity in &query {
-                    destroy.destroy(entity);
+                    destroy.one(entity);
                 }
             })
             .runner()

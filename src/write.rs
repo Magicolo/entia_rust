@@ -48,6 +48,11 @@ impl<T> State<T> {
     pub const fn segment(&self) -> usize {
         self.1
     }
+
+    #[inline]
+    pub fn store(&self) -> &Store {
+        &self.0
+    }
 }
 
 impl<T> Clone for State<T> {

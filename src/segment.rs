@@ -1,7 +1,9 @@
 use std::cell::UnsafeCell;
-use std::intrinsics::transmute;
-use std::mem::ManuallyDrop;
+use std::cmp::max;
+use std::cmp::min;
 use std::slice::from_raw_parts_mut;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::usize;
 
@@ -15,10 +17,10 @@ pub struct Store(Meta, UnsafeCell<*mut ()>);
 
 pub struct Segment {
     pub(crate) index: usize,
-    pub(crate) count: usize,
-    pub(crate) capacity: usize,
+    pub(crate) count: AtomicUsize,
     pub(crate) types: Bits,
     pub(crate) stores: Box<[Arc<Store>]>,
+    capacity: usize,
 }
 
 pub struct Move {
@@ -44,7 +46,7 @@ impl Segment {
             .collect();
         Self {
             index,
-            count: 0,
+            count: 0.into(),
             capacity,
             types,
             stores,
@@ -57,17 +59,17 @@ impl Segment {
     }
 
     pub fn remove_at(&mut self, index: usize) -> bool {
-        if index < self.count {
-            self.count -= 1;
-            let count = self.count;
-            if index == count {
+        let count = self.count.get_mut();
+        if index < *count {
+            *count -= 1;
+            if index == *count {
                 for store in self.stores.iter_mut() {
                     unsafe { store.as_ref().drop(index, 1) };
                 }
                 false
             } else {
                 for store in self.stores.iter_mut() {
-                    unsafe { store.squash(count, index) };
+                    unsafe { store.squash(*count, index) };
                 }
                 true
             }
@@ -77,10 +79,11 @@ impl Segment {
     }
 
     pub fn clear(&mut self) {
+        let count = self.count.get_mut();
         for store in self.stores.iter_mut() {
-            unsafe { store.as_ref().drop(0, self.count) };
+            unsafe { store.as_ref().drop(0, *count) };
         }
-        self.count = 0;
+        *count = 0;
     }
 
     pub fn store(&self, meta: &Meta) -> Option<Arc<Store>> {
@@ -94,21 +97,36 @@ impl Segment {
         None
     }
 
+    pub fn prepare(&self, count: usize) -> (usize, usize) {
+        let index = self.count.fetch_add(count, Ordering::Relaxed);
+        (index, max(self.capacity - min(self.capacity, index), count))
+    }
+
+    pub fn resolve(&mut self) {
+        let count = *self.count.get_mut();
+        if self.capacity < count {
+            self.resize(count, next_power_of_2(self.capacity as u32) as usize);
+        }
+    }
+
     pub fn reserve(&mut self, count: usize) -> usize {
-        let index = self.count;
-        self.count += count;
-        self.ensure(self.count);
+        let (index, _) = self.prepare(count);
+        self.resolve();
         index
     }
 
     pub fn ensure(&mut self, capacity: usize) {
         if self.capacity < capacity {
-            let capacity = next_power_of_2(capacity as u32) as usize;
-            for store in self.stores.iter() {
-                unsafe { store.resize(self.count, self.capacity, capacity) };
-            }
-            self.capacity = capacity;
+            let count = *self.count.get_mut();
+            self.resize(count, next_power_of_2(self.capacity as u32) as usize);
         }
+    }
+
+    fn resize(&mut self, count: usize, capacity: usize) {
+        for store in self.stores.iter() {
+            unsafe { store.resize(count, self.capacity, capacity) };
+        }
+        self.capacity = capacity;
     }
 }
 
@@ -140,19 +158,19 @@ impl Store {
         from_raw_parts_mut(self.pointer().cast::<T>().add(index), count)
     }
 
-    /// SAFETY: The 'items' reference must not point into 'self' (ex: through usage of 'self.get(usize)').
     #[inline]
     pub unsafe fn set<T>(&self, index: usize, item: T) {
         self.pointer().cast::<T>().add(index).write(item);
     }
 
-    /// SAFETY: The 'items' reference must not point into 'self' (ex: through usage of 'self.get(usize)').
     #[inline]
-    pub unsafe fn set_all<T>(&self, index: usize, items: Box<[T]>) {
-        let items: Box<[ManuallyDrop<T>]> = transmute(items);
-        let source = items.as_ptr().cast();
-        let target = self.pointer();
-        (self.0.copy)((source, 0), (target, index), items.len());
+    pub unsafe fn set_all<T>(&self, index: usize, items: &[T])
+    where
+        T: Copy,
+    {
+        let source = items.as_ptr().cast::<T>();
+        let target = self.pointer().cast::<T>().add(index);
+        source.copy_to_nonoverlapping(target, items.len());
     }
 
     /// SAFETY: Both the 'source' and 'target' indices must be within the bounds of the store.
@@ -216,8 +234,9 @@ impl Move {
         if indices.0 == indices.1 {
             Some(index)
         } else if let Some((source, target)) = get_mut2(&mut world.segments, indices) {
-            source.count -= count;
-            let source_index = source.count;
+            let source_count = source.count.get_mut();
+            *source_count -= count;
+            let source_index = *source_count;
             let target_index = target.reserve(count);
             for (source_store, target_store) in self.to_copy.iter_mut() {
                 unsafe { Store::copy((source_store, index), (target_store, target_index), count) };

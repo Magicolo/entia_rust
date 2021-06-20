@@ -2,7 +2,7 @@ use entia_core::bits::Bits;
 
 use crate::{
     depend::{Depend, Dependency},
-    entities::{self, Entities},
+    entities::Entities,
     entity::Entity,
     filter::Filter,
     inject::{Context, Get, Inject},
@@ -15,12 +15,12 @@ use std::{any::TypeId, marker::PhantomData};
 
 pub struct Query<'a, I: Item, F: Filter = ()> {
     inner: &'a mut Inner<I, F>,
-    entities: Entities<'a>,
+    entities: &'a mut Entities,
 }
 
 pub struct State<I: Item, F: Filter> {
     pub(crate) inner: write::State<Inner<I, F>>,
-    pub(crate) entities: entities::State,
+    pub(crate) entities: write::State<Entities>,
 }
 
 pub struct Items<'a, 'b, I: Item, F: Filter> {
@@ -127,32 +127,30 @@ impl<'a, I: Item + 'static, F: Filter> Inject for Query<'a, I, F> {
 
     fn initialize(_: Self::Input, context: &Context, world: &mut World) -> Option<Self::State> {
         let inner = <Write<Inner<I, F>> as Inject>::initialize(None, context, world)?;
-        let entities = <Entities as Inject>::initialize((), context, world)?;
+        let entities = <Write<Entities> as Inject>::initialize(None, context, world)?;
         Some(State { inner, entities })
     }
 
     fn update(state: &mut Self::State, world: &mut World) {
-        <Entities as Inject>::update(&mut state.entities, world);
-
         let inner = state.inner.as_mut();
-        for (_, segment, count) in inner.states.iter_mut() {
-            *count = world.segments[*segment].count;
-        }
-
         while let Some(segment) = world.segments.get(inner.index) {
             inner.index += 1;
 
             if F::filter(segment, world) {
                 if let Some(item) = I::initialize(&segment, world) {
                     inner.segments.set(segment.index, true);
-                    inner.states.push((item, segment.index, segment.count));
+                    inner.states.push((item, segment.index, 0));
                 }
             }
         }
+
+        for (_, segment, count) in inner.states.iter_mut() {
+            *count = *world.segments[*segment].count.get_mut();
+        }
     }
 
-    fn resolve(state: &mut Self::State, world: &mut World) {
-        <Entities as Inject>::resolve(&mut state.entities, world);
+    fn resolve(state: &mut Self::State, _: &mut World) {
+        state.entities.as_mut().resolve();
     }
 }
 

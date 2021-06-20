@@ -1,6 +1,6 @@
 use crate::{filter::Filter, item::Item, read::Read, segment::Segment, world::World, write::Write};
 
-pub trait Component: Send + 'static {}
+pub trait Component: Sync + Send + 'static {}
 
 impl<C: Component> Filter for C {
     fn filter(segment: &Segment, world: &World) -> bool {
