@@ -8,14 +8,14 @@ use crate::{
     write::Write,
 };
 
-pub trait Initialize: Send + 'static {
+pub trait Initial: Send + 'static {
     type State: Send;
     fn initialize(segment: &Segment, world: &World) -> Option<Self::State>;
     fn metas(world: &mut World) -> Vec<Arc<Meta>>;
-    fn set(self, state: &mut Self::State, index: usize);
+    fn apply(self, state: &mut Self::State, index: usize);
 }
 
-impl<C: Component> Initialize for C {
+impl<C: Component> Initial for C {
     type State = <Write<C> as Item>::State;
 
     fn initialize(segment: &Segment, world: &World) -> Option<Self::State> {
@@ -27,15 +27,14 @@ impl<C: Component> Initialize for C {
     }
 
     #[inline]
-    fn set(self, state: &mut Self::State, index: usize) {
-        // TODO: Ensure that this is called only for initializing a store.
+    fn apply(self, state: &mut Self::State, index: usize) {
         unsafe { state.store().set(index, self) };
     }
 }
 
 macro_rules! modify {
     ($($p:ident, $t:ident),*) => {
-        impl<$($t: Initialize,)*> Initialize for ($($t,)*) {
+        impl<$($t: Initial,)*> Initial for ($($t,)*) {
             type State = ($($t::State,)*);
 
             fn initialize(_segment: &Segment, _world: &World) -> Option<Self::State> {
@@ -49,9 +48,9 @@ macro_rules! modify {
             }
 
             #[inline]
-            fn set(self, ($($p,)*): &mut Self::State, _index: usize) {
+            fn apply(self, ($($p,)*): &mut Self::State, _index: usize) {
                 let ($($t,)*) = self;
-                $($t.set($p, _index);)*
+                $($t.apply($p, _index);)*
             }
         }
     };

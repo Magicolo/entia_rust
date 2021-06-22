@@ -7,7 +7,7 @@ pub mod emit;
 mod entities;
 pub mod entity;
 pub mod filter;
-pub mod initialize;
+pub mod initial;
 pub mod inject;
 pub mod item;
 mod local;

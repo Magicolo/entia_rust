@@ -1,53 +1,43 @@
-use std::{any::TypeId, array::IntoIter, cmp::min};
+use std::{any::TypeId, array::IntoIter, cmp::min, convert::TryInto};
 
 use crate::{
     defer::{self, Defer, Resolve},
     depend::{Depend, Dependency},
     entities::Entities,
     entity::Entity,
-    initialize::Initialize,
+    initial::Initial,
     inject::{Context, Get, Inject},
     world::World,
     write::{self, Write},
 };
 
-pub struct Create<'a, I: Initialize>(Defer<'a, Creation<I>>, &'a World);
-pub struct State<I: Initialize>(defer::State<Creation<I>>);
+pub struct Create<'a, I: Initial>(Defer<'a, Creation<I>>, &'a World);
+pub struct State<I: Initial>(defer::State<Creation<I>>);
 
 struct Creation<I>(Vec<Entity>, Vec<I>, usize);
 
-/*
-TODO:
-- Queries must store the segment count at update time.
-- Create and Destroy should be exclusive if they overlap. They might not strictly need to be exclusive, but lets assume it for now.
-- As long as a Create operation does not resize a segment, it can be resolved at run time, otherwise it is deferred.
-
-*/
-
-impl<I: Initialize> Create<'_, I> {
-    pub fn one(&mut self, initialize: I) -> Entity {
-        self.many(IntoIter::new([initialize]))[0]
-    }
-
-    pub fn many(&mut self, mut intializes: impl ExactSizeIterator<Item = I>) -> &[Entity] {
-        let count = intializes.len();
+impl<I: Initial> Create<'_, I> {
+    pub fn all(&mut self, mut initials: impl ExactSizeIterator<Item = I>) -> &[Entity] {
+        let count = initials.len();
         if count == 0 {
             return &[];
         }
 
+        // TODO: Try to prevent 'buffer' heap allocation when the size is statically known. Should be possible to only
+        // move to the heap when a defferal is needed.
         let state = self.0.state();
         let entities = state.0.as_mut();
         let mut buffer = vec![Entity::ZERO; count];
         let valid = entities.reserve(&mut buffer);
         let segment = &self.1.segments[state.2];
-        let pair = segment.prepare(count);
+        let pair = segment.reserve(count);
         let ready = min(valid, pair.1);
         if ready > 0 {
             for i in 0..ready {
-                let initialize = intializes.next().unwrap();
+                let initialize = initials.next().unwrap();
                 let entity = buffer[i];
                 let index = pair.0 + i;
-                initialize.set(&mut state.1, index);
+                initialize.apply(&mut state.1, index);
                 entities
                     .get_datum_mut_unchecked(entity)
                     .initialize(index as u32, segment.index as u32);
@@ -55,28 +45,38 @@ impl<I: Initialize> Create<'_, I> {
             unsafe { segment.stores[0].set_all(pair.0, &buffer[..ready]) };
         }
 
-        let defer = Creation(buffer, intializes.collect(), pair.0 + ready);
+        let defer = Creation(buffer, initials.collect(), pair.0 + ready);
         &self.0.defer(defer).0
     }
 
     #[inline]
-    pub fn many_clone(&mut self, initialize: I, count: usize) -> &[Entity]
-    where
-        I: Clone,
-    {
-        self.many((0..count).map(move |_| initialize.clone()))
+    pub fn one(&mut self, initial: I) -> Entity {
+        self.all(IntoIter::new([initial]))[0]
     }
 
     #[inline]
-    pub fn many_default(&mut self, count: usize) -> &[Entity]
+    pub fn exact<const N: usize>(&mut self, initials: [I; N]) -> &[Entity; N] {
+        self.all(IntoIter::new(initials)).try_into().unwrap()
+    }
+
+    #[inline]
+    pub fn clones(&mut self, initial: I, count: usize) -> &[Entity]
+    where
+        I: Clone,
+    {
+        self.all((0..count).map(move |_| initial.clone()))
+    }
+
+    #[inline]
+    pub fn defaults(&mut self, count: usize) -> &[Entity]
     where
         I: Default,
     {
-        self.many((0..count).map(|_| I::default()))
+        self.all((0..count).map(|_| I::default()))
     }
 }
 
-impl<I: Initialize> Inject for Create<'_, I> {
+impl<I: Initial> Inject for Create<'_, I> {
     type Input = ();
     type State = State<I>;
 
@@ -102,14 +102,14 @@ impl<I: Initialize> Inject for Create<'_, I> {
     }
 }
 
-impl<I: Initialize> Clone for State<I> {
+impl<I: Initial> Clone for State<I> {
     #[inline]
     fn clone(&self) -> Self {
         Self(self.0.clone())
     }
 }
 
-impl<'a, I: Initialize> Get<'a> for State<I> {
+impl<'a, I: Initial> Get<'a> for State<I> {
     type Item = Create<'a, I>;
 
     fn get(&'a mut self, world: &'a World) -> Self::Item {
@@ -117,7 +117,7 @@ impl<'a, I: Initialize> Get<'a> for State<I> {
     }
 }
 
-unsafe impl<I: Initialize> Depend for State<I> {
+unsafe impl<I: Initial> Depend for State<I> {
     fn depend(&self, world: &World) -> Vec<Dependency> {
         let mut dependencies = self.0.depend(world);
         let state = self.0.as_ref();
@@ -126,7 +126,7 @@ unsafe impl<I: Initialize> Depend for State<I> {
     }
 }
 
-impl<I: Initialize> Resolve for Creation<I> {
+impl<I: Initial> Resolve for Creation<I> {
     type State = (write::State<Entities>, I::State, usize);
 
     fn resolve(items: impl Iterator<Item = Self>, state: &mut Self::State, world: &mut World) {
@@ -147,7 +147,7 @@ impl<I: Initialize> Resolve for Creation<I> {
             for (i, initialize) in item.1.drain(..).enumerate() {
                 let index = item.2 + i;
                 let entity = item.0[offset + i];
-                initialize.set(&mut state.1, index);
+                initialize.apply(&mut state.1, index);
                 entities
                     .get_datum_mut_unchecked(entity)
                     .initialize(index as u32, segment.index as u32);

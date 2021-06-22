@@ -49,8 +49,9 @@ pub(crate) fn initialize<T: Send + 'static>(
     let meta = world.get_or_add_meta::<T>();
     let segment = world.get_or_add_segment_by_metas(vec![meta.clone()]);
     let store = segment.store(&meta)?;
-    if *segment.count.get_mut() == 0 {
-        let index = segment.reserve(1);
+    if segment.count == 0 {
+        let (index, _) = segment.reserve(1);
+        segment.resolve();
         unsafe { store.set(index, provide()) };
     }
     Some((store, segment.index))

@@ -8,26 +8,19 @@ use std::sync::Arc;
 use std::usize;
 
 use entia_core::bits::Bits;
-use entia_core::utility::get_mut2;
 use entia_core::utility::next_power_of_2;
 
-use crate::world::{Meta, World};
+use crate::world::Meta;
 
 pub struct Store(Meta, UnsafeCell<*mut ()>);
 
 pub struct Segment {
     pub(crate) index: usize,
-    pub(crate) count: AtomicUsize,
+    pub(crate) count: usize,
+    pub(crate) reserved: AtomicUsize,
     pub(crate) types: Bits,
     pub(crate) stores: Box<[Arc<Store>]>,
     capacity: usize,
-}
-
-pub struct Move {
-    source: usize,
-    target: usize,
-    to_copy: Vec<(Arc<Store>, Arc<Store>)>,
-    to_drop: Vec<Arc<Store>>,
 }
 
 unsafe impl Sync for Store {}
@@ -46,7 +39,8 @@ impl Segment {
             .collect();
         Self {
             index,
-            count: 0.into(),
+            count: 0,
+            reserved: 0.into(),
             capacity,
             types,
             stores,
@@ -59,17 +53,16 @@ impl Segment {
     }
 
     pub fn remove_at(&mut self, index: usize) -> bool {
-        let count = self.count.get_mut();
-        if index < *count {
-            *count -= 1;
-            if index == *count {
+        if index < self.count {
+            self.count -= 1;
+            if index == self.count {
                 for store in self.stores.iter_mut() {
                     unsafe { store.as_ref().drop(index, 1) };
                 }
                 false
             } else {
                 for store in self.stores.iter_mut() {
-                    unsafe { store.squash(*count, index) };
+                    unsafe { store.squash(self.count, index) };
                 }
                 true
             }
@@ -79,11 +72,10 @@ impl Segment {
     }
 
     pub fn clear(&mut self) {
-        let count = self.count.get_mut();
         for store in self.stores.iter_mut() {
-            unsafe { store.as_ref().drop(0, *count) };
+            unsafe { store.as_ref().drop(0, self.count) };
         }
-        *count = 0;
+        self.count = 0;
     }
 
     pub fn store(&self, meta: &Meta) -> Option<Arc<Store>> {
@@ -97,36 +89,25 @@ impl Segment {
         None
     }
 
-    pub fn prepare(&self, count: usize) -> (usize, usize) {
-        let index = self.count.fetch_add(count, Ordering::Relaxed);
+    pub fn reserve(&self, count: usize) -> (usize, usize) {
+        let index = self.count + self.reserved.fetch_add(count, Ordering::Relaxed);
         (index, max(self.capacity - min(self.capacity, index), count))
     }
 
     pub fn resolve(&mut self) {
-        let count = *self.count.get_mut();
+        let reserved = self.reserved.get_mut();
+        let count = self.count + *reserved;
+
         if self.capacity < count {
-            self.resize(count, next_power_of_2(self.capacity as u32) as usize);
+            let capacity = next_power_of_2(count as u32) as usize;
+            for store in self.stores.iter() {
+                unsafe { store.resize(self.count, self.capacity, capacity) };
+            }
+            self.capacity = capacity;
         }
-    }
 
-    pub fn reserve(&mut self, count: usize) -> usize {
-        let (index, _) = self.prepare(count);
-        self.resolve();
-        index
-    }
-
-    pub fn ensure(&mut self, capacity: usize) {
-        if self.capacity < capacity {
-            let count = *self.count.get_mut();
-            self.resize(count, next_power_of_2(self.capacity as u32) as usize);
-        }
-    }
-
-    fn resize(&mut self, count: usize, capacity: usize) {
-        for store in self.stores.iter() {
-            unsafe { store.resize(count, self.capacity, capacity) };
-        }
-        self.capacity = capacity;
+        self.count += *reserved;
+        *reserved = 0;
     }
 }
 
@@ -198,67 +179,5 @@ impl Store {
     #[inline]
     unsafe fn pointer(&self) -> *mut () {
         *self.1.get()
-    }
-}
-
-impl Move {
-    pub fn new(source: &Segment, target: &Segment) -> Self {
-        if source.index == target.index {
-            Move {
-                source: source.index,
-                target: target.index,
-                to_copy: Vec::new(),
-                to_drop: Vec::new(),
-            }
-        } else {
-            let mut to_copy = Vec::new();
-            let mut to_drop = Vec::new();
-            for source in source.stores.iter() {
-                if let Some(target) = target.store(&source.0) {
-                    to_copy.push((source.clone(), target));
-                } else {
-                    to_drop.push(source.clone())
-                }
-            }
-            Move {
-                source: source.index,
-                target: target.index,
-                to_copy,
-                to_drop,
-            }
-        }
-    }
-
-    pub fn apply(&mut self, index: usize, count: usize, world: &mut World) -> Option<usize> {
-        let indices = (self.source, self.target);
-        if indices.0 == indices.1 {
-            Some(index)
-        } else if let Some((source, target)) = get_mut2(&mut world.segments, indices) {
-            let source_count = source.count.get_mut();
-            *source_count -= count;
-            let source_index = *source_count;
-            let target_index = target.reserve(count);
-            for (source_store, target_store) in self.to_copy.iter_mut() {
-                unsafe { Store::copy((source_store, index), (target_store, target_index), count) };
-                unsafe { Store::copy((source_store, source_index), (source_store, index), count) };
-            }
-
-            for store in self.to_drop.iter_mut() {
-                unsafe { store.as_ref().drop(source_index, 1) };
-            }
-            Some(target_index)
-        } else {
-            None
-        }
-    }
-
-    #[inline]
-    pub const fn source(&self) -> usize {
-        self.source
-    }
-
-    #[inline]
-    pub const fn target(&self) -> usize {
-        self.target
     }
 }

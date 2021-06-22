@@ -133,11 +133,10 @@ impl<I: Item + 'static, F: Filter> Resolve for Destruction<I, F> {
                     }
                 }
                 Destruction::All(_) => {
-                    for (item, segment, _) in query.states.iter_mut() {
+                    for (item, segment) in query.states.iter_mut() {
                         let segment = &mut world.segments[*segment];
-                        let count = *segment.count.get_mut();
-                        if count > 0 {
-                            entities.release(unsafe { item.0.get_all(0, count) });
+                        if segment.count > 0 {
+                            entities.release(unsafe { item.0.get_all(0, segment.count) });
                             segment.clear();
                         }
                     }

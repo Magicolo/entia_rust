@@ -91,7 +91,10 @@ fn main() {
             let position = Position(Vec::with_capacity(counter));
             counter += counter / 100 + 1;
             create.one((position.clone(), Frozen));
-            create.many_clone((position, Frozen), counter);
+            create.all(vec![(position.clone(), Frozen); counter].drain(..));
+            create.exact([(position.clone(), Frozen)]);
+            create.defaults(counter);
+            create.clones((position, Frozen), counter);
         }
     };
 
