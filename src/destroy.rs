@@ -108,8 +108,6 @@ impl<I: Item + 'static, F: Filter> Resolve for Destruction<I, F> {
     type State = query::State<Entity, F>;
 
     fn resolve(items: impl Iterator<Item = Self>, state: &mut Self::State, world: &mut World) {
-        <Query<Entity, F> as Inject>::update(state, world);
-
         let entities = state.entities.as_mut();
         let query = state.inner.as_mut();
         for item in items {

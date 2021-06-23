@@ -119,18 +119,17 @@ impl Entities {
     }
 
     pub fn resolve(&mut self) {
-        let count = max(*self.free.1.get_mut(), 0);
-        self.free.0.truncate(count as usize);
-        *self.free.1.get_mut() = self.free.0.len() as isize;
-
-        let count = *self.data.1.get_mut();
         let datum = Datum {
             index: 0,
             segment: 0,
             generation: 0,
             state: 1,
         };
-        self.data.0.resize(count, datum);
+        self.data.0.resize(*self.data.1.get_mut(), datum);
+
+        let count = max(*self.free.1.get_mut(), 0);
+        self.free.0.truncate(count as usize);
+        *self.free.1.get_mut() = self.free.0.len() as isize;
     }
 
     pub fn release(&mut self, entities: &[Entity]) {

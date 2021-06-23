@@ -1,4 +1,4 @@
-use entia::prelude::*;
+use entia::{initial::Initial, prelude::*};
 
 /*
 Coherence rules:
@@ -50,6 +50,26 @@ STATIC VS DYNAMIC:
 // - Make dependency management more complex.
 
 TODO:
+- Factory implements 'Initial' but will hide the details of the components to make it easier to compose.
+Note that the current 'Initial' trait will be required to allow non-static declaration of 'metas'.
+The factory may also allow for some additionnal validation and optimizations.
+Its API could look like this:
+Injector::new()
+    .factory(Template::new()
+        .add(Position(Vec::new()))              -> Template<()>
+        .add_default::<Frozen>()                -> Template<()>
+        .add_with(|x: f64| Position(vec![x]))   -> Template<(f64,)>
+        .remove::<Frozen>()                     -> Template<(f64,)>
+        .child(Template::new().add(Frozen)))    -> Template<(f64,)>
+
+- Review 'Schedule' API.
+
+- Implement 'Drop' for segment to free the stores.
+
+- Fix coherence when 'Create' and 'Destroy' appear in the same system or disallow those systems.
+A 'Destroy::all' operation could destroy entities that have not been created yet since a later 'Create' might not need to
+defer its operation. A possible solution would be for the 'Destroy::all' operation to store 'segment.reserved'.
+
 - Deferred operations must share the same defer queue but each system should have its own defer queue. This way,
 resolution order will be preserved between systems and no thread safety is needed.
 
@@ -87,7 +107,7 @@ fn main() {
 
     let create = || {
         let mut counter = 0;
-        move |mut create: Create<(Position, Frozen)>| {
+        move |mut create: Create<_>| {
             let position = Position(Vec::with_capacity(counter));
             counter += counter / 100 + 1;
             create.one((position.clone(), Frozen));
@@ -97,6 +117,14 @@ fn main() {
             create.clones((position, Frozen), counter);
         }
     };
+
+    fn simple() -> impl Initial {
+        (Frozen, Position(Vec::new()), Frozen)
+    }
+
+    fn composite() -> impl Initial {
+        (simple(), simple(), simple())
+    }
 
     let mut world = World::new();
     let mut runner = world
@@ -109,6 +137,12 @@ fn main() {
         .schedule(create())
         .schedule(create())
         .schedule(create())
+        .schedule(|mut create: Create<_>| {
+            create.one((Frozen, Frozen, Frozen, Frozen, Frozen, Frozen));
+        })
+        .schedule(|mut create: Create<_>| {
+            create.one(composite());
+        })
         .schedule(|query: Query<Entity>| println!("C: {:?}", query.len()))
         .schedule(|mut destroy: Destroy| destroy.all())
         .runner()

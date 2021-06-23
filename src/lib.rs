@@ -125,14 +125,15 @@ mod test {
             //         counter += time.0 * counter;
             //     }
             // })
-            .injector()
-            .inject::<&Time>()
-            .inject::<&mut Physics>()
-            .inject::<Emit<OnKill>>()
-            .inject_with::<Receive<OnKill>>(8)
-            .inject::<Query<(Entity, &mut Position, &Velocity)>>()
-            .schedule(|_a, _b, _c, _d, _e| {})
-            //
+            .schedule_with(
+                Injector::new()
+                    .inject::<&Time>()
+                    .inject::<&mut Physics>()
+                    .inject::<Emit<OnKill>>()
+                    .inject_with::<Receive<OnKill>>(8)
+                    .inject::<Query<(Entity, &mut Position, &Velocity)>>(),
+                |_a, _b, _c, _d, _e| {},
+            )
             .schedule(|_: (&Time, &Physics)| {})
             .schedule(|_: (&Time, &Physics)| {})
             .schedule(|_: (&Time, Query<Option<&Position>>)| {})

@@ -103,11 +103,15 @@ unsafe impl Depend for State {
 impl World {
     pub fn new() -> Self {
         static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let meta = Meta::new::<Entity>(0);
+        let mut type_to_meta = HashMap::new();
+        type_to_meta.insert(meta.identifier.clone(), 0);
+
         Self {
             identifier: COUNTER.fetch_add(1, Ordering::Relaxed),
             segments: Vec::new(),
-            metas: vec![Arc::new(Meta::new::<Entity>(0))],
-            type_to_meta: HashMap::new(),
+            metas: vec![Arc::new(meta)],
+            type_to_meta,
             bits_to_segment: HashMap::new(),
         }
     }

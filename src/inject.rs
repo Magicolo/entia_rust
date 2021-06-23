@@ -1,7 +1,7 @@
-use crate::core::call::*;
+use std::marker::PhantomData;
+
 use crate::core::prepend::*;
 use crate::depend::Depend;
-use crate::schedule::*;
 use crate::world::*;
 
 pub struct Context {
@@ -27,15 +27,19 @@ pub trait Get<'a>: 'static {
     fn get(&'a mut self, world: &'a World) -> Self::Item;
 }
 
-pub struct Injector<'a, I: Inject = ()> {
-    pub(crate) input: I::Input,
-    pub(crate) scheduler: Scheduler<'a>,
-}
+pub struct Injector<'a, I: Inject = ()>(pub I::Input, PhantomData<&'a ()>);
 
 impl Context {
     #[inline]
     pub const fn new(identifier: usize) -> Self {
         Self { identifier }
+    }
+}
+
+impl Injector<'_> {
+    #[inline]
+    pub const fn new() -> Self {
+        Injector((), PhantomData)
     }
 }
 
@@ -57,17 +61,7 @@ impl<'a, I: Inject> Injector<'a, I> {
         <T as Prepend<I>>::Target: Inject,
         T::Input: Prepend<I::Input, Target = <<T as Prepend<I>>::Target as Inject>::Input>,
     {
-        Injector {
-            input: input.prepend(self.input),
-            scheduler: self.scheduler,
-        }
-    }
-
-    pub fn schedule<C: Call<I, ()> + Call<<I::State as Get<'a>>::Item, ()> + 'static>(
-        self,
-        schedule: C,
-    ) -> Scheduler<'a> {
-        <(I::Input, C) as Schedule<'a, [I; 1]>>::schedule((self.input, schedule), self.scheduler)
+        Injector(input.prepend(self.0), self.1)
     }
 }
 

@@ -75,15 +75,19 @@ impl<'a, I: Inject, C: Call<I, ()> + Call<<I::State as Get<'a>>::Item, ()> + 'st
 }
 
 impl<'a> Scheduler<'a> {
-    pub fn injector(self) -> Injector<'a> {
-        Injector {
-            input: (),
-            scheduler: self,
-        }
-    }
-
     pub fn schedule<M, S: Schedule<'a, M>>(self, schedule: S) -> Self {
         schedule.schedule(self)
+    }
+
+    pub fn schedule_with<
+        I: Inject,
+        C: Call<I, ()> + Call<<I::State as Get<'a>>::Item, ()> + 'static,
+    >(
+        self,
+        injector: Injector<'a, I>,
+        schedule: C,
+    ) -> Self {
+        <(I::Input, C) as Schedule<'a, [I; 1]>>::schedule((injector.0, schedule), self)
     }
 
     pub fn synchronize(self) -> Self {

@@ -1,5 +1,5 @@
+use std::any::TypeId;
 use std::cell::UnsafeCell;
-use std::cmp::max;
 use std::cmp::min;
 use std::slice::from_raw_parts_mut;
 use std::sync::atomic::AtomicUsize;
@@ -72,7 +72,7 @@ impl Segment {
     }
 
     pub fn clear(&mut self) {
-        for store in self.stores.iter_mut() {
+        for store in self.stores.iter() {
             unsafe { store.as_ref().drop(0, self.count) };
         }
         self.count = 0;
@@ -91,7 +91,11 @@ impl Segment {
 
     pub fn reserve(&self, count: usize) -> (usize, usize) {
         let index = self.count + self.reserved.fetch_add(count, Ordering::Relaxed);
-        (index, max(self.capacity - min(self.capacity, index), count))
+        if index + count > self.capacity {
+            (index, self.capacity - min(index, self.capacity))
+        } else {
+            (index, count)
+        }
     }
 
     pub fn resolve(&mut self) {
@@ -99,9 +103,9 @@ impl Segment {
         let count = self.count + *reserved;
 
         if self.capacity < count {
-            let capacity = next_power_of_2(count as u32) as usize;
+            let capacity = next_power_of_2(count as u32 - 1) as usize;
             for store in self.stores.iter() {
-                unsafe { store.resize(self.count, self.capacity, capacity) };
+                unsafe { store.resize(self.capacity, capacity) };
             }
             self.capacity = capacity;
         }
@@ -120,6 +124,7 @@ impl Store {
 
     #[inline]
     pub unsafe fn copy(source: (&Store, usize), target: (&Store, usize), count: usize) {
+        debug_assert_eq!(source.0 .0.identifier, target.0 .0.identifier);
         (source.0 .0.copy)(
             (source.0.pointer(), source.1),
             (target.0.pointer(), target.1),
@@ -129,26 +134,30 @@ impl Store {
 
     /// SAFETY: The 'index' must be within the bounds of the store.
     #[inline]
-    pub unsafe fn get<T>(&self, index: usize) -> &mut T {
+    pub unsafe fn get<T: 'static>(&self, index: usize) -> &mut T {
+        debug_assert_eq!(TypeId::of::<T>(), self.0.identifier);
         &mut *self.pointer().cast::<T>().add(index)
     }
 
     /// SAFETY: Both 'index' and 'count' must be within the bounds of the store.
     #[inline]
-    pub unsafe fn get_all<T>(&self, index: usize, count: usize) -> &mut [T] {
+    pub unsafe fn get_all<T: 'static>(&self, index: usize, count: usize) -> &mut [T] {
+        debug_assert_eq!(TypeId::of::<T>(), self.0.identifier);
         from_raw_parts_mut(self.pointer().cast::<T>().add(index), count)
     }
 
     #[inline]
-    pub unsafe fn set<T>(&self, index: usize, item: T) {
+    pub unsafe fn set<T: 'static>(&self, index: usize, item: T) {
+        debug_assert_eq!(TypeId::of::<T>(), self.0.identifier);
         self.pointer().cast::<T>().add(index).write(item);
     }
 
     #[inline]
-    pub unsafe fn set_all<T>(&self, index: usize, items: &[T])
+    pub unsafe fn set_all<T: 'static>(&self, index: usize, items: &[T])
     where
         T: Copy,
     {
+        debug_assert_eq!(TypeId::of::<T>(), self.0.identifier);
         let source = items.as_ptr().cast::<T>();
         let target = self.pointer().cast::<T>().add(index);
         source.copy_to_nonoverlapping(target, items.len());
@@ -157,16 +166,16 @@ impl Store {
     /// SAFETY: Both the 'source' and 'target' indices must be within the bounds of the store.
     #[inline]
     pub unsafe fn squash(&self, source: usize, target: usize) {
-        let data = self.pointer();
-        (self.0.drop)(data, target, 1);
-        (self.0.copy)((data, source), (data, target), 1);
+        let pointer = self.pointer();
+        (self.0.drop)(pointer, target, 1);
+        (self.0.copy)((pointer, source), (pointer, target), 1);
     }
 
     #[inline]
-    pub unsafe fn resize(&self, count: usize, old: usize, new: usize) {
+    pub unsafe fn resize(&self, old: usize, new: usize) {
         let pointer = self.pointer();
         let data = (self.0.allocate)(new);
-        (self.0.copy)((pointer, 0), (data, 0), count);
+        (self.0.copy)((pointer, 0), (data, 0), old);
         (self.0.free)(pointer, old);
         *self.1.get() = data;
     }
