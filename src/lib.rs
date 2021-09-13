@@ -4,13 +4,14 @@ pub mod defer;
 pub mod depend;
 pub mod destroy;
 pub mod emit;
-mod entities;
+pub mod entities;
 pub mod entity;
+pub mod factory;
 pub mod filter;
 pub mod initial;
 pub mod inject;
 pub mod item;
-mod local;
+pub mod local;
 pub mod message;
 pub mod query;
 pub mod read;
@@ -33,6 +34,7 @@ pub mod prelude {
     pub use crate::destroy::Destroy;
     pub use crate::emit::Emit;
     pub use crate::entity::Entity;
+    pub use crate::factory::{Factory, Template};
     pub use crate::filter::Not;
     pub use crate::inject::Injector;
     pub use crate::message::Message;
@@ -85,8 +87,7 @@ mod test {
         let mut world = World::new();
         let mut runner = world
             .scheduler()
-            .schedule(physics)
-            // .schedule(ui)
+            .pipe(physics)
             .synchronize()
             .schedule(|_: ()| {})
             .schedule(|_: &World| {})
@@ -126,13 +127,12 @@ mod test {
             //     }
             // })
             .schedule_with(
-                Injector::new()
-                    .inject::<&Time>()
-                    .inject::<&mut Physics>()
-                    .inject::<Emit<OnKill>>()
-                    .inject_with::<Receive<OnKill>>(8)
-                    .inject::<Query<(Entity, &mut Position, &Velocity)>>(),
-                |_a, _b, _c, _d, _e| {},
+                (Some(Time(12.0)), None, (), 8, ()),
+                |_a: &Time,
+                 _b: &mut Physics,
+                 _c: Emit<OnKill>,
+                 _d: Receive<OnKill>,
+                 _e: Query<(Entity, &mut Position, &Velocity)>| {},
             )
             .schedule(|_: (&Time, &Physics)| {})
             .schedule(|_: (&Time, &Physics)| {})
@@ -177,34 +177,14 @@ mod test {
                 }
             })
             .schedule(motion)
-            .schedule(|mut on_kill: Emit<OnKill>| on_kill.emit(OnKill(Entity::default())))
-            .schedule(((8,), |on_kill: Receive<OnKill>| for _ in on_kill {}))
+            .schedule(|mut on_kill: Emit<_>| on_kill.emit(OnKill(Entity::default())))
+            .schedule_with((8,), |on_kill: Receive<OnKill>| {
+                for message in on_kill {
+                    println!("{:?}", message.0);
+                }
+            })
             .schedule(|on_kill: Receive<OnKill>| for _ in on_kill {})
             .schedule(|mut on_kill: Receive<OnKill>| while let Some(_) = on_kill.next() {})
-            // .schedule(
-            //     |query: Query<Entity>, mut add: Add<(Position, Option<Velocity>)>| {
-            //         for entity in &query {
-            //             add.add(entity, (Position(1., 2., 3.), None));
-            //             add.add(entity, (Position(1., 2., 3.), Some(Velocity(3., 2., 1.))));
-            //         }
-            //     },
-            // )
-            // .schedule(
-            //     |mut create: Create<(Position, Option<Velocity>)>, mut add: Add<Frozen>| {
-            //         let _ = create.one((Position(1., 2., 3.), None));
-            //         let entity = create.one((Position(1., 2., 3.), Some(Velocity(3., 2., 1.))));
-            //         add.add(entity, Frozen);
-            //     },
-            // )
-            // .schedule(
-            //     |query: Query<Entity>, mut remove: Remove<(Position, Option<Velocity>)>| {
-            //         for entity in &query {
-            //             remove.remove(entity);
-            //         }
-            //     },
-            // )
-            // Removes the 'Position' component of all entities that don't have a 'Player' component and that have a 'Frozen' component.
-            // .schedule(|mut remove: Remove<Position, (Not<Player>, Frozen)>| remove.remove_all())
             .schedule(
                 |query: Query<Entity>, mut destroy: Destroy<(), (Position, Velocity)>| {
                     for entity in &query {

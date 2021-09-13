@@ -31,9 +31,9 @@ pub struct Items<'a, 'b, I: Item, F: Filter> {
 }
 
 pub(crate) struct Inner<I: Item, F: Filter> {
-    pub(crate) index: usize,
+    index: usize,
     pub(crate) segments: Bits,
-    pub(crate) states: Vec<(I::State, usize)>,
+    states: Vec<(I::State, usize)>,
     _marker: PhantomData<F>,
 }
 
@@ -47,6 +47,12 @@ impl<I: Item, F: Filter> Default for Inner<I, F> {
             states: Vec::new(),
             _marker: PhantomData,
         }
+    }
+}
+
+impl<I: Item + 'static, F: Filter> Inner<I, F> {
+    pub fn segments<'a>(&'a self) -> impl Iterator<Item = usize> + 'a {
+        self.states.iter().map(|(_, segment)| *segment)
     }
 }
 

@@ -1,4 +1,4 @@
-pub trait Call<I, O> {
+pub trait Call<I, O = ()> {
     fn call(&mut self, input: I) -> O;
 }
 

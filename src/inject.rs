@@ -1,8 +1,4 @@
-use std::marker::PhantomData;
-
-use crate::core::prepend::*;
-use crate::depend::Depend;
-use crate::world::*;
+use crate::{depend::Depend, world::World};
 
 pub struct Context {
     pub identifier: usize,
@@ -27,41 +23,12 @@ pub trait Get<'a>: 'static {
     fn get(&'a mut self, world: &'a World) -> Self::Item;
 }
 
-pub struct Injector<'a, I: Inject = ()>(pub I::Input, PhantomData<&'a ()>);
+pub struct Injector<I: Inject = ()>(pub I::Input);
 
 impl Context {
     #[inline]
     pub const fn new(identifier: usize) -> Self {
         Self { identifier }
-    }
-}
-
-impl Injector<'_> {
-    #[inline]
-    pub const fn new() -> Self {
-        Injector((), PhantomData)
-    }
-}
-
-impl<'a, I: Inject> Injector<'a, I> {
-    pub fn inject<T: Inject + Prepend<I>>(self) -> Injector<'a, <T as Prepend<I>>::Target>
-    where
-        T::Input: Default,
-        <T as Prepend<I>>::Target: Inject,
-        T::Input: Prepend<I::Input, Target = <<T as Prepend<I>>::Target as Inject>::Input>,
-    {
-        self.inject_with::<T>(T::Input::default())
-    }
-
-    pub fn inject_with<T: Inject + Prepend<I>>(
-        self,
-        input: T::Input,
-    ) -> Injector<'a, <T as Prepend<I>>::Target>
-    where
-        <T as Prepend<I>>::Target: Inject,
-        T::Input: Prepend<I::Input, Target = <<T as Prepend<I>>::Target as Inject>::Input>,
-    {
-        Injector(input.prepend(self.0), self.1)
     }
 }
 

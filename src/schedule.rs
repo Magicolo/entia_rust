@@ -2,7 +2,7 @@ use entia_core::Call;
 
 use crate::{
     depend::{Depend, Dependency},
-    inject::{Context, Get, Inject, Injector},
+    inject::{Context, Get, Inject},
     system::{Runner, System},
     world::World,
 };
@@ -10,10 +10,6 @@ use crate::{
 pub struct Scheduler<'a> {
     pub(crate) systems: Vec<Option<System>>,
     pub(crate) world: &'a mut World,
-}
-
-pub trait Schedule<'a, M = ()> {
-    fn schedule(self, scheduler: Scheduler<'a>) -> Scheduler<'a>;
 }
 
 impl World {
@@ -25,73 +21,42 @@ impl World {
     }
 }
 
-impl<'a> Schedule<'a> for System {
-    fn schedule(self, scheduler: Scheduler<'a>) -> Scheduler<'a> {
-        scheduler.schedule(Some(self))
-    }
-}
-
-impl<'a> Schedule<'a> for Option<System> {
-    fn schedule(self, mut scheduler: Scheduler<'a>) -> Scheduler<'a> {
-        scheduler.systems.push(self);
-        scheduler
-    }
-}
-
-impl<'a, F: FnOnce(Scheduler) -> Scheduler> Schedule<'a> for F {
-    fn schedule(self, scheduler: Scheduler<'a>) -> Scheduler<'a> {
-        self(scheduler)
-    }
-}
-
-impl<'a, I: Inject, C: Call<I, ()> + Call<<I::State as Get<'a>>::Item, ()> + 'static>
-    Schedule<'a, [I; 0]> for C
-where
-    I::Input: Default,
-{
-    fn schedule(self, scheduler: Scheduler<'a>) -> Scheduler<'a> {
-        <(I::Input, C) as Schedule<'a, [I; 1]>>::schedule((I::Input::default(), self), scheduler)
-    }
-}
-
-impl<'a, I: Inject, C: Call<I, ()> + Call<<I::State as Get<'a>>::Item, ()> + 'static>
-    Schedule<'a, [I; 1]> for (I::Input, C)
-{
-    fn schedule(self, scheduler: Scheduler<'a>) -> Scheduler<'a> {
-        let (input, run) = self;
-        let context = Context::new(System::reserve());
-        let system = I::initialize(input, &context, scheduler.world).map(|state| unsafe {
-            System::new(
-                Some(context.identifier),
-                (run, state),
-                |(run, state), world| run.call(state.get(world)),
-                |(_, state), world| I::update(state, world),
-                |(_, state), world| I::resolve(state, world),
-                |(_, state), world| state.depend(world),
-            )
-        });
-        scheduler.schedule(system)
-    }
-}
-
 impl<'a> Scheduler<'a> {
-    pub fn schedule<M, S: Schedule<'a, M>>(self, schedule: S) -> Self {
-        schedule.schedule(self)
+    pub fn pipe(self, mut schedule: impl FnMut(Self) -> Self) -> Self {
+        schedule(self)
     }
 
-    pub fn schedule_with<
-        I: Inject,
-        C: Call<I, ()> + Call<<I::State as Get<'a>>::Item, ()> + 'static,
-    >(
+    pub fn schedule<I: Inject>(
         self,
-        injector: Injector<'a, I>,
-        schedule: C,
-    ) -> Self {
-        <(I::Input, C) as Schedule<'a, [I; 1]>>::schedule((injector.0, schedule), self)
+        run: impl Call<I> + Call<<I::State as Get<'a>>::Item> + 'static,
+    ) -> Self
+    where
+        I::Input: Default,
+    {
+        self.add::<I, _>(I::Input::default(), run)
     }
 
-    pub fn synchronize(self) -> Self {
-        self.schedule(System::depend(vec![Dependency::Unknown]))
+    pub fn schedule_with<I: Inject>(
+        self,
+        input: I::Input,
+        run: impl Call<I> + Call<<I::State as Get<'a>>::Item> + 'static,
+    ) -> Self {
+        self.add::<I, _>(input, run)
+    }
+
+    pub fn synchronize(mut self) -> Self {
+        let system = unsafe {
+            System::new(
+                None,
+                vec![Dependency::Unknown],
+                |_, _| {},
+                |_, _| {},
+                |_, _| {},
+                |state, _| state.clone(),
+            )
+        };
+        self.systems.push(Some(system));
+        self
     }
 
     pub fn runner(self) -> Option<Runner> {
@@ -102,5 +67,25 @@ impl<'a> Scheduler<'a> {
         }
 
         Runner::new(systems, self.world)
+    }
+
+    fn add<I: Inject, R: Call<I> + Call<<I::State as Get<'a>>::Item> + 'static>(
+        mut self,
+        input: I::Input,
+        run: R,
+    ) -> Self {
+        let context = Context::new(System::reserve());
+        let system = I::initialize(input, &context, self.world).map(|state| unsafe {
+            System::new(
+                Some(context.identifier),
+                (run, state),
+                |(run, state), world| run.call(state.get(world)),
+                |(_, state), world| I::update(state, world),
+                |(_, state), world| I::resolve(state, world),
+                |(_, state), world| state.depend(world),
+            )
+        });
+        self.systems.push(system);
+        self
     }
 }

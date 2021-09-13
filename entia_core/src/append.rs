@@ -1,6 +1,11 @@
 pub trait Append<T> {
-    type Target;
+    type Target: Chop<T, Rest = Self>;
     fn append(self, value: T) -> Self::Target;
+}
+
+pub trait Chop<T> {
+    type Rest;
+    fn chop(self) -> (T, Self::Rest);
 }
 
 macro_rules! append {
@@ -13,6 +18,14 @@ macro_rules! append {
             fn append(self, $p: $t) -> Self::Target {
                 let ($($ps,)*) = self;
                 ($($ps,)* $p,)
+            }
+        }
+
+        impl<$($ts,)* $t> Chop<$t> for ($($ts,)* $t,) {
+            type Rest = ($($ts,)*);
+            fn chop(self) -> ($t, Self::Rest) {
+                let ($($ps,)* $p,) = self;
+                ($p, ($($ps,)*))
             }
         }
     };

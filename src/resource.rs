@@ -15,14 +15,6 @@ impl<R: Resource> Inject for &R {
     fn initialize(input: Self::Input, context: &Context, world: &mut World) -> Option<Self::State> {
         <Read<R> as Inject>::initialize(input, context, world)
     }
-
-    fn update(state: &mut Self::State, world: &mut World) {
-        <Read<R> as Inject>::update(state, world);
-    }
-
-    fn resolve(state: &mut Self::State, world: &mut World) {
-        <Read<R> as Inject>::resolve(state, world);
-    }
 }
 
 impl<R: Resource> Inject for &mut R {
@@ -32,14 +24,6 @@ impl<R: Resource> Inject for &mut R {
     fn initialize(input: Self::Input, context: &Context, world: &mut World) -> Option<Self::State> {
         <Write<R> as Inject>::initialize(input, context, world)
     }
-
-    fn update(state: &mut Self::State, world: &mut World) {
-        <Write<R> as Inject>::update(state, world);
-    }
-
-    fn resolve(state: &mut Self::State, world: &mut World) {
-        <Write<R> as Inject>::resolve(state, world);
-    }
 }
 
 pub(crate) fn initialize<T: Send + 'static>(
@@ -47,7 +31,7 @@ pub(crate) fn initialize<T: Send + 'static>(
     world: &mut World,
 ) -> Option<(Arc<Store>, usize)> {
     let meta = world.get_or_add_meta::<T>();
-    let segment = world.get_or_add_segment_by_metas(vec![meta.clone()]);
+    let segment = world.get_or_add_segment_by_metas(&[meta.clone()]);
     let store = segment.store(&meta)?;
     if segment.count == 0 {
         let (index, _) = segment.reserve(1);

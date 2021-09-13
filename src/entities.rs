@@ -22,8 +22,7 @@ impl Resource for Entities {}
 
 impl Datum {
     const RELEASED: u8 = 0;
-    const RESERVED: u8 = 1;
-    const INITIALIZED: u8 = 2;
+    const INITIALIZED: u8 = 1;
 
     #[inline]
     pub const fn index(&self) -> u32 {
@@ -33,13 +32,6 @@ impl Datum {
     #[inline]
     pub const fn segment(&self) -> u32 {
         self.segment
-    }
-
-    #[inline]
-    pub fn reserve(&mut self) -> u32 {
-        self.state = Self::RESERVED;
-        self.generation += 1;
-        self.generation
     }
 
     #[inline]
@@ -53,8 +45,9 @@ impl Datum {
     }
 
     #[inline]
-    pub fn initialize(&mut self, index: u32, segment: u32) -> bool {
-        if self.state == Self::RESERVED {
+    pub fn initialize(&mut self, generation: u32, index: u32, segment: u32) -> bool {
+        if self.state == Self::RELEASED {
+            self.generation = generation;
             self.index = index;
             self.segment = segment;
             self.state = Self::INITIALIZED;
@@ -88,7 +81,7 @@ impl Entities {
         }
     }
 
-    pub fn reserve(&mut self, entities: &mut [Entity]) -> usize {
+    pub fn reserve(&self, entities: &mut [Entity]) -> usize {
         if entities.len() == 0 {
             return 0;
         }
@@ -99,7 +92,7 @@ impl Entities {
         for i in 0..count {
             let index = last as usize - i - 1;
             let mut entity = self.free.0[index];
-            entity.generation = self.data.0[entity.index as usize].reserve();
+            entity.generation = self.data.0[entity.index as usize].generation + 1;
             entities[i] = entity;
         }
 
@@ -153,7 +146,6 @@ impl Entities {
     }
 
     #[inline]
-    #[allow(dead_code)]
     pub fn get_datum_unchecked(&self, entity: Entity) -> &Datum {
         &self.data.0[entity.index as usize]
     }

@@ -1,5 +1,6 @@
 use entia_core::bits::Bits;
 use std::any::type_name;
+use std::any::Any;
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::mem::needs_drop;
@@ -26,10 +27,12 @@ pub struct Meta {
     pub(crate) identifier: TypeId,
     pub(crate) name: &'static str,
     pub(crate) index: usize,
+    pub(crate) size: usize,
     pub(crate) allocate: fn(usize) -> *mut (),
-    pub(crate) free: fn(*mut (), usize),
-    pub(crate) copy: fn((*const (), usize), (*mut (), usize), usize),
-    pub(crate) drop: fn(*mut (), usize, usize),
+    pub(crate) free: unsafe fn(*mut (), usize, usize),
+    pub(crate) copy: unsafe fn((*const (), usize), (*mut (), usize), usize),
+    pub(crate) drop: unsafe fn(*mut (), usize, usize),
+    pub(crate) set: unsafe fn(*mut (), Box<dyn Any>, usize),
 }
 
 pub struct World {
@@ -49,12 +52,13 @@ impl Meta {
             identifier: TypeId::of::<T>(),
             name: type_name::<T>(),
             index,
+            size: size_of::<T>(),
             allocate: |capacity| {
                 let mut data = ManuallyDrop::new(Vec::<T>::with_capacity(capacity));
                 data.as_mut_ptr().cast()
             },
-            free: |pointer, capacity| unsafe {
-                Vec::from_raw_parts(pointer.cast::<T>(), 0, capacity);
+            free: |pointer, count, capacity| unsafe {
+                Vec::from_raw_parts(pointer.cast::<T>(), count, capacity);
             },
             copy: if size_of::<T>() > 0 {
                 |source, target, count| unsafe {
@@ -69,6 +73,13 @@ impl Meta {
                 |pointer, index, count| unsafe {
                     let pointer = pointer.cast::<T>().add(index);
                     drop_in_place(slice_from_raw_parts_mut(pointer, count));
+                }
+            } else {
+                |_, _, _| {}
+            },
+            set: if size_of::<T>() > 0 {
+                |pointer, item, index| unsafe {
+                    *pointer.cast::<T>().add(index) = *item.downcast().unwrap();
                 }
             } else {
                 |_, _, _| {}
@@ -139,7 +150,8 @@ impl World {
     pub fn get_metas_from_types(&self, types: &Bits) -> Vec<Arc<Meta>> {
         types
             .into_iter()
-            .map(|index| self.metas[index].clone())
+            .filter_map(|index| self.metas.get(index))
+            .cloned()
             .collect()
     }
 
@@ -149,7 +161,7 @@ impl World {
             .map(|&index| &self.segments[index])
     }
 
-    pub fn get_segment_by_metas(&self, metas: Vec<Arc<Meta>>) -> Option<&Segment> {
+    pub fn get_segment_by_metas(&self, metas: &[Arc<Meta>]) -> Option<&Segment> {
         let mut types = Bits::new();
         metas.iter().for_each(|meta| types.set(meta.index, true));
         self.get_segment_by_types(&types)
@@ -160,11 +172,10 @@ impl World {
         self.add_segment(types.clone(), metas)
     }
 
-    pub fn add_segment_from_metas(&mut self, mut metas: Vec<Arc<Meta>>) -> &mut Segment {
+    pub fn add_segment_from_metas(&mut self, metas: &[Arc<Meta>]) -> &mut Segment {
         let mut types = Bits::new();
-        metas.sort_by_key(|meta| meta.index);
         metas.iter().for_each(|meta| types.set(meta.index, true));
-        self.add_segment(types, metas)
+        self.add_segment_from_types(&types)
     }
 
     pub fn get_or_add_segment_by_types(&mut self, types: &Bits) -> &mut Segment {
@@ -177,7 +188,7 @@ impl World {
         }
     }
 
-    pub fn get_or_add_segment_by_metas(&mut self, metas: Vec<Arc<Meta>>) -> &mut Segment {
+    pub fn get_or_add_segment_by_metas(&mut self, metas: &[Arc<Meta>]) -> &mut Segment {
         let mut types = Bits::new();
         metas.iter().for_each(|meta| types.set(meta.index, true));
         self.get_or_add_segment_by_types(&types)

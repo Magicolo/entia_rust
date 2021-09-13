@@ -1,6 +1,8 @@
+use std::any::Any;
 use std::any::TypeId;
 use std::cell::UnsafeCell;
 use std::cmp::min;
+use std::mem::replace;
 use std::slice::from_raw_parts_mut;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
@@ -110,8 +112,15 @@ impl Segment {
             self.capacity = capacity;
         }
 
-        self.count += *reserved;
-        *reserved = 0;
+        self.count += replace(reserved, 0);
+    }
+}
+
+impl Drop for Segment {
+    fn drop(&mut self) {
+        for store in self.stores.iter() {
+            unsafe { (store.0.free)(store.data(), self.count, self.capacity) };
+        }
     }
 }
 
@@ -123,11 +132,21 @@ impl Store {
     }
 
     #[inline]
-    pub unsafe fn copy(source: (&Store, usize), target: (&Store, usize), count: usize) {
-        debug_assert_eq!(source.0 .0.identifier, target.0 .0.identifier);
-        (source.0 .0.copy)(
-            (source.0.pointer(), source.1),
-            (target.0.pointer(), target.1),
+    pub const fn meta(&self) -> &Meta {
+        &self.0
+    }
+
+    #[inline]
+    pub fn data(&self) -> *mut () {
+        unsafe { *self.1.get() }
+    }
+
+    #[inline]
+    pub unsafe fn copy(source: (&Self, usize), target: (&Self, usize), count: usize) {
+        debug_assert_eq!(source.0.meta().identifier, target.0.meta().identifier);
+        (source.0.meta().copy)(
+            (source.0.data(), source.1),
+            (target.0.data(), target.1),
             count,
         );
     }
@@ -135,21 +154,27 @@ impl Store {
     /// SAFETY: The 'index' must be within the bounds of the store.
     #[inline]
     pub unsafe fn get<T: 'static>(&self, index: usize) -> &mut T {
-        debug_assert_eq!(TypeId::of::<T>(), self.0.identifier);
-        &mut *self.pointer().cast::<T>().add(index)
+        debug_assert_eq!(TypeId::of::<T>(), self.meta().identifier);
+        &mut *self.data().cast::<T>().add(index)
     }
 
     /// SAFETY: Both 'index' and 'count' must be within the bounds of the store.
     #[inline]
     pub unsafe fn get_all<T: 'static>(&self, index: usize, count: usize) -> &mut [T] {
-        debug_assert_eq!(TypeId::of::<T>(), self.0.identifier);
-        from_raw_parts_mut(self.pointer().cast::<T>().add(index), count)
+        debug_assert_eq!(TypeId::of::<T>(), self.meta().identifier);
+        from_raw_parts_mut(self.data().cast::<T>().add(index), count)
     }
 
     #[inline]
     pub unsafe fn set<T: 'static>(&self, index: usize, item: T) {
-        debug_assert_eq!(TypeId::of::<T>(), self.0.identifier);
-        self.pointer().cast::<T>().add(index).write(item);
+        debug_assert_eq!(TypeId::of::<T>(), self.meta().identifier);
+        self.data().cast::<T>().add(index).write(item);
+    }
+
+    #[inline]
+    pub unsafe fn set_any(&self, index: usize, item: Box<dyn Any>) {
+        debug_assert_eq!(item.type_id(), self.meta().identifier);
+        (self.meta().set)(self.data(), item, index);
     }
 
     #[inline]
@@ -157,36 +182,33 @@ impl Store {
     where
         T: Copy,
     {
-        debug_assert_eq!(TypeId::of::<T>(), self.0.identifier);
+        debug_assert_eq!(TypeId::of::<T>(), self.meta().identifier);
         let source = items.as_ptr().cast::<T>();
-        let target = self.pointer().cast::<T>().add(index);
+        let target = self.data().cast::<T>().add(index);
         source.copy_to_nonoverlapping(target, items.len());
     }
 
     /// SAFETY: Both the 'source' and 'target' indices must be within the bounds of the store.
     #[inline]
-    pub unsafe fn squash(&self, source: usize, target: usize) {
-        let pointer = self.pointer();
-        (self.0.drop)(pointer, target, 1);
-        (self.0.copy)((pointer, source), (pointer, target), 1);
+    pub unsafe fn squash(&self, source_index: usize, target_index: usize) {
+        let meta = self.meta();
+        let data = self.data();
+        (meta.drop)(data, target_index, 1);
+        (meta.copy)((data, source_index), (data, target_index), 1);
     }
 
     #[inline]
-    pub unsafe fn resize(&self, old: usize, new: usize) {
-        let pointer = self.pointer();
-        let data = (self.0.allocate)(new);
-        (self.0.copy)((pointer, 0), (data, 0), old);
-        (self.0.free)(pointer, old);
-        *self.1.get() = data;
+    pub unsafe fn resize(&self, old_capacity: usize, new_capacity: usize) {
+        let meta = self.meta();
+        let old_data = self.data();
+        let new_data = (self.meta().allocate)(new_capacity);
+        (meta.copy)((old_data, 0), (new_data, 0), old_capacity);
+        (meta.free)(old_data, 0, old_capacity);
+        *self.1.get() = new_data;
     }
 
     #[inline]
     pub unsafe fn drop(&self, index: usize, count: usize) {
-        (self.0.drop)(self.pointer(), index, count);
-    }
-
-    #[inline]
-    unsafe fn pointer(&self) -> *mut () {
-        *self.1.get()
+        (self.meta().drop)(self.data(), index, count);
     }
 }

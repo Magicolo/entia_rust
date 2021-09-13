@@ -70,8 +70,8 @@ Injector::new()
 A 'Destroy::all' operation could destroy entities that have not been created yet since a later 'Create' might not need to
 defer its operation. A possible solution would be for the 'Destroy::all' operation to store 'segment.reserved'.
 
-- Deferred operations must share the same defer queue but each system should have its own defer queue. This way,
-resolution order will be preserved between systems and no thread safety is needed.
+- Similar to 'Create' and 'Destroy', move resolve logic of 'Emit' to run time when possible. As long as no resize are required,
+it should be possible to do so by adding a 'reserved: AtomicUsize' to queues.
 
 - Make deferral more explicit and extensible by enforcing the format: 'Defer<Add<Freeze>>'?
 
@@ -99,11 +99,14 @@ fields that implement it.
 
 fn main() {
     #[derive(Default, Clone)]
+    struct Time;
+    #[derive(Default, Clone)]
     struct Position(Vec<usize>);
     #[derive(Default, Clone)]
     struct Frozen;
     impl Component for Position {}
     impl Component for Frozen {}
+    impl Resource for Time {}
 
     let create = || {
         let mut counter = 0;
@@ -111,18 +114,18 @@ fn main() {
             let position = Position(Vec::with_capacity(counter));
             counter += counter / 100 + 1;
             create.one((position.clone(), Frozen));
-            create.all(vec![(position.clone(), Frozen); counter].drain(..));
+            create.all((0..counter).map(|_| (position.clone(), Frozen)));
             create.exact([(position.clone(), Frozen)]);
             create.defaults(counter);
             create.clones((position, Frozen), counter);
         }
     };
 
-    fn simple() -> impl Initial {
+    fn simple() -> impl Initial<Input = impl Default> {
         (Frozen, Position(Vec::new()), Frozen)
     }
 
-    fn composite() -> impl Initial {
+    fn composite() -> impl Initial<Input = impl Default> {
         (simple(), simple(), simple())
     }
 
@@ -137,6 +140,20 @@ fn main() {
         .schedule(create())
         .schedule(create())
         .schedule(create())
+        .schedule_with(
+            (
+                Template::new()
+                    .add_clone(Frozen)
+                    .add_with(|x| Position(vec![x])),
+                Template::new()
+                    .add_with(|x| Position(vec![x]))
+                    .add_template(Template::new().adapt(|_| ())),
+            ),
+            |mut _a: Factory<_>, mut _b: Factory<_>| {
+                _a.one(12);
+                _b.one(34);
+            },
+        )
         .schedule(|mut create: Create<_>| {
             create.one((Frozen, Frozen, Frozen, Frozen, Frozen, Frozen));
         })

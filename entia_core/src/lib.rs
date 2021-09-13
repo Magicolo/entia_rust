@@ -3,6 +3,7 @@ pub mod bits;
 pub mod call;
 pub mod change;
 pub mod prepend;
+pub mod slice;
 pub mod utility;
 
 pub use append::*;

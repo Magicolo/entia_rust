@@ -47,10 +47,6 @@ impl Runner {
         }
 
         for block in self.blocks.iter_mut() {
-            for system in block.iter_mut() {
-                (system.update)(world);
-            }
-
             // If segments have been added to the world, this may mean that the dependencies used to schedule the systems
             // are not be up to date, therefore it is not safe to run the systems in parallel.
             if self.segments == world.segments.len() && block.len() > 1 {
@@ -226,19 +222,6 @@ impl System {
                 let state = state.clone();
                 Box::new(move |world| unsafe { depend(&mut *state.get(), &*(world as *const _)) })
             },
-        }
-    }
-
-    pub fn depend(dependencies: impl IntoIterator<Item = Dependency>) -> Self {
-        unsafe {
-            Self::new(
-                None,
-                dependencies.into_iter().collect::<Vec<_>>(),
-                |_, _| {},
-                |_, _| {},
-                |_, _| {},
-                |state, _| state.clone(),
-            )
         }
     }
 
