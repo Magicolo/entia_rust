@@ -10,6 +10,7 @@ use crate::{
 
 pub struct GetMeta(fn(&mut World) -> Arc<Meta>);
 
+#[derive(Clone)]
 pub struct Indices {
     pub offset: usize,
     pub segment: usize,
@@ -25,7 +26,7 @@ pub struct DeclareContext<'a> {
 
 pub struct InitializeContext<'a> {
     segment_index: usize,
-    segments: &'a Vec<usize>,
+    segments: &'a [usize],
     metas_to_segment: &'a HashMap<usize, usize>,
     world: &'a World,
 }
@@ -41,9 +42,11 @@ pub struct CountContext<'a> {
 
 // TODO: can this context have access to the current entity and/or the whole hierarchy?
 pub struct ApplyContext<'a> {
+    root_index: usize,
     segment_index: usize,
-    segment_indices: &'a Vec<usize>,
-    store_indices: &'a Vec<usize>,
+    segment_indices: &'a [usize],
+    segment_counts: &'a [usize],
+    store_indices: &'a [usize],
     entity_index: usize,
     entity_count: &'a mut usize,
     entity_indices: &'a [Indices],
@@ -105,7 +108,7 @@ impl<'a> DeclareContext<'a> {
 impl<'a> InitializeContext<'a> {
     pub const fn new(
         segment_index: usize,
-        segments: &'a Vec<usize>,
+        segments: &'a [usize],
         metas_to_segment: &'a HashMap<usize, usize>,
         world: &'a World,
     ) -> Self {
@@ -208,17 +211,21 @@ impl<'a> CountContext<'a> {
 
 impl<'a> ApplyContext<'a> {
     pub fn new(
+        root_index: usize,
         segment_index: usize,
-        segment_indices: &'a Vec<usize>,
-        store_indices: &'a Vec<usize>,
+        segment_indices: &'a [usize],
+        segment_counts: &'a [usize],
+        store_indices: &'a [usize],
         entity_index: usize,
         entity_count: &'a mut usize,
         entity_indices: &'a [Indices],
         entity_instances: &'a [Entity],
     ) -> Self {
         Self {
+            root_index,
             segment_index,
             segment_indices,
+            segment_counts,
             store_indices,
             entity_index,
             entity_count,
@@ -237,12 +244,14 @@ impl<'a> ApplyContext<'a> {
             self.entity_indices,
             self.entity_instances,
             self.segment_indices,
+            self.segment_counts,
         )
     }
 
     pub fn store_index(&self) -> usize {
         let indices = &self.entity_indices[self.entity_index];
-        self.store_indices[self.segment_index] + indices.offset
+        let offset = self.segment_counts[self.segment_index] * self.root_index + indices.offset;
+        self.store_indices[self.segment_index] + offset
     }
 
     pub fn owned(&mut self) -> ApplyContext {
@@ -251,8 +260,10 @@ impl<'a> ApplyContext<'a> {
 
     pub fn with(&mut self, segment_index: usize, entity_index: usize) -> ApplyContext {
         ApplyContext::new(
+            self.root_index,
             segment_index,
             self.segment_indices,
+            self.segment_counts,
             self.store_indices,
             entity_index,
             self.entity_count,
