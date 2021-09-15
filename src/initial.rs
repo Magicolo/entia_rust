@@ -1,7 +1,8 @@
-use std::{any::Any, array::IntoIter, sync::Arc};
+use std::{any::Any, array::IntoIter, collections::HashMap, marker::PhantomData, sync::Arc};
 
 use crate::{
     component::Component,
+    create::Family,
     entity::Entity,
     segment::{Segment, Store},
     world::{Meta, World},
@@ -9,34 +10,45 @@ use crate::{
 
 pub struct GetMeta(fn(&mut World) -> Arc<Meta>);
 
+pub struct Indices {
+    pub offset: usize,
+    pub segment: usize,
+    pub parent: Option<usize>,
+    pub next: Option<usize>,
+}
+
 pub struct DeclareContext<'a> {
-    index: usize,
-    metas: &'a mut Vec<Vec<Arc<Meta>>>,
+    meta_index: usize,
+    segment_metas: &'a mut Vec<Vec<Arc<Meta>>>,
     world: &'a mut World,
 }
 
 pub struct InitializeContext<'a> {
-    index: usize,
+    segment_index: usize,
     segments: &'a Vec<usize>,
+    metas_to_segment: &'a HashMap<usize, usize>,
     world: &'a World,
 }
 
 pub struct CountContext<'a> {
-    index: usize,
-    count: &'a mut usize,
-    counts: &'a mut Vec<usize>,
+    segment_index: usize,
+    segment_counts: &'a mut Vec<usize>,
+    entity_index: usize,
+    entity_parent: Option<usize>,
+    entity_previous: Option<usize>,
+    entity_indices: &'a mut Vec<Indices>,
 }
 
 // TODO: can this context have access to the current entity and/or the whole hierarchy?
 pub struct ApplyContext<'a> {
-    index: usize,
-    offset: usize,
-    indices: &'a Vec<usize>,
-    counts: &'a Vec<usize>,
-    entities: &'a Vec<Entity>,
+    segment_index: usize,
+    segment_indices: &'a Vec<usize>,
+    store_indices: &'a Vec<usize>,
+    entity_index: usize,
+    entity_count: &'a mut usize,
+    entity_indices: &'a [Indices],
+    entity_instances: &'a [Entity],
 }
-
-pub struct Child<I: Initial>(I);
 
 pub trait Initial: Send + 'static {
     type Input;
@@ -45,175 +57,222 @@ pub trait Initial: Send + 'static {
 
     fn declare(input: Self::Input, context: DeclareContext) -> Self::Declare;
     fn initialize(state: Self::Declare, context: InitializeContext) -> Self::State;
-    fn count(&self, state: &Self::State, context: CountContext);
+    fn static_count(state: &Self::State, context: CountContext) -> bool;
+    fn dynamic_count(&self, state: &Self::State, context: CountContext);
     fn apply(self, state: &Self::State, context: ApplyContext);
 }
 
+/// Implementors of this trait must guarantee that the 'static_count' function always succeeds.
+pub unsafe trait Static: Initial {}
+/// Implementors of this trait must guarantee that they will not declare any child.
+pub unsafe trait Leaf: Initial {}
+
 impl<'a> DeclareContext<'a> {
-    #[inline]
-    pub fn new(index: usize, metas: &'a mut Vec<Vec<Arc<Meta>>>, world: &'a mut World) -> Self {
+    pub fn new(
+        segment_index: usize,
+        segment_metas: &'a mut Vec<Vec<Arc<Meta>>>,
+        world: &'a mut World,
+    ) -> Self {
         Self {
-            index,
-            metas,
+            meta_index: segment_index,
+            segment_metas,
             world,
         }
     }
 
-    #[inline]
-    pub const fn index(&self) -> usize {
-        self.index
-    }
-
-    #[inline]
     pub fn owned(&mut self) -> DeclareContext {
-        DeclareContext {
-            index: self.index,
-            metas: self.metas,
-            world: self.world,
-        }
+        self.with(self.meta_index)
     }
 
-    #[inline]
+    pub fn with(&mut self, meta_index: usize) -> DeclareContext {
+        DeclareContext::new(meta_index, self.segment_metas, self.world)
+    }
+
     pub fn meta(&mut self, get: GetMeta) -> Arc<Meta> {
         let meta = get.get(self.world);
-        self.metas[self.index].push(meta.clone());
+        self.segment_metas[self.meta_index].push(meta.clone());
         meta
     }
 
-    #[inline]
     pub fn child<T>(&mut self, scope: impl FnOnce(DeclareContext) -> T) -> (usize, T) {
-        let index = self.metas.len();
+        let meta_index = self.segment_metas.len();
         let metas = vec![self.world.get_or_add_meta::<Entity>()];
-        self.metas.push(metas);
-
-        let mut context = self.owned();
-        context.index = index;
-        (index, scope(context))
+        self.segment_metas.push(metas);
+        (meta_index, scope(self.with(meta_index)))
     }
 }
 
 impl<'a> InitializeContext<'a> {
-    #[inline]
-    pub const fn new(index: usize, segments: &'a Vec<usize>, world: &'a World) -> Self {
+    pub const fn new(
+        segment_index: usize,
+        segments: &'a Vec<usize>,
+        metas_to_segment: &'a HashMap<usize, usize>,
+        world: &'a World,
+    ) -> Self {
         Self {
-            index,
+            segment_index,
             segments,
+            metas_to_segment,
             world,
         }
     }
 
-    #[inline]
     pub fn segment(&self) -> &Segment {
-        &self.world.segments[self.segments[self.index]]
+        &self.world.segments[self.segments[self.segment_index]]
     }
 
-    #[inline]
     pub fn owned(&mut self) -> InitializeContext {
-        InitializeContext {
-            index: self.index,
-            segments: self.segments,
-            world: self.world,
-        }
+        self.with(self.segment_index)
     }
 
-    #[inline]
+    pub fn with(&mut self, segment_index: usize) -> InitializeContext {
+        InitializeContext::new(
+            segment_index,
+            self.segments,
+            self.metas_to_segment,
+            self.world,
+        )
+    }
+
     pub fn child<T>(
         &mut self,
-        index: usize,
+        meta_index: usize,
         scope: impl FnOnce(InitializeContext) -> T,
     ) -> (usize, T) {
-        // TODO: If there are duplicate segments in 'self.segments', give out the index that represent the earliest apperance
-        // of 'self.segments[index]'.
-        let mut context = self.owned();
-        context.index = index;
-        (index, scope(context))
+        let segment_index = self.metas_to_segment[&meta_index];
+        (segment_index, scope(self.with(segment_index)))
     }
 }
 
 impl<'a> CountContext<'a> {
-    #[inline]
-    pub fn new(index: usize, count: &'a mut usize, counts: &'a mut Vec<usize>) -> Self {
+    pub fn new(
+        segment_index: usize,
+        segment_counts: &'a mut Vec<usize>,
+        entity_index: usize,
+        entity_parent: Option<usize>,
+        entity_previous: Option<usize>,
+        entity_indices: &'a mut Vec<Indices>,
+    ) -> Self {
         Self {
-            index,
-            count,
-            counts,
+            segment_index,
+            segment_counts,
+            entity_index,
+            entity_parent,
+            entity_previous,
+            entity_indices,
         }
     }
 
-    #[inline]
     pub fn owned(&mut self) -> CountContext {
-        CountContext {
-            index: self.index,
-            count: self.count,
-            counts: self.counts,
-        }
+        self.with(
+            self.segment_index,
+            self.entity_index,
+            self.entity_parent,
+            self.entity_previous,
+        )
     }
 
-    #[inline]
-    pub fn child<T>(&mut self, index: usize, scope: impl FnOnce(CountContext) -> T) -> T {
-        *self.count += 1;
-        self.counts[index] += 1;
+    pub fn with(
+        &mut self,
+        segment_index: usize,
+        entity_index: usize,
+        entity_parent: Option<usize>,
+        entity_previous: Option<usize>,
+    ) -> CountContext {
+        CountContext::new(
+            segment_index,
+            self.segment_counts,
+            entity_index,
+            entity_parent,
+            entity_previous,
+            self.entity_indices,
+        )
+    }
 
-        let mut context = self.owned();
-        context.index = index;
-        scope(context)
+    pub fn child<T>(&mut self, segment_index: usize, scope: impl FnOnce(CountContext) -> T) -> T {
+        let entity_index = self.entity_indices.len();
+        self.entity_indices.push(Indices {
+            offset: self.segment_counts[segment_index],
+            segment: segment_index,
+            parent: self.entity_parent,
+            next: None,
+        });
+        if let Some(previous) = self.entity_previous {
+            self.entity_indices[previous].next = Some(entity_index);
+        }
+        self.entity_previous = Some(entity_index);
+        self.segment_counts[segment_index] += 1;
+        scope(self.with(segment_index, entity_index, Some(self.entity_index), None))
     }
 }
 
 impl<'a> ApplyContext<'a> {
-    #[inline]
-    pub const fn new(
-        index: usize,
-        offset: usize, // TODO: this is probably wrong...
-        indices: &'a Vec<usize>,
-        counts: &'a Vec<usize>,
-        entities: &'a Vec<Entity>,
+    pub fn new(
+        segment_index: usize,
+        segment_indices: &'a Vec<usize>,
+        store_indices: &'a Vec<usize>,
+        entity_index: usize,
+        entity_count: &'a mut usize,
+        entity_indices: &'a [Indices],
+        entity_instances: &'a [Entity],
     ) -> Self {
         Self {
-            index,
-            offset,
-            indices,
-            counts,
-            entities,
+            segment_index,
+            segment_indices,
+            store_indices,
+            entity_index,
+            entity_count,
+            entity_indices,
+            entity_instances,
         }
     }
 
-    #[inline]
-    pub fn index(&self) -> usize {
-        self.indices[self.index]
+    pub fn entity(&self) -> Entity {
+        self.family().entity()
     }
 
-    #[inline]
-    pub fn count(&self) -> usize {
-        self.counts[self.index]
+    pub fn family(&self) -> Family {
+        Family::new(
+            self.entity_index,
+            self.entity_indices,
+            self.entity_instances,
+            self.segment_indices,
+        )
     }
 
-    #[inline]
+    pub fn store_index(&self) -> usize {
+        let indices = &self.entity_indices[self.entity_index];
+        self.store_indices[self.segment_index] + indices.offset
+    }
+
     pub fn owned(&mut self) -> ApplyContext {
-        ApplyContext {
-            index: self.index,
-            offset: self.offset,
-            indices: self.indices,
-            counts: self.counts,
-            entities: self.entities,
-        }
+        self.with(self.segment_index, self.entity_index)
     }
 
-    #[inline]
-    pub fn child<T>(&mut self, index: usize, scope: impl FnOnce(ApplyContext) -> T) -> T {
-        let mut context = self.owned();
-        context.index = index;
-        scope(context)
+    pub fn with(&mut self, segment_index: usize, entity_index: usize) -> ApplyContext {
+        ApplyContext::new(
+            segment_index,
+            self.segment_indices,
+            self.store_indices,
+            entity_index,
+            self.entity_count,
+            self.entity_indices,
+            self.entity_instances,
+        )
+    }
+
+    pub fn child<T>(&mut self, segment_index: usize, scope: impl FnOnce(ApplyContext) -> T) -> T {
+        let entity_index = *self.entity_count;
+        *self.entity_count += 1;
+        scope(self.with(segment_index, entity_index))
     }
 }
 
 impl GetMeta {
-    #[inline]
     pub fn new<C: Component>() -> Self {
         Self(|world| world.get_or_add_meta::<C>())
     }
 
-    #[inline]
     pub fn get(&self, world: &mut World) -> Arc<Meta> {
         (self.0)(world)
     }
@@ -232,12 +291,19 @@ impl<C: Component> Initial for C {
         context.segment().store(&meta).unwrap()
     }
 
-    fn count(&self, _: &Self::State, _: CountContext) {}
+    fn static_count(_: &Self::State, _: CountContext) -> bool {
+        true
+    }
+
+    fn dynamic_count(&self, _: &Self::State, _: CountContext) {}
 
     fn apply(self, store: &Self::State, context: ApplyContext) {
-        unsafe { store.set(context.index(), self) }
+        unsafe { store.set(context.store_index(), self) }
     }
 }
+
+unsafe impl<C: Component> Static for C {}
+unsafe impl<C: Component> Leaf for C {}
 
 impl Initial for Box<dyn Any + Send> {
     type Input = GetMeta;
@@ -252,12 +318,19 @@ impl Initial for Box<dyn Any + Send> {
         context.segment().store(&meta).unwrap()
     }
 
-    fn count(&self, _: &Self::State, _: CountContext) {}
+    fn static_count(_: &Self::State, _: CountContext) -> bool {
+        true
+    }
+
+    fn dynamic_count(&self, _: &Self::State, _: CountContext) {}
 
     fn apply(self, store: &Self::State, context: ApplyContext) {
-        unsafe { store.set_any(context.index(), self) }
+        unsafe { store.set_any(context.store_index(), self) }
     }
 }
+
+unsafe impl Static for Box<dyn Any + Send> {}
+unsafe impl Leaf for Box<dyn Any + Send> {}
 
 impl<I: Initial> Initial for Vec<I> {
     type Input = I::Input;
@@ -272,9 +345,13 @@ impl<I: Initial> Initial for Vec<I> {
         I::initialize(state, context)
     }
 
-    fn count(&self, state: &Self::State, mut context: CountContext) {
+    fn static_count(_: &Self::State, _: CountContext) -> bool {
+        false
+    }
+
+    fn dynamic_count(&self, state: &Self::State, mut context: CountContext) {
         for value in self {
-            value.count(state, context.owned());
+            value.dynamic_count(state, context.owned());
         }
     }
 
@@ -284,6 +361,9 @@ impl<I: Initial> Initial for Vec<I> {
         }
     }
 }
+
+unsafe impl<I: Leaf> Static for Vec<I> {}
+unsafe impl<I: Leaf> Leaf for Vec<I> {}
 
 impl<I: Initial, const N: usize> Initial for [I; N] {
     type Input = I::Input;
@@ -298,18 +378,57 @@ impl<I: Initial, const N: usize> Initial for [I; N] {
         I::initialize(state, context)
     }
 
-    fn count(&self, state: &Self::State, mut context: CountContext) {
-        for value in self {
-            value.count(state, context.owned());
-        }
+    fn static_count(state: &Self::State, mut context: CountContext) -> bool {
+        (0..N).all(|_| I::static_count(state, context.owned()))
+    }
+
+    fn dynamic_count(&self, state: &Self::State, mut context: CountContext) {
+        self.iter()
+            .for_each(|value| value.dynamic_count(state, context.owned()));
     }
 
     fn apply(self, state: &Self::State, mut context: ApplyContext) {
-        for value in IntoIter::new(self) {
-            value.apply(state, context.owned());
-        }
+        IntoIter::new(self).for_each(|value| value.apply(state, context.owned()))
     }
 }
+
+unsafe impl<I: Static, const N: usize> Static for [I; N] {}
+unsafe impl<I: Leaf, const N: usize> Leaf for [I; N] {}
+
+pub struct With<I: Initial, F: FnOnce(Family) -> I>(F, PhantomData<I>);
+
+impl<I: Static, F: FnOnce(Family) -> I + Send + 'static> Initial for With<I, F> {
+    type Input = I::Input;
+    type Declare = I::Declare;
+    type State = I::State;
+
+    fn declare(input: Self::Input, context: DeclareContext) -> Self::Declare {
+        I::declare(input, context)
+    }
+
+    fn initialize(state: Self::Declare, context: InitializeContext) -> Self::State {
+        I::initialize(state, context)
+    }
+
+    fn static_count(state: &Self::State, context: CountContext) -> bool {
+        I::static_count(state, context)
+    }
+
+    fn dynamic_count(&self, _: &Self::State, _: CountContext) {}
+
+    fn apply(self, store: &Self::State, context: ApplyContext) {
+        self.0(context.family()).apply(store, context)
+    }
+}
+
+unsafe impl<I: Static, F: FnOnce(Family) -> I + Send + 'static> Static for With<I, F> {}
+unsafe impl<I: Static + Leaf, F: FnOnce(Family) -> I + Send + 'static> Leaf for With<I, F> {}
+
+pub fn with<I: Initial, F: FnOnce(Family) -> I>(with: F) -> With<I, F> {
+    With(with, PhantomData)
+}
+
+pub struct Child<I: Initial>(I);
 
 impl<I: Initial> Initial for Child<I> {
     type Input = I::Input;
@@ -324,8 +443,12 @@ impl<I: Initial> Initial for Child<I> {
         context.child(index, |context| I::initialize(state, context))
     }
 
-    fn count(&self, (index, state): &Self::State, mut context: CountContext) {
-        context.child(*index, |context| self.0.count(state, context))
+    fn static_count((index, state): &Self::State, mut context: CountContext) -> bool {
+        context.child(*index, |context| I::static_count(state, context))
+    }
+
+    fn dynamic_count(&self, (index, state): &Self::State, mut context: CountContext) {
+        context.child(*index, |context| self.0.dynamic_count(state, context))
     }
 
     fn apply(self, (index, state): &Self::State, mut context: ApplyContext) {
@@ -333,7 +456,8 @@ impl<I: Initial> Initial for Child<I> {
     }
 }
 
-#[inline]
+unsafe impl<I: Static> Static for Child<I> {}
+
 pub fn child<I: Initial>(initial: I) -> Child<I> {
     Child(initial)
 }
@@ -345,28 +469,31 @@ macro_rules! modify {
             type Declare = ($($t::Declare,)*);
             type State = ($($t::State,)*);
 
-            #[inline]
             fn declare(($($p,)*): Self::Input, mut _context: DeclareContext) -> Self::Declare {
                 ($($t::declare($p, _context.owned()),)*)
             }
 
-            #[inline]
             fn initialize(($($p,)*): Self::Declare, mut _context: InitializeContext) -> Self::State {
                 ($($t::initialize($p, _context.owned()),)*)
             }
 
-            #[inline]
-            fn count(&self, ($($t,)*): &Self::State, mut _context: CountContext) {
-                let ($($p,)*) = self;
-                $($p.count($t, _context.owned());)*
+            fn static_count(($($t,)*): &Self::State, mut _context: CountContext) -> bool {
+                $($t::static_count($t, _context.owned()) &&)* true
             }
 
-            #[inline]
+            fn dynamic_count(&self, ($($t,)*): &Self::State, mut _context: CountContext) {
+                let ($($p,)*) = self;
+                $($p.dynamic_count($t, _context.owned());)*
+            }
+
             fn apply(self, ($($t,)*): &Self::State, mut _context: ApplyContext) {
                 let ($($p,)*) = self;
                 $($p.apply($t, _context.owned());)*
             }
         }
+
+        unsafe impl<$($t: Static,)*> Static for ($($t,)*) {}
+        unsafe impl<$($t: Leaf,)*> Leaf for ($($t,)*) {}
     };
 }
 

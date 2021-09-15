@@ -1,4 +1,7 @@
-use entia::{initial::Initial, prelude::*};
+use entia::{
+    initial::{child, with, Initial},
+    prelude::*,
+};
 
 /*
 Coherence rules:
@@ -104,8 +107,10 @@ fn main() {
     struct Position(Vec<usize>);
     #[derive(Default, Clone)]
     struct Frozen;
+    struct Target(Entity);
     impl Component for Position {}
     impl Component for Frozen {}
+    impl Component for Target {}
     impl Resource for Time {}
 
     let create = || {
@@ -115,7 +120,6 @@ fn main() {
             counter += counter / 100 + 1;
             create.one((position.clone(), Frozen));
             create.all((0..counter).map(|_| (position.clone(), Frozen)));
-            create.exact([(position.clone(), Frozen)]);
             create.defaults(counter);
             create.clones((position, Frozen), counter);
         }
@@ -159,6 +163,12 @@ fn main() {
         })
         .schedule(|mut create: Create<_>| {
             create.one(composite());
+        })
+        .schedule(|mut create: Create<_>| {
+            create.one((
+                child(with(|family| Target(family.entity()))),
+                child(with(|family| Target(family.entity()))),
+            ));
         })
         .schedule(|query: Query<Entity>| println!("C: {:?}", query.len()))
         .schedule(|mut destroy: Destroy| destroy.all())
