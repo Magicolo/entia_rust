@@ -6,7 +6,7 @@ pub mod destroy;
 pub mod emit;
 pub mod entities;
 pub mod entity;
-pub mod factory;
+pub mod family;
 pub mod filter;
 pub mod initial;
 pub mod inject;
@@ -34,7 +34,6 @@ pub mod prelude {
     pub use crate::destroy::Destroy;
     pub use crate::emit::Emit;
     pub use crate::entity::Entity;
-    pub use crate::factory::{Factory, Template};
     pub use crate::filter::Not;
     pub use crate::inject::Injector;
     pub use crate::message::Message;

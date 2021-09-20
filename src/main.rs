@@ -1,5 +1,5 @@
 use entia::{
-    initial::{child, with, Initial},
+    initial::{child, with, Initial, StaticInitial},
     prelude::*,
 };
 
@@ -125,15 +125,24 @@ fn main() {
         }
     };
 
-    fn simple() -> impl Initial<Input = impl Default> {
-        (Frozen, Position(Vec::new()), Frozen)
+    fn simple() -> impl StaticInitial<Input = impl Default> {
+        (Frozen, Position(Vec::new()), with(|_| Frozen))
     }
 
-    fn composite() -> impl Initial<Input = impl Default> {
-        (simple(), simple(), simple())
+    fn complex() -> impl StaticInitial<Input = impl Default> {
+        (child(simple()), [simple()], with(|_| simple()))
+    }
+
+    fn dynamic(count: usize) -> impl Initial<Input = impl Default> {
+        vec![child(Frozen); count]
     }
 
     let mut world = World::new();
+    world.run(|mut create: Create<_>| {
+        let families = create.all((3..=4).map(dynamic));
+        println!("CREATE: {:?}", families);
+    });
+
     let mut runner = world
         .scheduler()
         .schedule(create())
@@ -144,30 +153,20 @@ fn main() {
         .schedule(create())
         .schedule(create())
         .schedule(create())
-        .schedule_with(
-            (
-                Template::new()
-                    .add_clone(Frozen)
-                    .add_with(|x| Position(vec![x])),
-                Template::new()
-                    .add_with(|x| Position(vec![x]))
-                    .add_template(Template::new().adapt(|_| ())),
-            ),
-            |mut _a: Factory<_>, mut _b: Factory<_>| {
-                _a.one(12);
-                _b.one(34);
-            },
-        )
+        .schedule(|mut create: Create<_>| {
+            create.one(());
+        })
         .schedule(|mut create: Create<_>| {
             create.one((Frozen, Frozen, Frozen, Frozen, Frozen, Frozen));
         })
         .schedule(|mut create: Create<_>| {
-            create.one(composite());
+            create.one(complex());
         })
         .schedule(|mut create: Create<_>| {
             create.one((
-                child(with(|family| Target(family.entity()))),
-                child(with(|family| Target(family.entity()))),
+                vec![with(|family| child(Target(family.entity())))],
+                child(vec![with(|family| Target(family.entity()))]),
+                child(with(|family| vec![Target(family.entity())])),
             ));
         })
         .schedule(|query: Query<Entity>| println!("C: {:?}", query.len()))

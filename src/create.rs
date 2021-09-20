@@ -1,12 +1,12 @@
-use std::{any::TypeId, array::IntoIter, collections::HashMap, iter::from_fn};
+use std::{any::TypeId, array::IntoIter, collections::HashMap};
 
 use crate::{
     depend::{Depend, Dependency},
     entities::Entities,
     entity::Entity,
+    family::{EntityIndices, Families, Family, SegmentIndices},
     initial::{
-        child, ApplyContext, Child, CountContext, DeclareContext, Indices, Initial,
-        InitializeContext,
+        child, ApplyContext, Child, CountContext, DeclareContext, Initial, InitializeContext,
     },
     inject::{Context, Get, Inject},
     segment::Segment,
@@ -19,13 +19,10 @@ pub struct Create<'a, I: Initial> {
     defer: &'a mut Vec<Defer<I>>,
     entities: &'a mut Entities,
     world: &'a World,
-    segments: &'a Vec<usize>,
-    segment_counts: &'a mut Vec<usize>,
-    segment_indices: &'a mut Vec<usize>,
-    store_indices: &'a mut Vec<usize>,
-    entity_indices: &'a mut Vec<Indices>,
+    segment_indices: &'a mut Vec<SegmentIndices>,
+    entity_indices: &'a mut Vec<EntityIndices>,
     entity_instances: &'a mut Vec<Entity>,
-    entity_roots: &'a mut Vec<usize>,
+    entity_roots: &'a mut Vec<(usize, usize)>,
     initial_state: &'a <Child<I> as Initial>::State,
     initial_roots: &'a mut Vec<Child<I>>,
 }
@@ -34,207 +31,21 @@ pub struct State<I: Initial> {
     count: Option<usize>,
     defer: Vec<Defer<I>>,
     entities: write::State<Entities>,
-    segments: Vec<usize>,
-    segment_counts: Vec<usize>,
-    segment_indices: Vec<usize>,
-    store_indices: Vec<usize>,
-    entity_indices: Vec<Indices>,
+    segment_indices: Vec<SegmentIndices>,
+    entity_indices: Vec<EntityIndices>,
     entity_instances: Vec<Entity>,
-    entity_roots: Vec<usize>,
+    entity_roots: Vec<(usize, usize)>,
     initial_state: <Child<I> as Initial>::State,
     initial_roots: Vec<Child<I>>,
 }
 
-#[derive(Clone, Copy)]
-pub struct Family<'a> {
-    entity_index: usize,
-    entity_indices: &'a [Indices],
-    entity_instances: &'a [Entity],
-    segment_indices: &'a [usize],
-    segment_counts: &'a [usize],
-}
-
-pub struct Families<'a> {
-    indices: &'a [usize],
-    entity_indices: &'a [Indices],
-    entity_instances: &'a [Entity],
-    segment_indices: &'a [usize],
-    segment_counts: &'a [usize],
-}
-
-pub struct FamiliesIterator<'a, 'b> {
-    index: usize,
-    families: &'b Families<'a>,
-}
-
 struct Defer<I: Initial> {
-    head: usize,
-    multiplier: usize,
-    is_static: bool,
-    entity_indices: Vec<Indices>,
-    entity_instances: Vec<Entity>,
-    store_indices: Vec<usize>,
-    segment_indices: Vec<usize>,
-    segment_counts: Vec<usize>,
+    index: usize,
     initial_roots: Vec<Child<I>>,
-}
-
-impl<'a> Family<'a> {
-    pub const EMPTY: Self = Self {
-        entity_index: 0,
-        entity_indices: &[],
-        entity_instances: &[],
-        segment_indices: &[],
-        segment_counts: &[],
-    };
-
-    #[inline]
-    pub const fn new(
-        entity_index: usize,
-        entity_indices: &'a [Indices],
-        entity_instances: &'a [Entity],
-        segment_indices: &'a [usize],
-        segment_counts: &'a [usize],
-    ) -> Self {
-        Self {
-            entity_index,
-            entity_indices,
-            entity_instances,
-            segment_indices,
-            segment_counts,
-        }
-    }
-
-    #[inline]
-    pub fn entity(&self) -> Entity {
-        // TODO: correct this
-        let indices = &self.entity_indices[self.entity_index];
-        let index = self.segment_indices[indices.segment] + indices.offset;
-        self.entity_instances[index]
-    }
-
-    pub fn parent(&self) -> Option<Self> {
-        Some(self.with(self.entity_indices[self.entity_index].parent?))
-    }
-
-    pub fn root(&self) -> Self {
-        // Do not assume that index '0' is the root since there might be multiple roots.
-        self.parent().map(|parent| parent.root()).unwrap_or(*self)
-    }
-
-    pub fn next(&self) -> impl Iterator<Item = Family<'a>> + '_ {
-        let mut next = self.entity_indices[self.entity_index].next;
-        from_fn(move || {
-            let current = next?;
-            next = self.entity_indices[current].next;
-            Some(self.with(current))
-        })
-    }
-
-    pub fn children(&self) -> impl Iterator<Item = Family<'a>> + '_ {
-        let parent = Some(self.entity_index);
-        let mut next = parent.map(|index| index + 1).filter(|&index| {
-            index < self.entity_indices.len() && self.entity_indices[index].parent == parent
-        });
-
-        from_fn(move || {
-            let current = next?;
-            next = self.entity_indices[current].next;
-            Some(self.with(current))
-        })
-    }
-
-    pub fn ancestors(&self) -> impl Iterator<Item = Family<'a>> + '_ {
-        let mut next = self.entity_indices[self.entity_index].parent;
-        from_fn(move || {
-            let current = next?;
-            next = self.entity_indices[current].parent;
-            Some(self.with(current))
-        })
-    }
-
-    pub fn siblings(&self) -> impl Iterator<Item = Family<'a>> + '_ {
-        let parent = self.entity_indices[self.entity_index].parent;
-        let mut next = parent.map(|index| index + 1).filter(|&index| {
-            index < self.entity_indices.len() && self.entity_indices[index].parent == parent
-        });
-
-        from_fn(move || {
-            while let Some(current) = next {
-                next = self.entity_indices[current].next;
-                if current != self.entity_index {
-                    return Some(self.with(current));
-                }
-            }
-            None
-        })
-    }
-
-    fn with(&self, entity_index: usize) -> Self {
-        Self::new(
-            entity_index,
-            self.entity_indices,
-            self.entity_instances,
-            self.segment_indices,
-            self.segment_counts,
-        )
-    }
-}
-
-impl Families<'_> {
-    pub const EMPTY: Self = Self {
-        entity_indices: &[],
-        entity_instances: &[],
-        indices: &[],
-        segment_indices: &[],
-        segment_counts: &[],
-    };
-
-    pub fn root(&self, index: usize) -> Option<Entity> {
-        self.roots().nth(index)
-    }
-
-    pub fn roots(&self) -> impl ExactSizeIterator<Item = Entity> + '_ {
-        self.into_iter().map(|family| family.entity())
-    }
-}
-
-impl<'a, 'b> IntoIterator for &'b Families<'a> {
-    type Item = Family<'a>;
-    type IntoIter = FamiliesIterator<'a, 'b>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        Self::IntoIter {
-            index: 0,
-            families: self,
-        }
-    }
-}
-
-impl<'a, 'b> Iterator for FamiliesIterator<'a, 'b> {
-    type Item = Family<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let root = *self.families.indices.get(self.index)?;
-        self.index += 1;
-        Some(Family::new(
-            root,
-            self.families.entity_indices,
-            self.families.entity_instances,
-            self.families.segment_indices,
-            self.families.segment_counts,
-        ))
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (self.len(), Some(self.len()))
-    }
-}
-
-impl<'a, 'b> ExactSizeIterator for FamiliesIterator<'a, 'b> {
-    fn len(&self) -> usize {
-        self.families.indices.len() - self.index
-    }
+    entity_roots: Vec<(usize, usize)>,
+    entity_instances: Vec<Entity>,
+    entity_indices: Vec<EntityIndices>,
+    segment_indices: Vec<SegmentIndices>,
 }
 
 impl<I: Initial> Create<'_, I> {
@@ -270,24 +81,30 @@ impl<I: Initial> Create<'_, I> {
     }
 
     fn all_static(&mut self, count: usize, initials: impl Iterator<Item = I>) -> Families {
-        self.initial_roots.extend(initials.map(child));
+        self.initial_roots.clear();
+        self.entity_roots.clear();
+
+        for initial in initials {
+            self.initial_roots.push(child(initial));
+            self.entity_roots.push((self.entity_roots.len(), 0));
+        }
+
         if self.initial_roots.len() == 0 {
             return Families::EMPTY;
         }
 
-        let (head, success) = self.reserve(count, self.initial_roots.len());
+        let (index, success) = self.reserve(count * self.initial_roots.len());
         if success {
-            apply_static(
+            apply(
                 self.initial_state,
                 self.initial_roots.drain(..),
-                self.segment_indices,
-                self.segment_counts,
-                self.store_indices,
-                self.entity_indices,
+                self.entity_roots,
                 self.entity_instances,
+                self.entity_indices,
+                self.segment_indices,
             );
         } else {
-            self.defer(head, self.initial_roots.len(), true);
+            self.defer(index);
         }
 
         self.families()
@@ -296,163 +113,106 @@ impl<I: Initial> Create<'_, I> {
     fn all_dynamic(&mut self, initials: impl Iterator<Item = I>) -> Families {
         self.entity_roots.clear();
         self.entity_indices.clear();
-        self.segment_counts.iter_mut().for_each(|value| *value = 0);
+        self.segment_indices
+            .iter_mut()
+            .for_each(|indices| indices.count = 0);
 
         for initial in initials {
-            self.entity_roots.push(self.entity_indices.len());
+            self.entity_roots.push((0, self.entity_indices.len()));
             let root = child(initial);
             root.dynamic_count(
                 self.initial_state,
-                CountContext::new(0, self.segment_counts, 0, None, None, self.entity_indices),
+                CountContext::new(
+                    0,
+                    self.segment_indices,
+                    self.entity_indices.len(),
+                    None,
+                    &mut None,
+                    self.entity_indices,
+                ),
             );
             self.initial_roots.push(root);
         }
 
-        let total = self.entity_indices.len();
-        if total == 0 {
+        let count = self.entity_indices.len();
+        if count == 0 {
             return Families::EMPTY;
         }
 
-        let (head, success) = self.reserve(total, 1);
+        let (index, success) = self.reserve(count);
         if success {
-            apply_dynamic(
+            apply(
                 self.initial_state,
                 self.initial_roots.drain(..),
-                self.segment_indices,
-                self.segment_counts,
-                self.store_indices,
-                self.entity_indices,
+                self.entity_roots,
                 self.entity_instances,
+                self.entity_indices,
+                self.segment_indices,
             );
         } else {
-            self.defer(head, 1, false);
+            self.defer(index);
         }
 
         self.families()
     }
 
-    fn reserve(&mut self, count: usize, multiplier: usize) -> (usize, bool) {
-        let total = count * multiplier;
-        self.entity_instances.resize(total, Entity::ZERO);
+    fn reserve(&mut self, count: usize) -> (usize, bool) {
+        self.entity_instances.resize(count, Entity::ZERO);
         let ready = self.entities.reserve(self.entity_instances);
-
+        let mut index = 0;
         let mut head = 0;
         let mut success = true;
+        let multiplier = count / self.entity_indices.len();
 
-        for i in 0..self.segments.len() {
-            self.segment_indices[i] = head;
-            let segment_count = self.segment_counts[i] * multiplier;
+        for (i, segment_indices) in self.segment_indices.iter_mut().enumerate() {
+            segment_indices.index = head;
+            let segment_count = segment_indices.count * multiplier;
             if segment_count == 0 {
                 continue;
             }
 
-            let segment = &self.world.segments[self.segments[i]];
-            let (index, count) = segment.reserve(segment_count);
-            self.store_indices[i] = index;
+            let segment = &self.world.segments[segment_indices.segment];
+            let pair = segment.reserve(segment_count);
+            segment_indices.store = pair.0;
 
-            if success && count == segment_count {
-                let tail = head + segment_count;
+            let tail = head + segment_count;
+            if success && tail <= ready && pair.1 == segment_count {
+                index = i;
                 set_and_initialize(
-                    index,
+                    pair.0,
                     &self.entity_instances[head..tail],
                     segment,
                     self.entities,
                 );
-                head = tail;
             } else {
                 success = false;
             }
+            head = tail;
         }
 
-        (head, success && ready == total)
+        (index, success && ready == count)
     }
 
     fn families(&self) -> Families {
-        Families {
-            entity_indices: self.entity_indices,
-            entity_instances: self.entity_instances,
-            indices: self.entity_roots,
-            segment_indices: self.segment_indices,
-            segment_counts: self.segment_counts,
-        }
+        Families::new(
+            self.entity_roots,
+            self.entity_instances,
+            self.entity_indices,
+            self.segment_indices,
+        )
     }
 
-    fn defer(&mut self, head: usize, multiplier: usize, is_static: bool) {
+    fn defer(&mut self, index: usize) {
         self.defer.push(Defer {
-            head,
-            multiplier,
-            is_static,
-            entity_indices: self.entity_indices.clone(),
-            entity_instances: self.entity_instances.clone(),
-            store_indices: self.store_indices.clone(),
-            segment_indices: self.segment_indices.clone(),
-            segment_counts: self.segment_counts.clone(),
+            index,
             initial_roots: self.initial_roots.drain(..).collect(),
+            entity_roots: self.entity_roots.clone(),
+            entity_instances: self.entity_instances.clone(),
+            entity_indices: self.entity_indices.clone(),
+            segment_indices: self.segment_indices.clone(),
         });
     }
 }
-
-/*
-child(
-    Head,
-    child(
-        Body,
-        child(
-            child(Leg),
-            child(Leg),
-            child(Leg),
-        )
-    ),
-    child(Body,
-        child(Leg),
-        child(Leg),
-    ),
-)
-
-child(
-    Head,
-    child(
-        Body,
-        child(
-            child(Leg),
-            child(Leg),
-        ),
-    ),
-    child(Leg),
-    child(Leg),
-)
-
-Head1                Head2
-|                    |
-Body1-Body2          Body3-Leg7-Leg8
-|              |     |
-Leg1-Leg2-Leg3 Leg4  Leg5-Leg6
-
-entities: [Head1, Head2, Body1, Body2, Body3, Leg1, Leg2, Leg3, Leg4, Leg5, Leg6, Leg7, Leg8]
-segment_counts: [Head: 2, Body: 3, Leg: 8]
-- with 'entities' and 'segment_counts', 'segment.reserve(...)' and 'segment.stores[0].set_all(...)' can be resolved.
-segment_indices: [0, 2, 5]
-- represents the start indices of entities for each segment
-
-store_indices: [Head: 0, Body: 0, Leg: 0]
-- the indices must be incremented by 'Child<I>'
-
-entity_indices: [Head1: 0, Body1: 0, Leg1: 0, Leg2: 1, Leg3: 2, Body2: 1, Leg4: 3, Head2: 1, Body3: 2, Leg5: 4, Leg6: 5, Leg7: 6, Leg8: 7]
-entity_parents: [None, None, 0, 0, 1, ]
-entity_indices: [Head1: (0, None), Body1: (2, Some(0)), Leg1, Leg2, Leg3, Body2, Leg4, Head2, Body3, Leg5, Leg6, Leg7, Leg8]
-
-
-// TODO: investigate if some buffers can be eliminated or shrinked with this arrangement (such as 'entity_roots')
-entity_indices: [
-    Head1(0, None, 1, 2),
-    [Body1(2, Some(0), 3, 3), Body2(3, Some(0), 6, 1)],
-    [Leg1, Leg2, Leg3],
-    Leg4,
-    Head2(1, None, 8, 3),
-    [Body3, Leg7, Leg8],
-    [Leg5, Leg6]
-]
-*/
 
 impl<I: Initial> Inject for Create<'_, I> {
     type Input = I::Input;
@@ -462,17 +222,21 @@ impl<I: Initial> Inject for Create<'_, I> {
         let entities = <Write<Entities> as Inject>::initialize(None, context, world)?;
         let mut segment_metas = Vec::new();
         let declare = Child::<I>::declare(input, DeclareContext::new(0, &mut segment_metas, world));
-
         let mut segment_to_index = HashMap::new();
         let mut metas_to_segment = HashMap::new();
-        let mut segments = Vec::with_capacity(segment_metas.len());
+        let mut segment_indices = Vec::with_capacity(segment_metas.len());
         for (i, metas) in segment_metas.into_iter().enumerate() {
             let segment = world.get_or_add_segment_by_metas(&metas).index;
             let index = match segment_to_index.get(&segment) {
                 Some(&index) => index,
                 None => {
-                    segment_to_index.insert(segment, segments.len());
-                    segments.push(segment);
+                    segment_to_index.insert(segment, segment_indices.len());
+                    segment_indices.push(SegmentIndices {
+                        segment,
+                        count: 0,
+                        index: 0,
+                        store: 0,
+                    });
                     i
                 }
             };
@@ -481,14 +245,20 @@ impl<I: Initial> Inject for Create<'_, I> {
 
         let state = Child::<I>::initialize(
             declare,
-            InitializeContext::new(0, &segments, &metas_to_segment, world),
+            InitializeContext::new(0, &segment_indices, &metas_to_segment, world),
         );
 
         let mut entity_indices = Vec::new();
-        let mut segment_counts = vec![0; segments.len()];
         let count = if Child::<I>::static_count(
             &state,
-            CountContext::new(0, &mut segment_counts, 0, None, None, &mut entity_indices),
+            CountContext::new(
+                0,
+                &mut segment_indices,
+                entity_indices.len(),
+                None,
+                &mut None,
+                &mut entity_indices,
+            ),
         ) {
             Some(entity_indices.len())
         } else {
@@ -501,13 +271,10 @@ impl<I: Initial> Inject for Create<'_, I> {
             entities,
             initial_state: state,
             initial_roots: Vec::new(),
-            entity_indices: Vec::new(),
+            entity_indices,
             entity_instances: Vec::new(),
             entity_roots: Vec::new(),
-            store_indices: vec![0; segments.len()],
-            segment_indices: vec![0; segments.len()],
-            segment_counts: vec![0; segments.len()],
-            segments,
+            segment_indices,
         })
     }
 
@@ -515,103 +282,60 @@ impl<I: Initial> Inject for Create<'_, I> {
         let entities = state.entities.as_mut();
         entities.resolve();
 
+        // Must resolve unconditionally all segments *even* if nothing was deferred.
+        for segment_indices in state.segment_indices.iter() {
+            world.segments[segment_indices.segment].resolve();
+        }
+
         for defer in state.defer.drain(..) {
-            let mut head = 0;
-            for i in 0..state.segments.len() {
-                let count = defer.segment_counts[i] * defer.multiplier;
-                if head < defer.head || count == 0 {
-                    head += count;
+            let multiplier = defer.entity_instances.len() / defer.entity_indices.len();
+            for segment_indices in defer.segment_indices[defer.index..].iter() {
+                let count = segment_indices.count * multiplier;
+                if count == 0 {
                     continue;
                 }
 
-                let segment = &mut world.segments[state.segments[i]];
-                segment.resolve();
-
+                let head = segment_indices.index;
                 let tail = head + count;
                 set_and_initialize(
-                    defer.store_indices[i],
+                    segment_indices.store,
                     &defer.entity_instances[head..tail],
-                    segment,
+                    &world.segments[segment_indices.segment],
                     entities,
                 );
-                head = tail;
             }
 
-            if defer.is_static {
-                apply_static(
-                    &state.initial_state,
-                    defer.initial_roots.into_iter(),
-                    &defer.segment_indices,
-                    &defer.segment_counts,
-                    &defer.store_indices,
-                    &defer.entity_indices,
-                    &defer.entity_instances,
-                );
-            } else {
-                apply_dynamic(
-                    &state.initial_state,
-                    defer.initial_roots.into_iter(),
-                    &defer.segment_indices,
-                    &defer.segment_counts,
-                    &defer.store_indices,
-                    &defer.entity_indices,
-                    &defer.entity_instances,
-                );
-            }
+            apply(
+                &state.initial_state,
+                defer.initial_roots.into_iter(),
+                &defer.entity_roots,
+                &defer.entity_instances,
+                &defer.entity_indices,
+                &defer.segment_indices,
+            );
         }
     }
 }
 
-fn apply_static<I: Initial>(
+fn apply<I: Initial>(
     initial_state: &<Child<I> as Initial>::State,
     initial_roots: impl Iterator<Item = Child<I>>,
-    segment_indices: &[usize],
-    segment_counts: &[usize],
-    store_indices: &[usize],
-    entity_indices: &[Indices],
+    entity_roots: &[(usize, usize)],
     entity_instances: &[Entity],
+    entity_indices: &[EntityIndices],
+    segment_indices: &[SegmentIndices],
 ) {
     for (i, root) in initial_roots.enumerate() {
+        let (entity_root, mut entity_count) = entity_roots[i];
         root.apply(
             initial_state,
             ApplyContext::new(
-                i,
+                entity_root,
                 0,
-                segment_indices,
-                segment_counts,
-                store_indices,
-                0,
-                &mut 0,
-                entity_indices,
+                &mut entity_count,
                 entity_instances,
-            ),
-        );
-    }
-}
-
-fn apply_dynamic<I: Initial>(
-    initial_state: &<Child<I> as Initial>::State,
-    initial_roots: impl Iterator<Item = Child<I>>,
-    segment_indices: &[usize],
-    segment_counts: &[usize],
-    store_indices: &[usize],
-    entity_indices: &[Indices],
-    entity_instances: &[Entity],
-) {
-    let mut count = 0;
-    for root in initial_roots {
-        root.apply(
-            initial_state,
-            ApplyContext::new(
-                0,
-                0,
-                segment_indices,
-                segment_counts,
-                store_indices,
-                0,
-                &mut count,
                 entity_indices,
-                entity_instances,
+                segment_indices,
             ),
         );
     }
@@ -647,19 +371,16 @@ impl<'a, I: Initial> Get<'a> for State<I> {
             entity_indices: &mut self.entity_indices,
             entity_instances: &mut self.entity_instances,
             entity_roots: &mut self.entity_roots,
-            store_indices: &mut self.store_indices,
             segment_indices: &mut self.segment_indices,
-            segment_counts: &mut self.segment_counts,
-            segments: &self.segments,
         }
     }
 }
 
 unsafe impl<I: Initial> Depend for State<I> {
     fn depend(&self, _: &World) -> Vec<Dependency> {
-        self.segments
+        self.segment_indices
             .iter()
-            .map(|&segment| Dependency::Defer(segment, TypeId::of::<Entity>()))
+            .map(|indices| Dependency::Defer(indices.segment, TypeId::of::<Entity>()))
             .collect()
     }
 }

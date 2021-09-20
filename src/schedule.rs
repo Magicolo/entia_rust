@@ -1,3 +1,5 @@
+use std::array::IntoIter;
+
 use entia_core::Call;
 
 use crate::{
@@ -12,12 +14,62 @@ pub struct Scheduler<'a> {
     pub(crate) world: &'a mut World,
 }
 
+// trait Run<I> {
+//     fn run(&mut self, input: I);
+// }
+
+// impl<'a, I: Inject, C: Call<I> + Call<<I::State as Get<'a>>::Item>> Run<I> for C {
+//     fn run(&mut self, input: I) {
+//         self.call(input);
+//     }
+// }
+// type Runz<'a, I> = Call<I> + Call<<I::State as Get<'a>>::Item;
+
 impl World {
     pub fn scheduler(&mut self) -> Scheduler {
         Scheduler {
             systems: Vec::new(),
             world: self,
         }
+    }
+
+    pub fn run<'a, I: Inject, R: Call<I> + Call<<I::State as Get<'a>>::Item> + 'static>(
+        &'a mut self,
+        run: R,
+    ) -> Option<()>
+    where
+        I::Input: Default,
+    {
+        self.run_with::<I, _>(I::Input::default(), run)
+    }
+
+    pub fn run_with<'a, I: Inject, R: Call<I> + Call<<I::State as Get<'a>>::Item> + 'static>(
+        &mut self,
+        input: I::Input,
+        run: R,
+    ) -> Option<()> {
+        let system = self.system::<I, _>(input, run)?;
+        let mut runner = Runner::new(IntoIter::new([system]), self)?;
+        runner.run(self);
+        Some(())
+    }
+
+    fn system<'a, I: Inject, R: Call<I> + Call<<I::State as Get<'a>>::Item> + 'static>(
+        &mut self,
+        input: I::Input,
+        run: R,
+    ) -> Option<System> {
+        let context = Context::new(System::reserve());
+        I::initialize(input, &context, self).map(|state| unsafe {
+            System::new(
+                Some(context.identifier),
+                (run, state),
+                |(run, state), world| run.call(state.get(world)),
+                |(_, state), world| I::update(state, world),
+                |(_, state), world| I::resolve(state, world),
+                |(_, state), world| state.depend(world),
+            )
+        })
     }
 }
 
@@ -26,22 +78,23 @@ impl<'a> Scheduler<'a> {
         schedule(self)
     }
 
-    pub fn schedule<I: Inject>(
+    pub fn schedule<I: Inject, R: Call<I> + Call<<I::State as Get<'a>>::Item> + 'static>(
         self,
-        run: impl Call<I> + Call<<I::State as Get<'a>>::Item> + 'static,
+        run: R,
     ) -> Self
     where
         I::Input: Default,
     {
-        self.add::<I, _>(I::Input::default(), run)
+        self.schedule_with::<I, _>(I::Input::default(), run)
     }
 
-    pub fn schedule_with<I: Inject>(
-        self,
+    pub fn schedule_with<I: Inject, R: Call<I> + Call<<I::State as Get<'a>>::Item> + 'static>(
+        mut self,
         input: I::Input,
-        run: impl Call<I> + Call<<I::State as Get<'a>>::Item> + 'static,
+        run: R,
     ) -> Self {
-        self.add::<I, _>(input, run)
+        self.systems.push(self.world.system::<I, _>(input, run));
+        self
     }
 
     pub fn synchronize(mut self) -> Self {
@@ -67,25 +120,5 @@ impl<'a> Scheduler<'a> {
         }
 
         Runner::new(systems, self.world)
-    }
-
-    fn add<I: Inject, R: Call<I> + Call<<I::State as Get<'a>>::Item> + 'static>(
-        mut self,
-        input: I::Input,
-        run: R,
-    ) -> Self {
-        let context = Context::new(System::reserve());
-        let system = I::initialize(input, &context, self.world).map(|state| unsafe {
-            System::new(
-                Some(context.identifier),
-                (run, state),
-                |(run, state), world| run.call(state.get(world)),
-                |(_, state), world| I::update(state, world),
-                |(_, state), world| I::resolve(state, world),
-                |(_, state), world| state.depend(world),
-            )
-        });
-        self.systems.push(system);
-        self
     }
 }

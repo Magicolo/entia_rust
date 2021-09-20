@@ -9,8 +9,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::usize;
 
-use entia_core::bits::Bits;
-use entia_core::utility::next_power_of_2;
+use entia_core::{bits::Bits, utility::next_power_of_2};
 
 use crate::world::Meta;
 

@@ -2,21 +2,13 @@ use std::{any::Any, array::IntoIter, collections::HashMap, marker::PhantomData, 
 
 use crate::{
     component::Component,
-    create::Family,
     entity::Entity,
+    family::{EntityIndices, Family, SegmentIndices},
     segment::{Segment, Store},
     world::{Meta, World},
 };
 
 pub struct GetMeta(fn(&mut World) -> Arc<Meta>);
-
-#[derive(Clone)]
-pub struct Indices {
-    pub offset: usize,
-    pub segment: usize,
-    pub parent: Option<usize>,
-    pub next: Option<usize>,
-}
 
 pub struct DeclareContext<'a> {
     meta_index: usize,
@@ -26,31 +18,27 @@ pub struct DeclareContext<'a> {
 
 pub struct InitializeContext<'a> {
     segment_index: usize,
-    segments: &'a [usize],
+    segment_indices: &'a [SegmentIndices],
     metas_to_segment: &'a HashMap<usize, usize>,
     world: &'a World,
 }
 
 pub struct CountContext<'a> {
     segment_index: usize,
-    segment_counts: &'a mut Vec<usize>,
+    segment_indices: &'a mut [SegmentIndices],
     entity_index: usize,
     entity_parent: Option<usize>,
-    entity_previous: Option<usize>,
-    entity_indices: &'a mut Vec<Indices>,
+    entity_previous: &'a mut Option<usize>,
+    entity_indices: &'a mut Vec<EntityIndices>,
 }
 
-// TODO: can this context have access to the current entity and/or the whole hierarchy?
 pub struct ApplyContext<'a> {
-    root_index: usize,
-    segment_index: usize,
-    segment_indices: &'a [usize],
-    segment_counts: &'a [usize],
-    store_indices: &'a [usize],
+    entity_root: usize,
     entity_index: usize,
     entity_count: &'a mut usize,
-    entity_indices: &'a [Indices],
     entity_instances: &'a [Entity],
+    entity_indices: &'a [EntityIndices],
+    segment_indices: &'a [SegmentIndices],
 }
 
 pub trait Initial: Send + 'static {
@@ -66,9 +54,9 @@ pub trait Initial: Send + 'static {
 }
 
 /// Implementors of this trait must guarantee that the 'static_count' function always succeeds.
-pub unsafe trait Static: Initial {}
+pub unsafe trait StaticInitial: Initial {}
 /// Implementors of this trait must guarantee that they will not declare any child.
-pub unsafe trait Leaf: Initial {}
+pub unsafe trait LeafInitial: Initial {}
 
 impl<'a> DeclareContext<'a> {
     pub fn new(
@@ -108,20 +96,20 @@ impl<'a> DeclareContext<'a> {
 impl<'a> InitializeContext<'a> {
     pub const fn new(
         segment_index: usize,
-        segments: &'a [usize],
+        segment_indices: &'a [SegmentIndices],
         metas_to_segment: &'a HashMap<usize, usize>,
         world: &'a World,
     ) -> Self {
         Self {
             segment_index,
-            segments,
+            segment_indices,
             metas_to_segment,
             world,
         }
     }
 
     pub fn segment(&self) -> &Segment {
-        &self.world.segments[self.segments[self.segment_index]]
+        &self.world.segments[self.segment_indices[self.segment_index].segment]
     }
 
     pub fn owned(&mut self) -> InitializeContext {
@@ -131,7 +119,7 @@ impl<'a> InitializeContext<'a> {
     pub fn with(&mut self, segment_index: usize) -> InitializeContext {
         InitializeContext::new(
             segment_index,
-            self.segments,
+            self.segment_indices,
             self.metas_to_segment,
             self.world,
         )
@@ -150,15 +138,15 @@ impl<'a> InitializeContext<'a> {
 impl<'a> CountContext<'a> {
     pub fn new(
         segment_index: usize,
-        segment_counts: &'a mut Vec<usize>,
+        segment_indices: &'a mut [SegmentIndices],
         entity_index: usize,
         entity_parent: Option<usize>,
-        entity_previous: Option<usize>,
-        entity_indices: &'a mut Vec<Indices>,
+        entity_previous: &'a mut Option<usize>,
+        entity_indices: &'a mut Vec<EntityIndices>,
     ) -> Self {
         Self {
             segment_index,
-            segment_counts,
+            segment_indices,
             entity_index,
             entity_parent,
             entity_previous,
@@ -167,24 +155,26 @@ impl<'a> CountContext<'a> {
     }
 
     pub fn owned(&mut self) -> CountContext {
-        self.with(
+        CountContext::new(
             self.segment_index,
+            self.segment_indices,
             self.entity_index,
             self.entity_parent,
             self.entity_previous,
+            self.entity_indices,
         )
     }
 
-    pub fn with(
-        &mut self,
+    pub fn with<'b, 'c: 'b>(
+        &'b mut self,
         segment_index: usize,
         entity_index: usize,
         entity_parent: Option<usize>,
-        entity_previous: Option<usize>,
-    ) -> CountContext {
+        entity_previous: &'c mut Option<usize>,
+    ) -> CountContext<'b> {
         CountContext::new(
             segment_index,
-            self.segment_counts,
+            self.segment_indices,
             entity_index,
             entity_parent,
             entity_previous,
@@ -194,43 +184,43 @@ impl<'a> CountContext<'a> {
 
     pub fn child<T>(&mut self, segment_index: usize, scope: impl FnOnce(CountContext) -> T) -> T {
         let entity_index = self.entity_indices.len();
-        self.entity_indices.push(Indices {
-            offset: self.segment_counts[segment_index],
+        let segment_indices = &mut self.segment_indices[segment_index];
+        self.entity_indices.push(EntityIndices {
             segment: segment_index,
+            offset: segment_indices.count,
             parent: self.entity_parent,
             next: None,
         });
-        if let Some(previous) = self.entity_previous {
+
+        if let Some(previous) = self.entity_previous.replace(entity_index) {
             self.entity_indices[previous].next = Some(entity_index);
         }
-        self.entity_previous = Some(entity_index);
-        self.segment_counts[segment_index] += 1;
-        scope(self.with(segment_index, entity_index, Some(self.entity_index), None))
+        segment_indices.count += 1;
+        scope(self.with(
+            segment_index,
+            entity_index,
+            Some(self.entity_index),
+            &mut None,
+        ))
     }
 }
 
 impl<'a> ApplyContext<'a> {
     pub fn new(
-        root_index: usize,
-        segment_index: usize,
-        segment_indices: &'a [usize],
-        segment_counts: &'a [usize],
-        store_indices: &'a [usize],
+        entity_root: usize,
         entity_index: usize,
         entity_count: &'a mut usize,
-        entity_indices: &'a [Indices],
         entity_instances: &'a [Entity],
+        entity_indices: &'a [EntityIndices],
+        segment_indices: &'a [SegmentIndices],
     ) -> Self {
         Self {
-            root_index,
-            segment_index,
-            segment_indices,
-            segment_counts,
-            store_indices,
+            entity_root,
             entity_index,
             entity_count,
-            entity_indices,
             entity_instances,
+            entity_indices,
+            segment_indices,
         }
     }
 
@@ -240,42 +230,40 @@ impl<'a> ApplyContext<'a> {
 
     pub fn family(&self) -> Family {
         Family::new(
+            self.entity_root,
             self.entity_index,
-            self.entity_indices,
             self.entity_instances,
+            self.entity_indices,
             self.segment_indices,
-            self.segment_counts,
         )
     }
 
     pub fn store_index(&self) -> usize {
-        let indices = &self.entity_indices[self.entity_index];
-        let offset = self.segment_counts[self.segment_index] * self.root_index + indices.offset;
-        self.store_indices[self.segment_index] + offset
+        let entity_indices = &self.entity_indices[self.entity_index];
+        let segment_indices = &self.segment_indices[entity_indices.segment];
+        let offset = segment_indices.count * self.entity_root + entity_indices.offset;
+        segment_indices.store + offset
     }
 
     pub fn owned(&mut self) -> ApplyContext {
-        self.with(self.segment_index, self.entity_index)
+        self.with(self.entity_index)
     }
 
-    pub fn with(&mut self, segment_index: usize, entity_index: usize) -> ApplyContext {
+    pub fn with(&mut self, entity_index: usize) -> ApplyContext {
         ApplyContext::new(
-            self.root_index,
-            segment_index,
-            self.segment_indices,
-            self.segment_counts,
-            self.store_indices,
+            self.entity_root,
             entity_index,
             self.entity_count,
-            self.entity_indices,
             self.entity_instances,
+            self.entity_indices,
+            self.segment_indices,
         )
     }
 
-    pub fn child<T>(&mut self, segment_index: usize, scope: impl FnOnce(ApplyContext) -> T) -> T {
+    pub fn child<T>(&mut self, scope: impl FnOnce(ApplyContext) -> T) -> T {
         let entity_index = *self.entity_count;
         *self.entity_count += 1;
-        scope(self.with(segment_index, entity_index))
+        scope(self.with(entity_index))
     }
 }
 
@@ -313,8 +301,8 @@ impl<C: Component> Initial for C {
     }
 }
 
-unsafe impl<C: Component> Static for C {}
-unsafe impl<C: Component> Leaf for C {}
+unsafe impl<C: Component> StaticInitial for C {}
+unsafe impl<C: Component> LeafInitial for C {}
 
 impl Initial for Box<dyn Any + Send> {
     type Input = GetMeta;
@@ -340,8 +328,8 @@ impl Initial for Box<dyn Any + Send> {
     }
 }
 
-unsafe impl Static for Box<dyn Any + Send> {}
-unsafe impl Leaf for Box<dyn Any + Send> {}
+unsafe impl StaticInitial for Box<dyn Any + Send> {}
+unsafe impl LeafInitial for Box<dyn Any + Send> {}
 
 impl<I: Initial> Initial for Vec<I> {
     type Input = I::Input;
@@ -373,8 +361,8 @@ impl<I: Initial> Initial for Vec<I> {
     }
 }
 
-unsafe impl<I: Leaf> Static for Vec<I> {}
-unsafe impl<I: Leaf> Leaf for Vec<I> {}
+unsafe impl<I: LeafInitial> StaticInitial for Vec<I> {}
+unsafe impl<I: LeafInitial> LeafInitial for Vec<I> {}
 
 impl<I: Initial, const N: usize> Initial for [I; N] {
     type Input = I::Input;
@@ -403,12 +391,12 @@ impl<I: Initial, const N: usize> Initial for [I; N] {
     }
 }
 
-unsafe impl<I: Static, const N: usize> Static for [I; N] {}
-unsafe impl<I: Leaf, const N: usize> Leaf for [I; N] {}
+unsafe impl<I: StaticInitial, const N: usize> StaticInitial for [I; N] {}
+unsafe impl<I: LeafInitial, const N: usize> LeafInitial for [I; N] {}
 
-pub struct With<I: Initial, F: FnOnce(Family) -> I>(F, PhantomData<I>);
+pub struct With<I, F>(F, PhantomData<I>);
 
-impl<I: Static, F: FnOnce(Family) -> I + Send + 'static> Initial for With<I, F> {
+impl<I: StaticInitial, F: FnOnce(Family) -> I + Send + 'static> Initial for With<I, F> {
     type Input = I::Input;
     type Declare = I::Declare;
     type State = I::State;
@@ -432,14 +420,27 @@ impl<I: Static, F: FnOnce(Family) -> I + Send + 'static> Initial for With<I, F> 
     }
 }
 
-unsafe impl<I: Static, F: FnOnce(Family) -> I + Send + 'static> Static for With<I, F> {}
-unsafe impl<I: Static + Leaf, F: FnOnce(Family) -> I + Send + 'static> Leaf for With<I, F> {}
+unsafe impl<I: StaticInitial, F: FnOnce(Family) -> I + Send + 'static> StaticInitial
+    for With<I, F>
+{
+}
 
-pub fn with<I: Initial, F: FnOnce(Family) -> I>(with: F) -> With<I, F> {
+unsafe impl<I: StaticInitial + LeafInitial, F: FnOnce(Family) -> I + Send + 'static> LeafInitial
+    for With<I, F>
+{
+}
+
+impl<I, F: Clone> Clone for With<I, F> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone(), PhantomData)
+    }
+}
+
+pub fn with<I: StaticInitial, F: FnOnce(Family) -> I + Send + 'static>(with: F) -> With<I, F> {
     With(with, PhantomData)
 }
 
-pub struct Child<I: Initial>(I);
+pub struct Child<I>(I);
 
 impl<I: Initial> Initial for Child<I> {
     type Input = I::Input;
@@ -462,12 +463,18 @@ impl<I: Initial> Initial for Child<I> {
         context.child(*index, |context| self.0.dynamic_count(state, context))
     }
 
-    fn apply(self, (index, state): &Self::State, mut context: ApplyContext) {
-        context.child(*index, |context| self.0.apply(state, context))
+    fn apply(self, (_, state): &Self::State, mut context: ApplyContext) {
+        context.child(|context| self.0.apply(state, context))
     }
 }
 
-unsafe impl<I: Static> Static for Child<I> {}
+unsafe impl<I: StaticInitial> StaticInitial for Child<I> {}
+
+impl<I: Clone> Clone for Child<I> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
 
 pub fn child<I: Initial>(initial: I) -> Child<I> {
     Child(initial)
@@ -503,8 +510,8 @@ macro_rules! modify {
             }
         }
 
-        unsafe impl<$($t: Static,)*> Static for ($($t,)*) {}
-        unsafe impl<$($t: Leaf,)*> Leaf for ($($t,)*) {}
+        unsafe impl<$($t: StaticInitial,)*> StaticInitial for ($($t,)*) {}
+        unsafe impl<$($t: LeafInitial,)*> LeafInitial for ($($t,)*) {}
     };
 }
 
