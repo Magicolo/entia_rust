@@ -1,17 +1,18 @@
 use crate::{depend::Depend, world::World};
 
-pub struct Context {
-    pub identifier: usize,
+pub struct InjectContext<'a> {
+    identifier: usize,
+    world: &'a mut World,
 }
 
-pub trait Inject {
+pub unsafe trait Inject {
     type Input;
     type State: for<'a> Get<'a> + Depend;
-    fn initialize(input: Self::Input, context: &Context, world: &mut World) -> Option<Self::State>;
+    fn initialize(input: Self::Input, context: InjectContext) -> Option<Self::State>;
     #[inline]
-    fn update(_: &mut Self::State, _: &mut World) {}
+    fn update(_: &mut Self::State, _: InjectContext) {}
     #[inline]
-    fn resolve(_: &mut Self::State, _: &mut World) {}
+    fn resolve(_: &mut Self::State, _: InjectContext) {}
 }
 
 /// SAFETY: The implementations of the 'get' method must ensure that no reference to the 'World' are kept within 'self'
@@ -25,31 +26,43 @@ pub trait Get<'a>: 'static {
 
 pub struct Injector<I: Inject = ()>(pub I::Input);
 
-impl Context {
+impl<'a> InjectContext<'a> {
     #[inline]
-    pub const fn new(identifier: usize) -> Self {
-        Self { identifier }
+    pub fn new(identifier: usize, world: &'a mut World) -> Self {
+        Self { identifier, world }
+    }
+
+    pub fn identifier(&self) -> usize {
+        self.identifier
+    }
+
+    pub fn world(&mut self) -> &mut World {
+        self.world
+    }
+
+    pub fn owned(&mut self) -> InjectContext {
+        InjectContext::new(self.identifier, self.world)
     }
 }
 
 macro_rules! inject {
     ($($p:ident, $t:ident),*) => {
-        impl<'a, $($t: Inject,)*> Inject for ($($t,)*) {
+        unsafe impl<'a, $($t: Inject,)*> Inject for ($($t,)*) {
             type Input = ($($t::Input,)*);
             type State = ($($t::State,)*);
 
-            fn initialize(($($p,)*): Self::Input, _context: &Context, _world: &mut World) -> Option<Self::State> {
-                Some(($($t::initialize($p, _context, _world)?,)*))
+            fn initialize(($($p,)*): Self::Input, mut _context: InjectContext) -> Option<Self::State> {
+                Some(($($t::initialize($p, _context.owned())?,)*))
             }
 
             #[inline]
-            fn update(($($p,)*): &mut Self::State, _world: &mut World) {
-                $($t::update($p, _world);)*
+            fn update(($($p,)*): &mut Self::State, mut _context: InjectContext) {
+                $($t::update($p, _context.owned());)*
             }
 
             #[inline]
-            fn resolve(($($p,)*): &mut Self::State, _world: &mut World) {
-                $($t::resolve($p, _world);)*
+            fn resolve(($($p,)*): &mut Self::State, mut _context: InjectContext) {
+                $($t::resolve($p, _context.owned());)*
             }
         }
 

@@ -1,12 +1,10 @@
-use entia_core::bits::Bits;
-
 use crate::{
     depend::{Depend, Dependency},
     entities::Entities,
     entity::Entity,
     filter::Filter,
-    inject::{Context, Get, Inject},
-    item::{At, Item},
+    inject::{Get, Inject, InjectContext},
+    item::{At, Item, ItemContext},
     resource::Resource,
     world::World,
     write::{self, Write},
@@ -14,9 +12,9 @@ use crate::{
 use std::{any::TypeId, marker::PhantomData};
 
 pub struct Query<'a, I: Item, F: Filter = ()> {
-    inner: &'a mut Inner<I, F>,
-    entities: &'a mut Entities,
-    world: &'a World,
+    pub(crate) inner: &'a Inner<I, F>,
+    pub(crate) entities: &'a Entities,
+    pub(crate) world: &'a World,
 }
 
 pub struct State<I: Item, F: Filter> {
@@ -31,10 +29,9 @@ pub struct Items<'a, 'b, I: Item, F: Filter> {
 }
 
 pub(crate) struct Inner<I: Item, F: Filter> {
-    index: usize,
-    pub(crate) segments: Bits,
-    states: Vec<(I::State, usize)>,
-    _marker: PhantomData<F>,
+    pub(crate) segments: Vec<Option<usize>>,
+    pub(crate) states: Vec<(I::State, usize)>,
+    _marker: PhantomData<fn(F)>,
 }
 
 impl<I: Item + 'static, F: Filter> Resource for Inner<I, F> {}
@@ -42,8 +39,7 @@ impl<I: Item + 'static, F: Filter> Resource for Inner<I, F> {}
 impl<I: Item, F: Filter> Default for Inner<I, F> {
     fn default() -> Self {
         Self {
-            index: 0,
-            segments: Bits::new(),
+            segments: Vec::new(),
             states: Vec::new(),
             _marker: PhantomData,
         }
@@ -71,7 +67,7 @@ impl<'a, I: Item, F: Filter> Query<'a, I, F> {
             let segment = &self.world.segments[*segment];
             let count = segment.count;
             for i in 0..count {
-                each(state.at(i));
+                each(state.at(i, self.world));
             }
         }
     }
@@ -83,7 +79,7 @@ impl<'a, I: Item, F: Filter> Query<'a, I, F> {
                 let segment = datum.segment() as usize;
                 for state in &self.inner.states {
                     if state.1 == segment {
-                        return Some(state.0.at(index));
+                        return Some(state.0.at(index, self.world));
                     }
                 }
                 None
@@ -93,10 +89,10 @@ impl<'a, I: Item, F: Filter> Query<'a, I, F> {
     }
 
     pub fn has(&self, entity: Entity) -> bool {
-        match self.entities.get_datum(entity) {
-            Some(datum) => self.inner.segments.has(datum.segment() as usize),
-            None => false,
-        }
+        self.entities
+            .get_datum(entity)
+            .and_then(|datum| self.inner.segments[datum.segment() as usize])
+            .is_some()
     }
 }
 
@@ -121,7 +117,7 @@ impl<'a, 'b: 'a, I: Item, F: Filter> Iterator for Items<'a, 'b, I, F> {
         while let Some((item, segment)) = self.query.inner.states.get(self.segment) {
             let segment = &self.query.world.segments[*segment];
             if self.index < segment.count {
-                let item = item.at(self.index);
+                let item = item.at(self.index, self.query.world);
                 self.index += 1;
                 return Some(item);
             } else {
@@ -133,32 +129,36 @@ impl<'a, 'b: 'a, I: Item, F: Filter> Iterator for Items<'a, 'b, I, F> {
     }
 }
 
-impl<'a, I: Item + 'static, F: Filter> Inject for Query<'a, I, F> {
+unsafe impl<'a, I: Item + 'static, F: Filter> Inject for Query<'a, I, F> {
     type Input = ();
     type State = State<I, F>;
 
-    fn initialize(_: Self::Input, context: &Context, world: &mut World) -> Option<Self::State> {
-        let inner = <Write<Inner<I, F>> as Inject>::initialize(None, context, world)?;
-        let entities = <Write<Entities> as Inject>::initialize(None, context, world)?;
+    fn initialize(_: Self::Input, mut context: InjectContext) -> Option<Self::State> {
+        let inner = <Write<Inner<I, F>> as Inject>::initialize(None, context.owned())?;
+        let entities = <Write<Entities> as Inject>::initialize(None, context.owned())?;
         Some(State { inner, entities })
     }
 
-    fn update(state: &mut Self::State, world: &mut World) {
+    fn update(state: &mut Self::State, mut context: InjectContext) {
+        let identifier = context.identifier();
+        let world = context.world();
         let inner = state.inner.as_mut();
-        while let Some(segment) = world.segments.get(inner.index) {
-            inner.index += 1;
-
+        while let Some(segment) = world.segments.get(inner.segments.len()) {
             if F::filter(segment, world) {
-                if let Some(item) = I::initialize(&segment, world) {
-                    inner.segments.set(segment.index, true);
-                    inner.states.push((item, segment.index));
+                let segment = segment.index;
+                if let Some(item) = I::initialize(ItemContext::new(identifier, segment, world)) {
+                    inner.segments.push(Some(segment));
+                    inner.states.push((item, segment));
+                    continue;
                 }
             }
+            inner.segments.push(None);
         }
-    }
 
-    fn resolve(state: &mut Self::State, _: &mut World) {
-        state.entities.as_mut().resolve();
+        for (state, segment) in inner.states.iter_mut() {
+            let context = ItemContext::new(context.identifier(), *segment, context.world());
+            I::update(state, context);
+        }
     }
 }
 
@@ -185,7 +185,7 @@ impl<'a, I: Item + 'static, F: Filter> Get<'a> for State<I, F> {
 
 unsafe impl<I: Item + 'static, F: Filter> Depend for State<I, F> {
     fn depend(&self, world: &World) -> Vec<Dependency> {
-        let mut dependencies = Vec::new();
+        let mut dependencies = self.entities.depend(world);
         let inner = self.inner.as_ref();
         for (item, segment) in inner.states.iter() {
             dependencies.push(Dependency::Read(*segment, TypeId::of::<Entity>()));

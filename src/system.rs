@@ -1,5 +1,6 @@
 use entia_core::Change;
 
+use crate::inject::InjectContext;
 use crate::{depend::Dependency, world::World};
 use std::any::TypeId;
 use std::cell::UnsafeCell;
@@ -192,8 +193,8 @@ impl System {
         identifier: Option<usize>,
         state: T,
         run: fn(&'a mut T, &'a World),
-        pre: fn(&'a mut T, &'a mut World),
-        post: fn(&'a mut T, &'a mut World),
+        update: fn(&'a mut T, InjectContext<'a>),
+        resolve: fn(&'a mut T, InjectContext<'a>),
         depend: fn(&'a mut T, &'a World) -> Vec<Dependency>,
     ) -> Self {
         // SAFETY: Since this crate controls the execution of the system's functions, it can guarantee
@@ -203,20 +204,31 @@ impl System {
         // to the 'World' outlives the call of the function pointers. Normally this could be enforced by Rust but
         // there seem to be a limitation in the expressivity of the type system to be able to express the desired
         // intention.
+        let identifier = identifier.unwrap_or_else(Self::reserve);
         let state = Arc::new(UnsafeCell::new(state));
         Self {
-            identifier: identifier.unwrap_or_else(Self::reserve),
+            identifier,
             run: {
                 let state = state.clone();
                 Box::new(move |world| unsafe { run(&mut *state.get(), &*(world as *const _)) })
             },
             update: {
                 let state = state.clone();
-                Box::new(move |world| unsafe { pre(&mut *state.get(), &mut *(world as *mut _)) })
+                Box::new(move |world| unsafe {
+                    update(
+                        &mut *state.get(),
+                        InjectContext::new(identifier, &mut *(world as *mut _)),
+                    )
+                })
             },
             resolve: {
                 let state = state.clone();
-                Box::new(move |world| unsafe { post(&mut *state.get(), &mut *(world as *mut _)) })
+                Box::new(move |world| unsafe {
+                    resolve(
+                        &mut *state.get(),
+                        InjectContext::new(identifier, &mut *(world as *mut _)),
+                    )
+                })
             },
             depend: {
                 let state = state.clone();

@@ -1,12 +1,11 @@
 use std::{any::TypeId, marker::PhantomData, sync::Arc};
 
 use crate::{
-    component::Component,
     depend::{Depend, Dependency},
-    inject::{Context, Get, Inject},
-    item::{At, Item},
+    inject::{Get, Inject, InjectContext},
+    item::{At, Item, ItemContext},
+    prelude::Component,
     resource::{initialize, Resource},
-    segment::Segment,
     segment::Store,
     world::World,
 };
@@ -14,12 +13,12 @@ use crate::{
 pub struct Read<T>(Arc<Store>, PhantomData<T>);
 pub struct State<T>(Arc<Store>, usize, PhantomData<T>);
 
-impl<R: Resource> Inject for Read<R> {
+unsafe impl<R: Resource> Inject for Read<R> {
     type Input = Option<R>;
     type State = State<R>;
 
-    fn initialize(input: Self::Input, _: &Context, world: &mut World) -> Option<Self::State> {
-        let (store, segment) = initialize(|| input.unwrap_or_default(), world)?;
+    fn initialize(input: Self::Input, mut context: InjectContext) -> Option<Self::State> {
+        let (store, segment) = initialize(input, context.world())?;
         Some(State(store, segment, PhantomData))
     }
 }
@@ -33,13 +32,23 @@ impl<'a, R: Resource> Get<'a> for State<R> {
     }
 }
 
-impl<C: Component> Item for Read<C> {
+unsafe impl<C: Component> Item for Read<C> {
     type State = State<C>;
 
-    fn initialize(segment: &Segment, world: &World) -> Option<Self::State> {
-        let meta = world.get_meta::<C>()?;
+    fn initialize(mut context: ItemContext) -> Option<Self::State> {
+        let meta = context.world().get_meta::<C>()?;
+        let segment = context.segment();
         let store = segment.store(&meta)?;
         Some(State(store, segment.index, PhantomData))
+    }
+}
+
+impl<'a, C: Component> At<'a> for State<C> {
+    type Item = &'a C;
+
+    #[inline]
+    fn at(&'a self, index: usize, _: &'a World) -> Self::Item {
+        unsafe { self.0.get(index) }
     }
 }
 
@@ -59,15 +68,6 @@ impl<T> Clone for State<T> {
     #[inline]
     fn clone(&self) -> Self {
         Self(self.0.clone(), self.1, PhantomData)
-    }
-}
-
-impl<'a, C: Component> At<'a> for State<C> {
-    type Item = &'a C;
-
-    #[inline]
-    fn at(&'a self, index: usize) -> Self::Item {
-        unsafe { self.0.get(index) }
     }
 }
 

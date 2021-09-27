@@ -2,7 +2,7 @@ use std::{any::TypeId, collections::VecDeque};
 
 use crate::{
     depend::{Depend, Dependency},
-    inject::{Context, Get, Inject},
+    inject::{Get, Inject, InjectContext},
     message::Message,
     resource::Resource,
     world::World,
@@ -31,16 +31,16 @@ impl<M: Message> Emit<'_, M> {
     }
 }
 
-impl<'a, M: Message> Inject for Emit<'a, M> {
+unsafe impl<'a, M: Message> Inject for Emit<'a, M> {
     type Input = ();
     type State = State<M>;
 
-    fn initialize(_: Self::Input, context: &Context, world: &mut World) -> Option<Self::State> {
-        let inner = <Write<Inner<M>> as Inject>::initialize(None, context, world)?;
+    fn initialize(_: Self::Input, context: InjectContext) -> Option<Self::State> {
+        let inner = <Write<Inner<M>> as Inject>::initialize(None, context)?;
         Some(State(inner, Vec::new()))
     }
 
-    fn resolve(state: &mut Self::State, _: &mut World) {
+    fn resolve(state: &mut Self::State, _: InjectContext) {
         let messages = &mut state.1;
         for queue in state.0.as_mut().queues.iter_mut() {
             queue.1.extend(messages.iter().cloned());

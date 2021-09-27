@@ -6,7 +6,7 @@ use std::{
 
 use crate::{
     depend::Depend,
-    inject::{Context, Get, Inject},
+    inject::{Get, Inject, InjectContext},
     resource::Resource,
     world::World,
     write::{self, Write},
@@ -22,14 +22,14 @@ struct Inner {
 }
 impl Resource for Inner {}
 
-impl<T: Default + Send + 'static> Inject for Local<'_, T> {
+unsafe impl<T: Default + Send + 'static> Inject for Local<'_, T> {
     type Input = ();
     type State = State<T>;
 
-    fn initialize(_: Self::Input, context: &Context, world: &mut World) -> Option<Self::State> {
-        let mut inner = <Write<Inner> as Inject>::initialize(None, context, world)?;
+    fn initialize(_: Self::Input, mut context: InjectContext) -> Option<Self::State> {
+        let mut inner = <Write<Inner> as Inject>::initialize(None, context.owned())?;
         let index = {
-            let key = (context.identifier, TypeId::of::<T>());
+            let key = (context.identifier(), TypeId::of::<T>());
             let inner = inner.as_mut();
             match inner.indices.get(&key) {
                 Some(&index) => index,

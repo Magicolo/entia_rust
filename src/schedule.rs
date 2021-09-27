@@ -4,7 +4,7 @@ use entia_core::Call;
 
 use crate::{
     depend::{Depend, Dependency},
-    inject::{Context, Get, Inject},
+    inject::{Get, Inject, InjectContext},
     system::{Runner, System},
     world::World,
 };
@@ -59,10 +59,10 @@ impl World {
         input: I::Input,
         run: R,
     ) -> Option<System> {
-        let context = Context::new(System::reserve());
-        I::initialize(input, &context, self).map(|state| unsafe {
+        let identifier = System::reserve();
+        I::initialize(input, InjectContext::new(identifier, self)).map(|state| unsafe {
             System::new(
-                Some(context.identifier),
+                Some(System::reserve()),
                 (run, state),
                 |(run, state), world| run.call(state.get(world)),
                 |(_, state), world| I::update(state, world),

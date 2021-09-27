@@ -14,7 +14,8 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use crate::depend::Depend;
-use crate::inject::Context;
+use crate::family::item::Link;
+use crate::inject::InjectContext;
 use crate::{
     depend::Dependency,
     entity::Entity,
@@ -88,11 +89,11 @@ impl Meta {
     }
 }
 
-impl Inject for &World {
+unsafe impl Inject for &World {
     type Input = ();
     type State = State;
 
-    fn initialize(_: Self::Input, _: &Context, _: &mut World) -> Option<Self::State> {
+    fn initialize(_: Self::Input, _: InjectContext) -> Option<Self::State> {
         Some(State)
     }
 }
@@ -114,27 +115,26 @@ unsafe impl Depend for State {
 impl World {
     pub fn new() -> Self {
         static COUNTER: AtomicUsize = AtomicUsize::new(0);
-        let meta = Meta::new::<Entity>(0);
-        let mut type_to_meta = HashMap::new();
-        type_to_meta.insert(meta.identifier.clone(), 0);
 
-        Self {
+        let mut world = Self {
             identifier: COUNTER.fetch_add(1, Ordering::Relaxed),
             segments: Vec::new(),
-            metas: vec![Arc::new(meta)],
-            type_to_meta,
+            metas: Vec::new(),
+            type_to_meta: HashMap::new(),
             bits_to_segment: HashMap::new(),
-        }
+        };
+        world.get_or_add_meta::<Entity>();
+        world.get_or_add_meta::<Link>();
+        world
     }
 
-    pub fn get_meta<T: Send + 'static>(&self) -> Option<Arc<Meta>> {
+    pub fn get_meta<T: 'static>(&self) -> Option<Arc<Meta>> {
         let key = TypeId::of::<T>();
-        self.type_to_meta
-            .get(&key)
-            .map(|&index| self.metas[index].clone())
+        let index = *self.type_to_meta.get(&key)?;
+        Some(self.metas[index].clone())
     }
 
-    pub fn get_or_add_meta<T: Send + 'static>(&mut self) -> Arc<Meta> {
+    pub fn get_or_add_meta<T: 'static>(&mut self) -> Arc<Meta> {
         match self.get_meta::<T>() {
             Some(meta) => meta,
             None => {

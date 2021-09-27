@@ -3,7 +3,7 @@ use std::{any::TypeId, collections::VecDeque};
 use crate::{
     depend::{Depend, Dependency},
     emit::{Inner, Queue},
-    inject::{Context, Get, Inject},
+    inject::{Get, Inject, InjectContext},
     message::Message,
     world::World,
     write::{self, Write},
@@ -21,12 +21,12 @@ impl<M: Message> Iterator for Receive<'_, M> {
     }
 }
 
-impl<M: Message> Inject for Receive<'_, M> {
+unsafe impl<M: Message> Inject for Receive<'_, M> {
     type Input = usize;
     type State = State<M>;
 
-    fn initialize(input: Self::Input, context: &Context, world: &mut World) -> Option<Self::State> {
-        let mut inner = <Write<Inner<M>> as Inject>::initialize(None, context, world)?;
+    fn initialize(input: Self::Input, context: InjectContext) -> Option<Self::State> {
+        let mut inner = <Write<Inner<M>> as Inject>::initialize(None, context)?;
         let index = {
             let inner = inner.as_mut();
             let index = inner.queues.len();

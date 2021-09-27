@@ -36,11 +36,12 @@ impl Filter for Entity {
     }
 }
 
-impl Item for Entity {
+unsafe impl Item for Entity {
     type State = State;
 
-    fn initialize(segment: &Segment, world: &World) -> Option<Self::State> {
-        let meta = world.get_meta::<Entity>()?;
+    fn initialize(mut context: ItemContext) -> Option<Self::State> {
+        let meta = context.world().get_meta::<Entity>()?;
+        let segment = context.segment();
         let store = segment.store(&meta)?;
         Some(State(store, segment.index))
     }
@@ -50,7 +51,7 @@ impl<'a> At<'a> for State {
     type Item = Entity;
 
     #[inline]
-    fn at(&self, index: usize) -> Self::Item {
+    fn at(&self, index: usize, _: &'a World) -> Self::Item {
         *unsafe { self.0.get(index) }
     }
 }

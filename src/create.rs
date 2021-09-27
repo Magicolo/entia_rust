@@ -4,11 +4,11 @@ use crate::{
     depend::{Depend, Dependency},
     entities::Entities,
     entity::Entity,
-    family::{EntityIndices, Families, Family, SegmentIndices},
+    family::initial::{EntityIndices, Families, Family, SegmentIndices},
     initial::{
-        child, ApplyContext, Child, CountContext, DeclareContext, Initial, InitializeContext,
+        spawn, ApplyContext, CountContext, DeclareContext, Initial, InitializeContext, Spawn,
     },
-    inject::{Context, Get, Inject},
+    inject::{Get, Inject, InjectContext},
     segment::Segment,
     world::World,
     write::{self, Write},
@@ -23,8 +23,8 @@ pub struct Create<'a, I: Initial> {
     entity_indices: &'a mut Vec<EntityIndices>,
     entity_instances: &'a mut Vec<Entity>,
     entity_roots: &'a mut Vec<(usize, usize)>,
-    initial_state: &'a <Child<I> as Initial>::State,
-    initial_roots: &'a mut Vec<Child<I>>,
+    initial_state: &'a <Spawn<I> as Initial>::State,
+    initial_roots: &'a mut Vec<Spawn<I>>,
 }
 
 pub struct State<I: Initial> {
@@ -35,13 +35,13 @@ pub struct State<I: Initial> {
     entity_indices: Vec<EntityIndices>,
     entity_instances: Vec<Entity>,
     entity_roots: Vec<(usize, usize)>,
-    initial_state: <Child<I> as Initial>::State,
-    initial_roots: Vec<Child<I>>,
+    initial_state: <Spawn<I> as Initial>::State,
+    initial_roots: Vec<Spawn<I>>,
 }
 
 struct Defer<I: Initial> {
     index: usize,
-    initial_roots: Vec<Child<I>>,
+    initial_roots: Vec<Spawn<I>>,
     entity_roots: Vec<(usize, usize)>,
     entity_instances: Vec<Entity>,
     entity_indices: Vec<EntityIndices>,
@@ -85,7 +85,7 @@ impl<I: Initial> Create<'_, I> {
         self.entity_roots.clear();
 
         for initial in initials {
-            self.initial_roots.push(child(initial));
+            self.initial_roots.push(spawn(initial));
             self.entity_roots.push((self.entity_roots.len(), 0));
         }
 
@@ -119,7 +119,7 @@ impl<I: Initial> Create<'_, I> {
 
         for initial in initials {
             self.entity_roots.push((0, self.entity_indices.len()));
-            let root = child(initial);
+            let root = spawn(initial);
             root.dynamic_count(
                 self.initial_state,
                 CountContext::new(
@@ -178,7 +178,7 @@ impl<I: Initial> Create<'_, I> {
             let tail = head + segment_count;
             if success && tail <= ready && pair.1 == segment_count {
                 index = i;
-                set_and_initialize(
+                initialize(
                     pair.0,
                     &self.entity_instances[head..tail],
                     segment,
@@ -214,14 +214,15 @@ impl<I: Initial> Create<'_, I> {
     }
 }
 
-impl<I: Initial> Inject for Create<'_, I> {
+unsafe impl<I: Initial> Inject for Create<'_, I> {
     type Input = I::Input;
     type State = State<I>;
 
-    fn initialize(input: Self::Input, context: &Context, world: &mut World) -> Option<Self::State> {
-        let entities = <Write<Entities> as Inject>::initialize(None, context, world)?;
+    fn initialize(input: Self::Input, mut context: InjectContext) -> Option<Self::State> {
+        let entities = <Write<Entities> as Inject>::initialize(None, context.owned())?;
+        let world = context.world();
         let mut segment_metas = Vec::new();
-        let declare = Child::<I>::declare(input, DeclareContext::new(0, &mut segment_metas, world));
+        let declare = Spawn::<I>::declare(input, DeclareContext::new(0, &mut segment_metas, world));
         let mut segment_to_index = HashMap::new();
         let mut metas_to_segment = HashMap::new();
         let mut segment_indices = Vec::with_capacity(segment_metas.len());
@@ -243,13 +244,13 @@ impl<I: Initial> Inject for Create<'_, I> {
             metas_to_segment.insert(i, index);
         }
 
-        let state = Child::<I>::initialize(
+        let state = Spawn::<I>::initialize(
             declare,
             InitializeContext::new(0, &segment_indices, &metas_to_segment, world),
         );
 
         let mut entity_indices = Vec::new();
-        let count = if Child::<I>::static_count(
+        let count = if Spawn::<I>::static_count(
             &state,
             CountContext::new(
                 0,
@@ -278,7 +279,8 @@ impl<I: Initial> Inject for Create<'_, I> {
         })
     }
 
-    fn resolve(state: &mut Self::State, world: &mut World) {
+    fn resolve(state: &mut Self::State, mut context: InjectContext) {
+        let world = context.world();
         let entities = state.entities.as_mut();
         entities.resolve();
 
@@ -297,7 +299,7 @@ impl<I: Initial> Inject for Create<'_, I> {
 
                 let head = segment_indices.index;
                 let tail = head + count;
-                set_and_initialize(
+                initialize(
                     segment_indices.store,
                     &defer.entity_instances[head..tail],
                     &world.segments[segment_indices.segment],
@@ -318,8 +320,8 @@ impl<I: Initial> Inject for Create<'_, I> {
 }
 
 fn apply<I: Initial>(
-    initial_state: &<Child<I> as Initial>::State,
-    initial_roots: impl Iterator<Item = Child<I>>,
+    initial_state: &<Spawn<I> as Initial>::State,
+    initial_roots: impl Iterator<Item = Spawn<I>>,
     entity_roots: &[(usize, usize)],
     entity_instances: &[Entity],
     entity_indices: &[EntityIndices],
@@ -332,6 +334,7 @@ fn apply<I: Initial>(
             ApplyContext::new(
                 entity_root,
                 0,
+                None,
                 &mut entity_count,
                 entity_instances,
                 entity_indices,
@@ -341,14 +344,7 @@ fn apply<I: Initial>(
     }
 }
 
-fn set_and_initialize(
-    index: usize,
-    instances: &[Entity],
-    segment: &Segment,
-    entities: &mut Entities,
-) {
-    // The first store of a segment with entities is always the entity store.
-    unsafe { segment.stores[0].set_all(index, instances) };
+fn initialize(index: usize, instances: &[Entity], segment: &Segment, entities: &mut Entities) {
     for i in 0..instances.len() {
         let entity = instances[i];
         let index = index + i;

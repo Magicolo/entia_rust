@@ -2,7 +2,7 @@ use crate::{
     depend::{Depend, Dependency},
     entity::Entity,
     filter::Filter,
-    inject::{Context, Get, Inject},
+    inject::{Get, Inject, InjectContext},
     item::{At, Item},
     query::{self, Query},
     world::World,
@@ -56,26 +56,27 @@ impl<I: Item, F: Filter> Destroy<'_, I, F> {
     }
 }
 
-impl<I: Item, F: Filter> Inject for Destroy<'_, I, F> {
+unsafe impl<I: Item, F: Filter> Inject for Destroy<'_, I, F> {
     type Input = ();
     type State = State<I, F>;
 
-    fn initialize(_: Self::Input, context: &Context, world: &mut World) -> Option<Self::State> {
-        let query = <Query<I, (Entity, F)> as Inject>::initialize((), context, world)?;
+    fn initialize(_: Self::Input, context: InjectContext) -> Option<Self::State> {
+        let query = <Query<I, (Entity, F)> as Inject>::initialize((), context)?;
         Some(State {
             defer: Vec::new(),
             query,
         })
     }
 
-    fn update(state: &mut Self::State, world: &mut World) {
-        <Query<I, (Entity, F)> as Inject>::update(&mut state.query, world);
+    fn update(state: &mut Self::State, context: InjectContext) {
+        <Query<I, (Entity, F)> as Inject>::update(&mut state.query, context);
     }
 
-    fn resolve(state: &mut Self::State, world: &mut World) {
-        <Query<I, (Entity, F)> as Inject>::resolve(&mut state.query, world);
+    fn resolve(state: &mut Self::State, mut context: InjectContext) {
+        <Query<I, (Entity, F)> as Inject>::resolve(&mut state.query, context.owned());
 
         let entities = state.query.entities.as_mut();
+        let world = context.world();
         let query = state.query.inner.as_mut();
         for defer in state.defer.drain(..) {
             match defer {
@@ -83,7 +84,7 @@ impl<I: Item, F: Filter> Inject for Destroy<'_, I, F> {
                     if let Some(datum) = entities.get_datum_mut(entity) {
                         let index = datum.index() as usize;
                         let segment = datum.segment() as usize;
-                        if query.segments.has(segment) {
+                        if query.segments[segment].is_some() {
                             entities.release(&[entity]);
                             let segment = &mut world.segments[segment];
                             if segment.remove_at(index) {

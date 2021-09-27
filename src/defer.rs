@@ -7,7 +7,7 @@ use std::{
 use crate::{
     depend::{Depend, Dependency},
     entity::Entity,
-    inject::{Context, Get, Inject},
+    inject::{Get, Inject, InjectContext},
     local::{self, Local},
     world::World,
 };
@@ -89,12 +89,12 @@ impl<R: Resolve> Defer<'_, R> {
     }
 }
 
-impl<R: Resolve> Inject for Defer<'_, R> {
+unsafe impl<R: Resolve> Inject for Defer<'_, R> {
     type Input = R::State;
     type State = State<R>;
 
-    fn initialize(input: Self::Input, context: &Context, world: &mut World) -> Option<Self::State> {
-        let mut inner = <Local<Inner> as Inject>::initialize((), context, world)?;
+    fn initialize(input: Self::Input, context: InjectContext) -> Option<Self::State> {
+        let mut inner = <Local<Inner> as Inject>::initialize((), context)?;
         let index = {
             let inner = inner.as_mut();
             let index = inner.resolvers.len();
@@ -109,10 +109,10 @@ impl<R: Resolve> Inject for Defer<'_, R> {
         })
     }
 
-    fn resolve(state: &mut Self::State, world: &mut World) {
+    fn resolve(state: &mut Self::State, mut context: InjectContext) {
         let inner = state.inner.as_mut();
         for (index, count) in inner.defer.drain(..) {
-            inner.resolvers[index].resolve(count, world);
+            inner.resolvers[index].resolve(count, context.world());
         }
     }
 }

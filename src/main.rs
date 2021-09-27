@@ -1,5 +1,5 @@
 use entia::{
-    initial::{child, with, Initial, StaticInitial},
+    initial::{spawn, with, Initial, StaticInitial},
     prelude::*,
 };
 
@@ -130,11 +130,11 @@ fn main() {
     }
 
     fn complex() -> impl StaticInitial<Input = impl Default> {
-        (child(simple()), [simple()], with(|_| simple()))
+        (spawn(simple()), [simple()], with(|_| simple()))
     }
 
     fn dynamic(count: usize) -> impl Initial<Input = impl Default> {
-        vec![child(Frozen); count]
+        vec![spawn(Frozen); count]
     }
 
     let mut world = World::new();
@@ -164,9 +164,9 @@ fn main() {
         })
         .schedule(|mut create: Create<_>| {
             create.one((
-                vec![with(|family| child(Target(family.entity())))],
-                child(vec![with(|family| Target(family.entity()))]),
-                child(with(|family| vec![Target(family.entity())])),
+                vec![with(|family| spawn(Target(family.entity())))],
+                spawn(vec![with(|family| Target(family.entity()))]),
+                spawn(with(|family| vec![Target(family.entity())])),
             ));
         })
         .schedule(|query: Query<Entity>| println!("C: {:?}", query.len()))
