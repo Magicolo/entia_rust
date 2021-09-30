@@ -1,10 +1,10 @@
 use std::{any::TypeId, marker::PhantomData, sync::Arc};
 
 use crate::{
+    component::Component,
     depend::{Depend, Dependency},
     inject::{Get, Inject, InjectContext},
     item::{At, Item, ItemContext},
-    prelude::Component,
     resource::{initialize, Resource},
     segment::Store,
     world::World,

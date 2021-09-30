@@ -12,21 +12,34 @@ pub struct Entities {
 
 #[derive(Default, Clone)]
 pub struct Datum {
-    index: u32,
+    store: u32,
     segment: u32,
     generation: u32,
-    state: u8,
+    parent: u32,
+    child: u32,
+    sibling: u32,
+    state: State,
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy)]
+enum State {
+    Released = 0,
+    Initialized = 1,
 }
 
 impl Resource for Entities {}
 
-impl Datum {
-    const RELEASED: u8 = 0;
-    const INITIALIZED: u8 = 1;
+impl Default for State {
+    fn default() -> Self {
+        Self::Released
+    }
+}
 
+impl Datum {
     #[inline]
     pub const fn index(&self) -> u32 {
-        self.index
+        self.store
     }
 
     #[inline]
@@ -36,8 +49,8 @@ impl Datum {
 
     #[inline]
     pub fn release(&mut self) -> bool {
-        if self.state == Self::INITIALIZED {
-            self.state = Self::RELEASED;
+        if matches!(self.state, State::Initialized) {
+            self.state = State::Released;
             true
         } else {
             false
@@ -45,12 +58,23 @@ impl Datum {
     }
 
     #[inline]
-    pub fn initialize(&mut self, generation: u32, index: u32, segment: u32) -> bool {
-        if self.state == Self::RELEASED {
+    pub fn initialize(
+        &mut self,
+        generation: u32,
+        store: u32,
+        segment: u32,
+        parent: Option<u32>,
+        child: Option<u32>,
+        sibling: Option<u32>,
+    ) -> bool {
+        if matches!(self.state, State::Released) {
             self.generation = generation;
-            self.index = index;
+            self.store = store;
             self.segment = segment;
-            self.state = Self::INITIALIZED;
+            self.state = State::Initialized;
+            self.parent = parent.unwrap_or(u32::MAX);
+            self.child = child.unwrap_or(u32::MAX);
+            self.sibling = sibling.unwrap_or(u32::MAX);
             true
         } else {
             false
@@ -59,13 +83,18 @@ impl Datum {
 
     #[inline]
     pub fn update(&mut self, index: u32, segment: u32) -> bool {
-        if self.state == Self::INITIALIZED {
-            self.index = index;
+        if matches!(self.state, State::Initialized) {
+            self.store = index;
             self.segment = segment;
             true
         } else {
             false
         }
+    }
+
+    #[inline]
+    pub const fn valid(&self, generation: u32) -> bool {
+        self.generation == generation && matches!(self.state, State::Initialized)
     }
 }
 
@@ -79,6 +108,27 @@ impl Entities {
             free: (free, 1.into()),
             data: (data, 1.into()),
         }
+    }
+
+    pub fn root(&self, entity: Entity) -> Entity {
+        match self.parent(entity) {
+            Some(parent) => self.root(parent),
+            None => entity,
+        }
+    }
+
+    // TODO: implement other family methods
+    pub fn parent(&self, entity: Entity) -> Option<Entity> {
+        let datum = self.get_datum(entity)?;
+        let parent = self
+            .data
+            .0
+            .get(datum.parent as usize)
+            .filter(|datum| datum.valid(entity.generation))?;
+        Some(Entity {
+            index: datum.parent,
+            generation: parent.generation,
+        })
     }
 
     pub fn reserve(&self, entities: &mut [Entity]) -> usize {
@@ -113,10 +163,13 @@ impl Entities {
 
     pub fn resolve(&mut self) {
         let datum = Datum {
-            index: 0,
+            store: 0,
             segment: 0,
             generation: 0,
-            state: 1,
+            parent: u32::MAX,
+            child: u32::MAX,
+            sibling: u32::MAX,
+            state: State::Initialized,
         };
         self.data.0.resize(*self.data.1.get_mut(), datum);
 
@@ -135,15 +188,17 @@ impl Entities {
     }
 
     pub fn get_datum(&self, entity: Entity) -> Option<&Datum> {
-        self.data.0.get(entity.index as usize).filter(|datum| {
-            entity.generation == datum.generation && datum.state == Datum::INITIALIZED
-        })
+        self.data
+            .0
+            .get(entity.index as usize)
+            .filter(|datum| datum.valid(entity.generation))
     }
 
     pub fn get_datum_mut(&mut self, entity: Entity) -> Option<&mut Datum> {
-        self.data.0.get_mut(entity.index as usize).filter(|datum| {
-            entity.generation == datum.generation && datum.state == Datum::INITIALIZED
-        })
+        self.data
+            .0
+            .get_mut(entity.index as usize)
+            .filter(|datum| datum.valid(entity.generation))
     }
 
     #[inline]

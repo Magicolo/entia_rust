@@ -48,7 +48,7 @@ pub mod initial {
         pub segment: usize,
         pub offset: usize,
         pub parent: Option<usize>,
-        pub next: Option<usize>,
+        pub sibling: Option<usize>,
     }
 
     #[derive(Clone)]
@@ -113,7 +113,7 @@ pub mod initial {
 
             from_fn(move || {
                 let current = next?;
-                next = local.entity_indices[current].next;
+                next = local.entity_indices[current].sibling;
                 Some(local.with(current))
             })
         }
@@ -165,6 +165,26 @@ pub mod initial {
             from_fn(move || {
                 let current = next?;
                 next = local.entity_indices[current].parent;
+                Some(local.with(current))
+            })
+        }
+
+        pub fn left(&self) -> impl Iterator<Item = Family<'a>> {
+            let entity_index = self.entity_index;
+            self.parent()
+                .map(|parent| parent.children())
+                .into_iter()
+                .flatten()
+                .take_while(move |child| child.entity_index != entity_index)
+        }
+
+        pub fn right(&self) -> impl Iterator<Item = Family<'a>> {
+            let local = self.clone();
+            let mut next = local.entity_indices[self.entity_index].sibling;
+
+            from_fn(move || {
+                let current = next?;
+                next = local.entity_indices[current].sibling;
                 Some(local.with(current))
             })
         }
@@ -282,37 +302,77 @@ pub mod initial {
 pub mod item {
     use super::*;
 
-    pub(crate) struct Link {
-        pub(crate) parent: Option<(usize, usize)>,
-        pub(crate) child: Option<(usize, usize)>,
-        pub(crate) next: Option<(usize, usize)>,
-    }
-
-    pub struct Child<'a, I: Item, F: Filter>(
+    pub struct Child<'a, I: Item, F: Filter = ()>(
         Option<(usize, usize)>,
         write::State<query::Inner<I, F>>,
         &'a World,
     );
+
+    pub struct Parent<'a, I: Item, F: Filter = ()>(
+        Option<(usize, usize)>,
+        write::State<query::Inner<I, F>>,
+        &'a World,
+    );
+
+    pub struct Link {
+        pub(crate) parent: Option<(usize, usize)>,
+        pub(crate) child: Option<(usize, usize)>,
+        pub(crate) next: Option<(usize, usize)>,
+    }
 
     pub struct ChildState<I: Item + 'static, F: Filter>(
         <Read<Link> as Item>::State,
         query::State<I, F>,
     );
 
-    pub struct ChildIterator<'a, I: Item, F: Filter>(
-        Option<(usize, usize)>,
-        &'a query::Inner<I, F>,
-        &'a World,
-    );
-
-    pub struct Parent<I: Item, F: Filter>(Vec<I>, PhantomData<F>);
-
     pub struct ParentState<I: Item + 'static, F: Filter>(
         <Read<Link> as Item>::State,
         query::State<I, F>,
     );
 
+    pub struct LinkIterator<'a, I: Item, F: Filter, N: Next>(
+        Option<(usize, usize)>,
+        &'a query::Inner<I, F>,
+        &'a World,
+        PhantomData<N>,
+    );
+
+    pub trait Next {
+        fn next(link: &Link) -> Option<(usize, usize)>;
+    }
+
     impl Component for Link {}
+
+    impl<N: Next> Next for &N {
+        #[inline]
+        fn next(link: &Link) -> Option<(usize, usize)> {
+            N::next(link)
+        }
+    }
+
+    impl<N: Next> Next for &mut N {
+        #[inline]
+        fn next(link: &Link) -> Option<(usize, usize)> {
+            N::next(link)
+        }
+    }
+
+    impl<I: Item + 'static, F: Filter> Child<'_, I, F> {
+        pub fn get<'a>(&'a self, index: usize) -> Option<<I::State as At<'a>>::Item>
+        where
+            I::State: At<'a>,
+        {
+            let current = get_link::<Self>(self.0?, index, self.2)?;
+            get_item(current, self.1.as_ref(), self.2)
+        }
+    }
+
+    impl<I: Item, F: Filter> Next for Child<'_, I, F> {
+        #[inline]
+        fn next(link: &Link) -> Option<(usize, usize)> {
+            link.next
+        }
+    }
 
     unsafe impl<I: Item + 'static, F: Filter> Item for Child<'_, I, F> {
         type State = ChildState<I, F>;
@@ -351,31 +411,30 @@ pub mod item {
         for &'a Child<'a, I, F>
     {
         type Item = <I::State as At<'a>>::Item;
-        type IntoIter = ChildIterator<'a, I, F>;
+        type IntoIter = LinkIterator<'a, I, F, Self>;
         fn into_iter(self) -> Self::IntoIter {
-            ChildIterator(self.0, self.1.as_ref(), self.2)
+            LinkIterator(self.0, self.1.as_ref(), self.2, PhantomData)
         }
     }
 
-    impl<'a, I: Item<State = impl At<'a> + 'a> + 'static, F: Filter> Iterator
-        for ChildIterator<'a, I, F>
-    {
-        type Item = <I::State as At<'a>>::Item;
-
-        fn next(&mut self) -> Option<Self::Item> {
-            let ChildIterator(child, inner, world) = self;
-            while let Some((segment, index)) = *child {
-                // 'Family' segment pointers must point to segments that have both an 'Entity' and 'Family' store.
-                *child = unsafe { world.segments[segment].stores[1].get::<Link>(index) }.next;
-                if let Some(state) = inner.segments[segment] {
-                    return Some(inner.states[state].0.at(index, world));
-                }
-            }
-            None
+    impl<I: Item + 'static, F: Filter> Parent<'_, I, F> {
+        pub fn get<'a>(&'a self, index: usize) -> Option<<I::State as At<'a>>::Item>
+        where
+            I::State: At<'a>,
+        {
+            let current = get_link::<Self>(self.0?, index, self.2)?;
+            get_item(current, self.1.as_ref(), self.2)
         }
     }
 
-    unsafe impl<I: Item + 'static, F: Filter> Item for Parent<I, F> {
+    impl<I: Item, F: Filter> Next for Parent<'_, I, F> {
+        #[inline]
+        fn next(link: &Link) -> Option<(usize, usize)> {
+            link.parent
+        }
+    }
+
+    unsafe impl<I: Item + 'static, F: Filter> Item for Parent<'_, I, F> {
         type State = ParentState<I, F>;
 
         fn initialize(mut context: ItemContext) -> Option<Self::State> {
@@ -391,15 +450,12 @@ pub mod item {
         }
     }
 
-    impl<'a, I: Item<State = impl At<'a> + 'static>, F: Filter> At<'a> for ParentState<I, F> {
-        type Item = Option<<I::State as At<'a>>::Item>;
+    impl<'a, I: Item, F: Filter> At<'a> for ParentState<I, F> {
+        type Item = Parent<'a, I, F>;
 
         #[inline]
         fn at(&'a self, index: usize, world: &'a World) -> Self::Item {
-            let inner = self.1.inner.as_ref();
-            let (segment, index) = self.0.at(index, world).parent?;
-            let state = inner.segments[segment]?;
-            Some(inner.states[state].0.at(index, world))
+            Parent(self.0.at(index, world).parent, self.1.inner.clone(), world)
         }
     }
 
@@ -409,5 +465,53 @@ pub mod item {
             dependencies.append(&mut self.1.inner.depend(world));
             dependencies
         }
+    }
+
+    impl<'a, I: Item + 'static, F: Filter> IntoIterator for &'a Parent<'a, I, F> {
+        type Item = <I::State as At<'a>>::Item;
+        type IntoIter = LinkIterator<'a, I, F, Self>;
+        fn into_iter(self) -> Self::IntoIter {
+            LinkIterator(self.0, self.1.as_ref(), self.2, PhantomData)
+        }
+    }
+
+    impl<'a, I: Item, F: Filter, N: Next> Iterator for LinkIterator<'a, I, F, N> {
+        type Item = <I::State as At<'a>>::Item;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            let LinkIterator(current, inner, world, _) = self;
+            while let Some(pair) = *current {
+                // 'Family' segment pointers must point to segments that have both an 'Entity' and 'Family' store.
+                *current = get_link::<N>(pair, 1, world);
+                if let Some(item) = get_item(pair, inner, world) {
+                    return Some(item);
+                }
+            }
+            None
+        }
+    }
+
+    #[inline]
+    fn get_link<N: Next>(
+        mut current: (usize, usize),
+        mut index: usize,
+        world: &World,
+    ) -> Option<(usize, usize)> {
+        while index > 0 {
+            index -= 1;
+            current =
+                N::next(unsafe { world.segments[current.0].stores[1].get::<Link>(current.1) })?;
+        }
+        Some(current)
+    }
+
+    #[inline]
+    fn get_item<'a, I: Item, F: Filter>(
+        (segment, index): (usize, usize),
+        inner: &'a query::Inner<I, F>,
+        world: &'a World,
+    ) -> Option<<I::State as At<'a>>::Item> {
+        let state = inner.segments[segment]?;
+        Some(inner.states[state].0.at(index, world))
     }
 }

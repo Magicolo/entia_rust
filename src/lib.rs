@@ -24,30 +24,30 @@ pub mod world;
 pub mod write;
 
 pub mod core {
-    pub use entia_core::utility;
     pub use entia_core::*;
 }
 
-pub mod prelude {
-    pub use crate::component::Component;
-    pub use crate::create::Create;
-    pub use crate::destroy::Destroy;
-    pub use crate::emit::Emit;
-    pub use crate::entity::Entity;
-    pub use crate::filter::Not;
-    pub use crate::inject::Injector;
-    pub use crate::message::Message;
-    pub use crate::query::Query;
-    pub use crate::receive::Receive;
-    pub use crate::resource::Resource;
-    pub use crate::schedule::Scheduler;
-    pub use crate::system::Runner;
-    pub use crate::world::World;
-}
+pub use crate::component::Component;
+pub use crate::create::Create;
+pub use crate::destroy::Destroy;
+pub use crate::emit::Emit;
+pub use crate::entity::Entity;
+pub use crate::family::initial::{Direction, Families, Family};
+pub use crate::family::item::{Child, Parent};
+pub use crate::filter::Not;
+pub use crate::initial::{spawn, with, Initial, StaticInitial};
+pub use crate::inject::Injector;
+pub use crate::message::Message;
+pub use crate::query::Query;
+pub use crate::receive::Receive;
+pub use crate::resource::Resource;
+pub use crate::schedule::Scheduler;
+pub use crate::system::Runner;
+pub use crate::world::World;
 
 #[cfg(test)]
 mod test {
-    use super::prelude::*;
+    use super::*;
 
     #[derive(Default)]
     struct Time(f64);
@@ -141,22 +141,25 @@ mod test {
                 query.each(|velocity| velocity.0 += 1.)
             })
             .schedule(
-                |(time, groups): (&Time, (Query<&mut Position>, Query<&mut Velocity>))| {
-                    groups.1.each(|velocity| {
+                |(time, queries): (
+                    &Time,
+                    (Query<&mut Position, Not<Frozen>>, Query<&mut Velocity>),
+                )| {
+                    queries.1.each(|velocity| {
                         velocity.0 += time.0;
                         velocity.1 += time.0;
                         velocity.2 += time.0;
-                        groups.0.each(|position| {
+                        queries.0.each(|position| {
                             position.0 += velocity.0;
                             position.1 += velocity.1;
                             position.2 += velocity.2;
                         });
                     });
-                    for velocity in &groups.1 {
+                    for velocity in &queries.1 {
                         velocity.0 += time.0;
                         velocity.1 += time.0;
                         velocity.2 += time.0;
-                        for position in &groups.0 {
+                        for position in &queries.0 {
                             position.0 += velocity.0;
                             position.1 += velocity.1;
                             position.2 += velocity.2;

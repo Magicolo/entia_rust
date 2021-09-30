@@ -1,7 +1,4 @@
-use entia::{
-    initial::{spawn, with, Initial, StaticInitial},
-    prelude::*,
-};
+use entia::*;
 
 /*
 Coherence rules:
@@ -169,7 +166,15 @@ fn main() {
                 spawn(with(|family| vec![Target(family.entity())])),
             ));
         })
-        .schedule(|query: Query<Entity>| println!("C: {:?}", query.len()))
+        .schedule(|query: Query<(Entity, Child<Entity>, Parent<Entity>)>| {
+            for (_entity, child, parent) in &query {
+                let _child = child.get(0);
+                let _parent = parent.get(0);
+                for _child in &child {}
+                for _parent in &parent {}
+            }
+            println!("C: {:?}", query.len())
+        })
         .schedule(|mut destroy: Destroy| destroy.all())
         .runner()
         .unwrap();

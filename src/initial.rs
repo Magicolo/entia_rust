@@ -8,11 +8,9 @@ use std::{
 
 use crate::{
     component::Component,
+    entities::Entities,
     entity::Entity,
-    family::{
-        initial::{EntityIndices, Family, SegmentIndices},
-        item,
-    },
+    family::initial::{EntityIndices, Family, SegmentIndices},
     segment::{Segment, Store},
     world::{Meta, World},
 };
@@ -44,10 +42,12 @@ pub struct CountContext<'a> {
 pub struct ApplyContext<'a> {
     entity_root: usize,
     entity_index: usize,
-    entity_parent: Option<(usize, usize)>,
+    entity_parent: Option<u32>,
     entity_count: &'a mut usize,
     entity_instances: &'a [Entity],
     entity_indices: &'a [EntityIndices],
+    entities: &'a mut Entities,
+    store_index: usize,
     segment_indices: &'a [SegmentIndices],
 }
 
@@ -198,11 +198,11 @@ impl<'a> CountContext<'a> {
             segment: segment_index,
             offset: segment_indices.count,
             parent: self.entity_parent,
-            next: None,
+            sibling: None,
         });
 
         if let Some(previous) = self.entity_previous.replace(entity_index) {
-            self.entity_indices[previous].next = Some(entity_index);
+            self.entity_indices[previous].sibling = Some(entity_index);
         }
 
         segment_indices.count += 1;
@@ -219,10 +219,12 @@ impl<'a> ApplyContext<'a> {
     pub fn new(
         entity_root: usize,
         entity_index: usize,
-        entity_parent: Option<(usize, usize)>,
+        entity_parent: Option<u32>,
         entity_count: &'a mut usize,
         entity_instances: &'a [Entity],
         entity_indices: &'a [EntityIndices],
+        entities: &'a mut Entities,
+        store_index: usize,
         segment_indices: &'a [SegmentIndices],
     ) -> Self {
         Self {
@@ -232,15 +234,19 @@ impl<'a> ApplyContext<'a> {
             entity_count,
             entity_instances,
             entity_indices,
+            entities,
+            store_index,
             segment_indices,
         }
     }
 
+    #[inline]
     pub fn entity(&self) -> Entity {
         self.family().entity()
     }
 
-    pub fn family(&self) -> Family {
+    #[inline]
+    pub const fn family(&self) -> Family {
         Family::new(
             self.entity_root,
             self.entity_index,
@@ -250,18 +256,20 @@ impl<'a> ApplyContext<'a> {
         )
     }
 
-    pub fn store_index(&self) -> Option<usize> {
-        Some(self.entity_parent?.1)
+    #[inline]
+    pub const fn store_index(&self) -> usize {
+        self.store_index
     }
 
     pub fn owned(&mut self) -> ApplyContext {
-        self.with(self.entity_index, self.entity_parent)
+        self.with(self.entity_index, self.entity_parent, self.store_index)
     }
 
     pub fn with(
         &mut self,
         entity_index: usize,
-        entity_parent: Option<(usize, usize)>,
+        entity_parent: Option<u32>,
+        store_index: usize,
     ) -> ApplyContext {
         ApplyContext::new(
             self.entity_root,
@@ -270,37 +278,68 @@ impl<'a> ApplyContext<'a> {
             self.entity_count,
             self.entity_instances,
             self.entity_indices,
+            self.entities,
+            store_index,
             self.segment_indices,
         )
     }
 
-    pub(crate) fn child<T>(
-        &mut self,
-        scope: impl FnOnce(Entity, item::Link, ApplyContext) -> T,
-    ) -> T {
+    pub(crate) fn child<T>(&mut self, scope: impl FnOnce(ApplyContext) -> T) -> T {
         let entity_index = *self.entity_count;
-        let (entity_parent, entity_next) = self.get_indices(self.entity_index);
-        let entity_next = entity_next.map(|next| self.get_indices(next).0);
         *self.entity_count += 1;
 
-        scope(
-            self.entity_instances[entity_index],
-            item::Link {
-                parent: self.entity_parent,
-                child: Some(entity_parent),
-                next: entity_next,
-            },
-            self.with(entity_index, Some(entity_parent)),
-        )
+        let entity_indices = &self.entity_indices[entity_index];
+        let (instance_index, store_index, segment_index) = self.get_indices(entity_indices);
+        let entity_instance = self.entity_instances[instance_index];
+        let entity_parent = self.entity_parent;
+        let entity_child = self
+            .entity_indices
+            .get(entity_index + 1)
+            .filter(|child| child.parent == Some(entity_index))
+            .map(|child| self.get_entity(child).index);
+        let entity_sibling = entity_indices
+            .sibling
+            .map(|sibling| self.get_entity(&self.entity_indices[sibling]).index);
+
+        let datum = self.entities.get_datum_mut_unchecked(entity_instance);
+        datum.initialize(
+            entity_instance.generation,
+            store_index as u32,
+            segment_index as u32,
+            entity_parent,
+            entity_child,
+            entity_sibling,
+        );
+        scope(self.with(entity_index, Some(entity_instance.index), store_index))
     }
 
-    fn get_indices(&self, entity_index: usize) -> ((usize, usize), Option<usize>) {
-        let entity_indices = &self.entity_indices[entity_index];
+    #[inline]
+    fn get_entity(&self, entity_indices: &EntityIndices) -> Entity {
+        self.entity_instances[self.get_indices(entity_indices).0]
+    }
+
+    #[inline]
+    fn get_indices(&self, entity_indices: &EntityIndices) -> (usize, usize, usize) {
         let segment_indices = &self.segment_indices[entity_indices.segment];
         let segment_offset = segment_indices.count * self.entity_root + entity_indices.offset;
+        let instance_index = segment_indices.index + segment_offset;
         let store_index = segment_indices.store + segment_offset;
-        ((entity_indices.segment, store_index), entity_indices.next)
+        (instance_index, store_index, segment_indices.segment)
     }
+
+    // fn get_indices(&self, entity_index: usize) -> (usize, usize, usize, Option<usize>) {
+    //     let entity_indices = &self.entity_indices[entity_index];
+    //     let segment_indices = &self.segment_indices[entity_indices.segment];
+    //     let segment_offset = segment_indices.count * self.entity_root + entity_indices.offset;
+    //     let entity_index = segment_indices.index + segment_offset;
+    //     let store_index = segment_indices.store + segment_offset;
+    //     (
+    //         entity_index,
+    //         store_index,
+    //         segment_indices.segment,
+    //         entity_indices.sibling,
+    //     )
+    // }
 }
 
 impl GetMeta {
@@ -333,7 +372,7 @@ unsafe impl<C: Component> Initial for C {
     fn dynamic_count(&self, _: &Self::State, _: CountContext) {}
 
     fn apply(self, state: &Self::State, context: ApplyContext) {
-        unsafe { state.set(context.store_index().unwrap(), self) }
+        unsafe { state.set(context.store_index(), self) }
     }
 }
 
@@ -459,54 +498,29 @@ pub struct Spawn<T>(T);
 
 unsafe impl<I: Initial> Initial for Spawn<I> {
     type Input = I::Input;
-    type Declare = (usize, Arc<Meta>, Arc<Meta>, I::Declare);
-    type State = (usize, Arc<Store>, Arc<Store>, I::State);
+    type Declare = (usize, I::Declare);
+    type State = (usize, I::State);
 
     fn declare(input: Self::Input, mut context: DeclareContext) -> Self::Declare {
-        context.child(|index, mut context| {
-            (
-                index,
-                context.meta(GetMeta::new::<Entity>()),
-                context.meta(GetMeta::new::<item::Link>()),
-                I::declare(input, context),
-            )
-        })
+        context.child(|index, context| (index, I::declare(input, context)))
     }
 
-    fn initialize(
-        (index, entity_meta, family_meta, state): Self::Declare,
-        mut context: InitializeContext,
-    ) -> Self::State {
+    fn initialize((index, state): Self::Declare, mut context: InitializeContext) -> Self::State {
         context.child(index, |index, context| {
-            let segment = context.segment();
-            (
-                index,
-                segment.store(&entity_meta).unwrap(),
-                segment.store(&family_meta).unwrap(),
-                I::initialize(state, context),
-            )
+            (index, I::initialize(state, context))
         })
     }
 
-    fn static_count((index, _, _, state): &Self::State, mut context: CountContext) -> bool {
+    fn static_count((index, state): &Self::State, mut context: CountContext) -> bool {
         context.child(*index, |context| I::static_count(state, context))
     }
 
-    fn dynamic_count(&self, (index, _, _, state): &Self::State, mut context: CountContext) {
+    fn dynamic_count(&self, (index, state): &Self::State, mut context: CountContext) {
         context.child(*index, |context| self.0.dynamic_count(state, context))
     }
 
-    fn apply(
-        self,
-        (_, entity_store, family_store, state): &Self::State,
-        mut context: ApplyContext,
-    ) {
-        context.child(|entity, family, context| {
-            let index = context.store_index().unwrap();
-            unsafe { entity_store.set(index, entity) };
-            unsafe { family_store.set(index, family) };
-            self.0.apply(state, context)
-        })
+    fn apply(self, (_, state): &Self::State, mut context: ApplyContext) {
+        context.child(|context| self.0.apply(state, context))
     }
 }
 
