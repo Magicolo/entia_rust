@@ -1,7 +1,6 @@
 use std::{any::TypeId, marker::PhantomData, sync::Arc};
 
 use crate::{
-    component::Component,
     depend::{Depend, Dependency},
     inject::{Get, Inject, InjectContext},
     item::{At, Item, ItemContext},
@@ -13,9 +12,9 @@ use crate::{
 pub struct Write<T>(Arc<Store>, PhantomData<T>);
 pub struct State<T>(Arc<Store>, usize, PhantomData<T>);
 
-unsafe impl<R: Resource> Inject for Write<R> {
-    type Input = Option<R>;
-    type State = State<R>;
+unsafe impl<T: Default + 'static> Inject for Write<T> {
+    type Input = Option<T>;
+    type State = State<T>;
 
     fn initialize(input: Self::Input, mut context: InjectContext) -> Option<Self::State> {
         let (store, segment) = initialize(input, context.world())?;
@@ -23,8 +22,8 @@ unsafe impl<R: Resource> Inject for Write<R> {
     }
 }
 
-impl<'a, R: Resource> Get<'a> for State<R> {
-    type Item = &'a mut R;
+impl<'a, T: 'static> Get<'a> for State<T> {
+    type Item = &'a mut T;
 
     #[inline]
     fn get(&'a mut self, _: &World) -> Self::Item {
@@ -32,19 +31,19 @@ impl<'a, R: Resource> Get<'a> for State<R> {
     }
 }
 
-unsafe impl<C: Component> Item for Write<C> {
-    type State = State<C>;
+unsafe impl<T: Send + 'static> Item for Write<T> {
+    type State = State<T>;
 
     fn initialize(mut context: ItemContext) -> Option<Self::State> {
-        let meta = context.world().get_meta::<C>()?;
+        let meta = context.world().get_meta::<T>()?;
         let segment = context.segment();
         let store = segment.store(&meta)?;
         Some(State(store, segment.index, PhantomData))
     }
 }
 
-impl<'a, C: Component> At<'a> for State<C> {
-    type Item = &'a mut C;
+impl<'a, T: 'static> At<'a> for State<T> {
+    type Item = &'a mut T;
 
     #[inline]
     fn at(&'a self, index: usize, _: &'a World) -> Self::Item {
@@ -77,9 +76,9 @@ unsafe impl<T: 'static> Depend for State<T> {
     }
 }
 
-impl<'a, R: Resource> From<&'a mut State<R>> for Write<R> {
+impl<'a, T> From<&'a mut State<T>> for Write<T> {
     #[inline]
-    fn from(state: &'a mut State<R>) -> Self {
+    fn from(state: &'a mut State<T>) -> Self {
         Write(state.0.clone(), PhantomData)
     }
 }

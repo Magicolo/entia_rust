@@ -14,7 +14,6 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use crate::depend::Depend;
-use crate::family::item::Link;
 use crate::inject::InjectContext;
 use crate::{
     depend::Dependency,
@@ -124,7 +123,6 @@ impl World {
             bits_to_segment: HashMap::new(),
         };
         world.get_or_add_meta::<Entity>();
-        world.get_or_add_meta::<Link>();
         world
     }
 

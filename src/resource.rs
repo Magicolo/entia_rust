@@ -26,11 +26,11 @@ unsafe impl<R: Resource> Inject for &mut R {
     }
 }
 
-pub(crate) fn initialize<R: Resource>(
-    default: Option<R>,
+pub(crate) fn initialize<T: Default + 'static>(
+    default: Option<T>,
     world: &mut World,
 ) -> Option<(Arc<Store>, usize)> {
-    let meta = world.get_or_add_meta::<R>();
+    let meta = world.get_or_add_meta::<T>();
     let segment = world.get_or_add_segment_by_metas(&[meta.clone()]);
     let store = segment.store(&meta)?;
     if segment.count == 0 {

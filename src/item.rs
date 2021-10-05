@@ -61,6 +61,7 @@ unsafe impl<I: Item> Item for Option<I> {
         Some(I::initialize(context))
     }
 
+    #[inline]
     fn update(state: &mut Self::State, context: ItemContext) {
         if let Some(state) = state {
             I::update(state, context);

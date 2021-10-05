@@ -1,21 +1,21 @@
 use std::{any::TypeId, marker::PhantomData, sync::Arc};
 
 use crate::{
-    component::Component,
     depend::{Depend, Dependency},
     inject::{Get, Inject, InjectContext},
     item::{At, Item, ItemContext},
-    resource::{initialize, Resource},
+    resource::initialize,
     segment::Store,
     world::World,
+    Resource,
 };
 
 pub struct Read<T>(Arc<Store>, PhantomData<T>);
 pub struct State<T>(Arc<Store>, usize, PhantomData<T>);
 
-unsafe impl<R: Resource> Inject for Read<R> {
-    type Input = Option<R>;
-    type State = State<R>;
+unsafe impl<T: Default + 'static> Inject for Read<T> {
+    type Input = Option<T>;
+    type State = State<T>;
 
     fn initialize(input: Self::Input, mut context: InjectContext) -> Option<Self::State> {
         let (store, segment) = initialize(input, context.world())?;
@@ -23,8 +23,8 @@ unsafe impl<R: Resource> Inject for Read<R> {
     }
 }
 
-impl<'a, R: Resource> Get<'a> for State<R> {
-    type Item = &'a R;
+impl<'a, T: 'static> Get<'a> for State<T> {
+    type Item = &'a T;
 
     #[inline]
     fn get(&'a mut self, _: &World) -> Self::Item {
@@ -32,19 +32,19 @@ impl<'a, R: Resource> Get<'a> for State<R> {
     }
 }
 
-unsafe impl<C: Component> Item for Read<C> {
-    type State = State<C>;
+unsafe impl<T: Send + 'static> Item for Read<T> {
+    type State = State<T>;
 
     fn initialize(mut context: ItemContext) -> Option<Self::State> {
-        let meta = context.world().get_meta::<C>()?;
+        let meta = context.world().get_meta::<T>()?;
         let segment = context.segment();
         let store = segment.store(&meta)?;
         Some(State(store, segment.index, PhantomData))
     }
 }
 
-impl<'a, C: Component> At<'a> for State<C> {
-    type Item = &'a C;
+impl<'a, T: 'static> At<'a> for State<T> {
+    type Item = &'a T;
 
     #[inline]
     fn at(&'a self, index: usize, _: &'a World) -> Self::Item {
@@ -77,16 +77,16 @@ unsafe impl<T: 'static> Depend for State<T> {
     }
 }
 
-impl<'a, R: Resource> From<&'a State<R>> for Read<R> {
+impl<'a, T> From<&'a State<T>> for Read<T> {
     #[inline]
-    fn from(state: &'a State<R>) -> Self {
+    fn from(state: &'a State<T>) -> Self {
         Read(state.0.clone(), PhantomData)
     }
 }
 
-impl<'a, R: Resource> From<&'a mut State<R>> for Read<R> {
+impl<'a, T> From<&'a mut State<T>> for Read<T> {
     #[inline]
-    fn from(state: &'a mut State<R>) -> Self {
+    fn from(state: &'a mut State<T>) -> Self {
         Read(state.0.clone(), PhantomData)
     }
 }

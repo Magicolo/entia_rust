@@ -1,7 +1,6 @@
 use std::{iter::from_fn, marker::PhantomData};
 
 use crate::{
-    component::Component,
     depend::{Depend, Dependency},
     entity::Entity,
     filter::Filter,
@@ -14,6 +13,8 @@ use crate::{
 };
 
 pub mod initial {
+    use crate::entities::Direction;
+
     use super::*;
 
     #[derive(Clone)]
@@ -38,17 +39,13 @@ pub mod initial {
         families: &'b Families<'a>,
     }
 
-    pub enum Direction {
-        TopDown,
-        BottomUp,
-    }
-
     #[derive(Clone)]
     pub struct EntityIndices {
         pub segment: usize,
         pub offset: usize,
         pub parent: Option<usize>,
-        pub sibling: Option<usize>,
+        pub previous_sibling: Option<usize>,
+        pub next_sibling: Option<usize>,
     }
 
     #[derive(Clone)]
@@ -113,7 +110,7 @@ pub mod initial {
 
             from_fn(move || {
                 let current = next?;
-                next = local.entity_indices[current].sibling;
+                next = local.entity_indices[current].next_sibling;
                 Some(local.with(current))
             })
         }
@@ -169,7 +166,7 @@ pub mod initial {
             })
         }
 
-        pub fn left(&self) -> impl Iterator<Item = Family<'a>> {
+        pub fn previous_siblings(&self) -> impl Iterator<Item = Family<'a>> {
             let entity_index = self.entity_index;
             self.parent()
                 .map(|parent| parent.children())
@@ -178,24 +175,19 @@ pub mod initial {
                 .take_while(move |child| child.entity_index != entity_index)
         }
 
-        pub fn right(&self) -> impl Iterator<Item = Family<'a>> {
+        pub fn next_siblings(&self) -> impl Iterator<Item = Family<'a>> {
             let local = self.clone();
-            let mut next = local.entity_indices[self.entity_index].sibling;
+            let mut next = local.entity_indices[self.entity_index].next_sibling;
 
             from_fn(move || {
                 let current = next?;
-                next = local.entity_indices[current].sibling;
+                next = local.entity_indices[current].next_sibling;
                 Some(local.with(current))
             })
         }
 
         pub fn siblings(&self) -> impl Iterator<Item = Family<'a>> {
-            let entity_index = self.entity_index;
-            self.parent()
-                .map(|parent| parent.children())
-                .into_iter()
-                .flatten()
-                .filter(move |child| child.entity_index != entity_index)
+            self.previous_siblings().chain(self.next_siblings())
         }
 
         fn with(&self, entity_index: usize) -> Self {
@@ -300,60 +292,59 @@ pub mod initial {
 }
 
 pub mod item {
+    use crate::entities::{Datum, Entities};
+
     use super::*;
 
-    pub struct Child<'a, I: Item, F: Filter = ()>(
-        Option<(usize, usize)>,
-        write::State<query::Inner<I, F>>,
-        &'a World,
-    );
-
-    pub struct Parent<'a, I: Item, F: Filter = ()>(
-        Option<(usize, usize)>,
-        write::State<query::Inner<I, F>>,
-        &'a World,
-    );
-
-    pub struct Link {
-        pub(crate) parent: Option<(usize, usize)>,
-        pub(crate) child: Option<(usize, usize)>,
-        pub(crate) next: Option<(usize, usize)>,
+    pub struct Child<'a, I: Item, F: Filter = ()> {
+        index: u32,
+        query: write::State<query::Inner<I, F>>,
+        entities: &'a Entities,
+        world: &'a World,
     }
 
-    pub struct ChildState<I: Item + 'static, F: Filter>(
-        <Read<Link> as Item>::State,
-        query::State<I, F>,
-    );
+    pub struct Parent<'a, I: Item, F: Filter = ()> {
+        index: u32,
+        query: write::State<query::Inner<I, F>>,
+        entities: &'a Entities,
+        world: &'a World,
+    }
 
-    pub struct ParentState<I: Item + 'static, F: Filter>(
-        <Read<Link> as Item>::State,
-        query::State<I, F>,
-    );
+    pub struct ChildState<I: Item + 'static, F: Filter> {
+        entity: <Read<Entity> as Item>::State,
+        entities: <Read<Entities> as Inject>::State,
+        query: query::State<I, F>,
+    }
 
-    pub struct LinkIterator<'a, I: Item, F: Filter, N: Next>(
-        Option<(usize, usize)>,
-        &'a query::Inner<I, F>,
-        &'a World,
-        PhantomData<N>,
-    );
+    pub struct ParentState<I: Item + 'static, F: Filter> {
+        entity: <Read<Entity> as Item>::State,
+        entities: <Read<Entities> as Inject>::State,
+        query: query::State<I, F>,
+    }
+
+    pub struct LinkIterator<'a, I: Item, F: Filter, N: Next> {
+        index: u32,
+        query: &'a query::Inner<I, F>,
+        entities: &'a Entities,
+        world: &'a World,
+        _marker: PhantomData<N>,
+    }
 
     pub trait Next {
-        fn next(link: &Link) -> Option<(usize, usize)>;
+        fn next(datum: &Datum) -> u32;
     }
-
-    impl Component for Link {}
 
     impl<N: Next> Next for &N {
         #[inline]
-        fn next(link: &Link) -> Option<(usize, usize)> {
-            N::next(link)
+        fn next(datum: &Datum) -> u32 {
+            N::next(datum)
         }
     }
 
     impl<N: Next> Next for &mut N {
         #[inline]
-        fn next(link: &Link) -> Option<(usize, usize)> {
-            N::next(link)
+        fn next(datum: &Datum) -> u32 {
+            N::next(datum)
         }
     }
 
@@ -362,15 +353,15 @@ pub mod item {
         where
             I::State: At<'a>,
         {
-            let current = get_link::<Self>(self.0?, index, self.2)?;
-            get_item(current, self.1.as_ref(), self.2)
+            let current = get_datum_at::<Self>(self.index, index, self.entities)?;
+            get_item(current.0, self.query.as_ref(), self.world)
         }
     }
 
     impl<I: Item, F: Filter> Next for Child<'_, I, F> {
         #[inline]
-        fn next(link: &Link) -> Option<(usize, usize)> {
-            link.next
+        fn next(datum: &Datum) -> u32 {
+            datum.previous_sibling
         }
     }
 
@@ -378,14 +369,24 @@ pub mod item {
         type State = ChildState<I, F>;
 
         fn initialize(mut context: ItemContext) -> Option<Self::State> {
-            Some(ChildState(
-                <Read<Link> as Item>::initialize(context.owned())?,
-                <Query<I, F> as Inject>::initialize((), context.into())?,
-            ))
+            Some(ChildState {
+                entity: <Read<Entity> as Item>::initialize(context.owned())?,
+                entities: <Read<Entities> as Inject>::initialize(None, context.owned().into())?,
+                query: <Query<I, F> as Inject>::initialize((), context.into())?,
+            })
         }
 
-        fn update(ChildState(read, query): &mut Self::State, mut context: ItemContext) {
-            <Read<Link> as Item>::update(read, context.owned());
+        #[inline]
+        fn update(
+            ChildState {
+                entity,
+                entities,
+                query,
+            }: &mut Self::State,
+            mut context: ItemContext,
+        ) {
+            <Read<Entity> as Item>::update(entity, context.owned());
+            <Read<Entities> as Inject>::update(entities, context.owned().into());
             <Query<I, F> as Inject>::update(query, context.into());
         }
     }
@@ -395,14 +396,20 @@ pub mod item {
 
         #[inline]
         fn at(&'a self, index: usize, world: &'a World) -> Self::Item {
-            Child(self.0.at(index, world).child, self.1.inner.clone(), world)
+            Child {
+                index: self.entity.at(index, world).index,
+                entities: self.entities.as_ref(),
+                query: self.query.inner.clone(),
+                world,
+            }
         }
     }
 
     unsafe impl<I: Item, F: Filter> Depend for ChildState<I, F> {
         fn depend(&self, world: &World) -> Vec<Dependency> {
-            let mut dependencies = self.0.depend(world);
-            dependencies.append(&mut self.1.inner.depend(world));
+            let mut dependencies = self.entity.depend(world);
+            dependencies.append(&mut self.entities.depend(world));
+            dependencies.append(&mut self.query.inner.depend(world));
             dependencies
         }
     }
@@ -413,7 +420,13 @@ pub mod item {
         type Item = <I::State as At<'a>>::Item;
         type IntoIter = LinkIterator<'a, I, F, Self>;
         fn into_iter(self) -> Self::IntoIter {
-            LinkIterator(self.0, self.1.as_ref(), self.2, PhantomData)
+            LinkIterator {
+                index: self.entities.data.0[self.index as usize].first_child,
+                query: self.query.as_ref(),
+                entities: self.entities,
+                world: self.world,
+                _marker: PhantomData,
+            }
         }
     }
 
@@ -422,15 +435,15 @@ pub mod item {
         where
             I::State: At<'a>,
         {
-            let current = get_link::<Self>(self.0?, index, self.2)?;
-            get_item(current, self.1.as_ref(), self.2)
+            let pair = get_datum_at::<Self>(self.index, index, self.entities)?;
+            get_item(pair.0, self.query.as_ref(), self.world)
         }
     }
 
     impl<I: Item, F: Filter> Next for Parent<'_, I, F> {
         #[inline]
-        fn next(link: &Link) -> Option<(usize, usize)> {
-            link.parent
+        fn next(datum: &Datum) -> u32 {
+            datum.parent
         }
     }
 
@@ -438,14 +451,24 @@ pub mod item {
         type State = ParentState<I, F>;
 
         fn initialize(mut context: ItemContext) -> Option<Self::State> {
-            Some(ParentState(
-                <Read<Link> as Item>::initialize(context.owned())?,
-                <Query<I, F> as Inject>::initialize((), context.into())?,
-            ))
+            Some(ParentState {
+                entity: <Read<Entity> as Item>::initialize(context.owned())?,
+                entities: <Read<Entities> as Item>::initialize(context.owned())?,
+                query: <Query<I, F> as Inject>::initialize((), context.into())?,
+            })
         }
 
-        fn update(ParentState(read, query): &mut Self::State, mut context: ItemContext) {
-            <Read<Link> as Item>::update(read, context.owned());
+        #[inline]
+        fn update(
+            ParentState {
+                entity,
+                entities,
+                query,
+            }: &mut Self::State,
+            mut context: ItemContext,
+        ) {
+            <Read<Entity> as Item>::update(entity, context.owned());
+            <Read<Entities> as Inject>::update(entities, context.owned().into());
             <Query<I, F> as Inject>::update(query, context.into());
         }
     }
@@ -455,14 +478,20 @@ pub mod item {
 
         #[inline]
         fn at(&'a self, index: usize, world: &'a World) -> Self::Item {
-            Parent(self.0.at(index, world).parent, self.1.inner.clone(), world)
+            Parent {
+                index: self.entity.at(index, world).index,
+                entities: self.entities.as_ref(),
+                query: self.query.inner.clone(),
+                world,
+            }
         }
     }
 
     unsafe impl<I: Item, F: Filter> Depend for ParentState<I, F> {
         fn depend(&self, world: &World) -> Vec<Dependency> {
-            let mut dependencies = self.0.depend(world);
-            dependencies.append(&mut self.1.inner.depend(world));
+            let mut dependencies = self.entity.depend(world);
+            dependencies.append(&mut self.entities.depend(world));
+            dependencies.append(&mut self.query.inner.depend(world));
             dependencies
         }
     }
@@ -471,7 +500,13 @@ pub mod item {
         type Item = <I::State as At<'a>>::Item;
         type IntoIter = LinkIterator<'a, I, F, Self>;
         fn into_iter(self) -> Self::IntoIter {
-            LinkIterator(self.0, self.1.as_ref(), self.2, PhantomData)
+            LinkIterator {
+                index: self.entities.data.0[self.index as usize].parent,
+                query: self.query.as_ref(),
+                entities: self.entities,
+                world: self.world,
+                _marker: PhantomData,
+            }
         }
     }
 
@@ -479,11 +514,9 @@ pub mod item {
         type Item = <I::State as At<'a>>::Item;
 
         fn next(&mut self) -> Option<Self::Item> {
-            let LinkIterator(current, inner, world, _) = self;
-            while let Some(pair) = *current {
-                // 'Family' segment pointers must point to segments that have both an 'Entity' and 'Family' store.
-                *current = get_link::<N>(pair, 1, world);
-                if let Some(item) = get_item(pair, inner, world) {
+            while let Some((datum, index)) = get_datum_at::<N>(self.index, 1, self.entities) {
+                self.index = index;
+                if let Some(item) = get_item(datum, self.query, self.world) {
                     return Some(item);
                 }
             }
@@ -492,26 +525,27 @@ pub mod item {
     }
 
     #[inline]
-    fn get_link<N: Next>(
-        mut current: (usize, usize),
-        mut index: usize,
-        world: &World,
-    ) -> Option<(usize, usize)> {
-        while index > 0 {
-            index -= 1;
-            current =
-                N::next(unsafe { world.segments[current.0].stores[1].get::<Link>(current.1) })?;
+    fn get_datum_at<N: Next>(
+        mut index: u32,
+        mut at: usize,
+        entities: &Entities,
+    ) -> Option<(&Datum, u32)> {
+        let mut datum = entities.data.0.get(index as usize)?;
+        while at > 0 {
+            at -= 1;
+            index = N::next(datum);
+            datum = entities.data.0.get(index as usize)?;
         }
-        Some(current)
+        Some((datum, index))
     }
 
     #[inline]
     fn get_item<'a, I: Item, F: Filter>(
-        (segment, index): (usize, usize),
+        datum: &Datum,
         inner: &'a query::Inner<I, F>,
         world: &'a World,
     ) -> Option<<I::State as At<'a>>::Item> {
-        let state = inner.segments[segment]?;
-        Some(inner.states[state].0.at(index, world))
+        let state = inner.segments[datum.segment_index as usize]?;
+        Some(inner.states[state].0.at(datum.store_index as usize, world))
     }
 }

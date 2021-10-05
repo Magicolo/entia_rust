@@ -43,6 +43,7 @@ pub struct ApplyContext<'a> {
     entity_root: usize,
     entity_index: usize,
     entity_parent: Option<u32>,
+    entity_previous_sibling: &'a mut Option<u32>,
     entity_count: &'a mut usize,
     entity_instances: &'a [Entity],
     entity_indices: &'a [EntityIndices],
@@ -174,13 +175,13 @@ impl<'a> CountContext<'a> {
         )
     }
 
-    pub fn with<'b, 'c: 'b>(
+    pub fn with<'b>(
         &'b mut self,
         segment_index: usize,
         entity_index: usize,
         entity_parent: Option<usize>,
-        entity_previous: &'c mut Option<usize>,
-    ) -> CountContext<'b> {
+        entity_previous: &'b mut Option<usize>,
+    ) -> CountContext {
         CountContext::new(
             segment_index,
             self.segment_indices,
@@ -198,11 +199,12 @@ impl<'a> CountContext<'a> {
             segment: segment_index,
             offset: segment_indices.count,
             parent: self.entity_parent,
-            sibling: None,
+            previous_sibling: *self.entity_previous,
+            next_sibling: None,
         });
 
         if let Some(previous) = self.entity_previous.replace(entity_index) {
-            self.entity_indices[previous].sibling = Some(entity_index);
+            self.entity_indices[previous].next_sibling = Some(entity_index);
         }
 
         segment_indices.count += 1;
@@ -220,6 +222,7 @@ impl<'a> ApplyContext<'a> {
         entity_root: usize,
         entity_index: usize,
         entity_parent: Option<u32>,
+        entity_previous_sibling: &'a mut Option<u32>,
         entity_count: &'a mut usize,
         entity_instances: &'a [Entity],
         entity_indices: &'a [EntityIndices],
@@ -231,6 +234,7 @@ impl<'a> ApplyContext<'a> {
             entity_root,
             entity_index,
             entity_parent,
+            entity_previous_sibling,
             entity_count,
             entity_instances,
             entity_indices,
@@ -262,19 +266,32 @@ impl<'a> ApplyContext<'a> {
     }
 
     pub fn owned(&mut self) -> ApplyContext {
-        self.with(self.entity_index, self.entity_parent, self.store_index)
+        ApplyContext::new(
+            self.entity_root,
+            self.entity_index,
+            self.entity_parent,
+            self.entity_previous_sibling,
+            self.entity_count,
+            self.entity_instances,
+            self.entity_indices,
+            self.entities,
+            self.store_index,
+            self.segment_indices,
+        )
     }
 
-    pub fn with(
-        &mut self,
+    pub fn with<'b>(
+        &'b mut self,
         entity_index: usize,
         entity_parent: Option<u32>,
+        entity_previous_sibling: &'b mut Option<u32>,
         store_index: usize,
     ) -> ApplyContext {
         ApplyContext::new(
             self.entity_root,
             entity_index,
             entity_parent,
+            entity_previous_sibling,
             self.entity_count,
             self.entity_instances,
             self.entity_indices,
@@ -286,60 +303,41 @@ impl<'a> ApplyContext<'a> {
 
     pub(crate) fn child<T>(&mut self, scope: impl FnOnce(ApplyContext) -> T) -> T {
         let entity_index = *self.entity_count;
-        *self.entity_count += 1;
-
         let entity_indices = &self.entity_indices[entity_index];
-        let (instance_index, store_index, segment_index) = self.get_indices(entity_indices);
-        let entity_instance = self.entity_instances[instance_index];
-        let entity_parent = self.entity_parent;
-        let entity_child = self
-            .entity_indices
-            .get(entity_index + 1)
-            .filter(|child| child.parent == Some(entity_index))
-            .map(|child| self.get_entity(child).index);
-        let entity_sibling = entity_indices
-            .sibling
-            .map(|sibling| self.get_entity(&self.entity_indices[sibling]).index);
-
-        let datum = self.entities.get_datum_mut_unchecked(entity_instance);
-        datum.initialize(
-            entity_instance.generation,
-            store_index as u32,
-            segment_index as u32,
-            entity_parent,
-            entity_child,
-            entity_sibling,
-        );
-        scope(self.with(entity_index, Some(entity_instance.index), store_index))
-    }
-
-    #[inline]
-    fn get_entity(&self, entity_indices: &EntityIndices) -> Entity {
-        self.entity_instances[self.get_indices(entity_indices).0]
-    }
-
-    #[inline]
-    fn get_indices(&self, entity_indices: &EntityIndices) -> (usize, usize, usize) {
         let segment_indices = &self.segment_indices[entity_indices.segment];
         let segment_offset = segment_indices.count * self.entity_root + entity_indices.offset;
         let instance_index = segment_indices.index + segment_offset;
         let store_index = segment_indices.store + segment_offset;
-        (instance_index, store_index, segment_indices.segment)
-    }
+        let segment_index = segment_indices.segment;
+        let entity_instance = self.entity_instances[instance_index];
+        let entity_parent = self.entity_parent;
+        let entity_previous_sibling = *self.entity_previous_sibling;
 
-    // fn get_indices(&self, entity_index: usize) -> (usize, usize, usize, Option<usize>) {
-    //     let entity_indices = &self.entity_indices[entity_index];
-    //     let segment_indices = &self.segment_indices[entity_indices.segment];
-    //     let segment_offset = segment_indices.count * self.entity_root + entity_indices.offset;
-    //     let entity_index = segment_indices.index + segment_offset;
-    //     let store_index = segment_indices.store + segment_offset;
-    //     (
-    //         entity_index,
-    //         store_index,
-    //         segment_indices.segment,
-    //         entity_indices.sibling,
-    //     )
-    // }
+        *self.entity_count += 1;
+        *self.entity_previous_sibling = Some(entity_instance.index);
+
+        if let Some(previous) = entity_previous_sibling {
+            self.entities.data.0[previous as usize].next_sibling = entity_instance.index;
+        } else if let Some(parent) = entity_parent {
+            self.entities.data.0[parent as usize].first_child = entity_instance.index;
+        }
+
+        self.entities.data.0[entity_instance.index as usize].initialize(
+            entity_instance.generation,
+            store_index as u32,
+            segment_index as u32,
+            entity_parent,
+            None,
+            entity_previous_sibling,
+            None,
+        );
+        scope(self.with(
+            entity_index,
+            Some(entity_instance.index),
+            &mut None,
+            store_index,
+        ))
+    }
 }
 
 impl GetMeta {

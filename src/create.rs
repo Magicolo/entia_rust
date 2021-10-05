@@ -168,12 +168,12 @@ impl<I: Initial> Inner<I> {
     }
 
     fn reserve(&mut self, count: usize, entities: &mut Entities, world: &World) -> (usize, bool) {
-        self.entity_instances.resize(count, Entity::ZERO);
+        self.entity_instances.resize(count, Entity::NULL);
         let ready = entities.reserve(&mut self.entity_instances);
         let mut last = 0;
         let mut segment_index = 0;
         let mut success = true;
-        let multiplier = self.multiplier();
+        let multiplier = self.entity_instances.len() / self.entity_indices.len();
 
         for (i, segment_indices) in self.segment_indices.iter_mut().enumerate() {
             segment_indices.index = segment_index;
@@ -185,8 +185,9 @@ impl<I: Initial> Inner<I> {
             let segment = &world.segments[segment_indices.segment];
             let pair = segment.reserve(segment_count);
             segment_indices.store = pair.0;
+            success &= segment_index <= ready && pair.1 == segment_count;
 
-            if success && segment_index <= ready && pair.1 == segment_count {
+            if success {
                 last = i;
                 initialize(
                     &self.entity_instances,
@@ -195,18 +196,12 @@ impl<I: Initial> Inner<I> {
                     segment_count,
                     pair.0,
                 );
-            } else {
-                success = false;
             }
+
             segment_index += segment_count;
         }
 
         (last, success && ready == count)
-    }
-
-    #[inline]
-    fn multiplier(&self) -> usize {
-        self.entity_instances.len() / self.entity_indices.len()
     }
 
     fn families(&self) -> Families {
@@ -311,11 +306,6 @@ unsafe impl<I: Initial> Inject for Create<'_, I> {
         for defer in inner.defer.drain(..) {
             let multiplier = defer.entity_instances.len() / defer.entity_indices.len();
             for segment_indices in defer.segment_indices[defer.index..].iter() {
-                let count = segment_indices.count * multiplier;
-                if count == 0 {
-                    continue;
-                }
-
                 initialize(
                     &defer.entity_instances,
                     &world.segments[segment_indices.segment],
@@ -345,6 +335,10 @@ fn initialize(
     segment_count: usize,
     segment_store: usize,
 ) {
+    if segment_count == 0 {
+        return;
+    }
+
     let instances = &entity_instances[segment_index..segment_index + segment_count];
     unsafe { segment.stores[0].set_all(segment_store, instances) };
 }
@@ -366,6 +360,7 @@ fn apply<I: Initial>(
                 entity_root,
                 0,
                 None,
+                &mut None,
                 &mut entity_count,
                 entity_instances,
                 entity_indices,

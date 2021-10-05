@@ -46,12 +46,6 @@ impl<I: Item, F: Filter> Default for Inner<I, F> {
     }
 }
 
-impl<I: Item + 'static, F: Filter> Inner<I, F> {
-    pub fn segments<'a>(&'a self) -> impl Iterator<Item = usize> + 'a {
-        self.states.iter().map(|(_, segment)| *segment)
-    }
-}
-
 impl<'a, I: Item, F: Filter> Query<'a, I, F> {
     pub fn len(&self) -> usize {
         self.inner

@@ -1,135 +1,135 @@
 use crate::{
     depend::{Depend, Dependency},
+    entities::Entities,
     entity::Entity,
-    filter::Filter,
     inject::{Get, Inject, InjectContext},
-    item::{At, Item},
-    query::{self, Query},
     world::World,
+    write::{self, Write},
 };
-use std::{any::TypeId, marker::PhantomData};
+use std::{any::TypeId, collections::HashSet};
 
-pub struct Destroy<'a, I: Item + 'static = (), F: Filter = ()> {
-    defer: &'a mut Vec<Defer<I, F>>,
-    query: Query<'a, I, (Entity, F)>,
+pub struct Destroy<'a> {
+    defer: &'a mut Vec<Entity>,
 }
 
-pub struct State<I: Item + 'static, F: Filter> {
-    defer: Vec<Defer<I, F>>,
-    query: query::State<I, (Entity, F)>,
+pub struct State {
+    defer: Vec<Entity>,
+    set: HashSet<Entity>,
+    entities: write::State<Entities>,
 }
 
-enum Defer<I: Item, F: Filter> {
-    One(Entity),
-    All(PhantomData<(I, F)>),
-}
-
-impl<I: Item, F: Filter> Destroy<'_, I, F> {
+impl Destroy<'_> {
     #[inline]
     pub fn one(&mut self, entity: Entity) {
-        if let Some(_) = self.query.get(entity) {
-            self.defer.push(Defer::One(entity));
-        }
+        self.defer.push(entity);
     }
 
     #[inline]
-    pub fn one_with(
-        &mut self,
-        entity: Entity,
-        filter: impl FnOnce(<I::State as At<'_>>::Item) -> bool,
-    ) {
-        if let Some(item) = self.query.get(entity) {
-            if filter(item) {
-                self.defer.push(Defer::One(entity));
-            }
-        }
-    }
-
-    #[inline]
-    pub fn all(&mut self) {
-        self.defer.push(Defer::All(PhantomData));
-    }
-
-    #[inline]
-    pub fn all_with(&mut self, filter: impl FnMut(Entity, I) -> bool) {
-        todo!()
+    pub fn all(&mut self, entities: impl IntoIterator<Item = Entity>) {
+        self.defer.extend(entities);
     }
 }
 
-unsafe impl<I: Item, F: Filter> Inject for Destroy<'_, I, F> {
+unsafe impl Inject for Destroy<'_> {
     type Input = ();
-    type State = State<I, F>;
+    type State = State;
 
     fn initialize(_: Self::Input, context: InjectContext) -> Option<Self::State> {
-        let query = <Query<I, (Entity, F)> as Inject>::initialize((), context)?;
         Some(State {
             defer: Vec::new(),
-            query,
+            set: HashSet::new(),
+            entities: <Write<Entities> as Inject>::initialize(None, context)?,
         })
     }
 
-    fn update(state: &mut Self::State, context: InjectContext) {
-        <Query<I, (Entity, F)> as Inject>::update(&mut state.query, context);
-    }
-
     fn resolve(state: &mut Self::State, mut context: InjectContext) {
-        <Query<I, (Entity, F)> as Inject>::resolve(&mut state.query, context.owned());
-
-        let entities = state.query.entities.as_mut();
+        let entities = state.entities.as_mut();
         let world = context.world();
-        let query = state.query.inner.as_mut();
-        for defer in state.defer.drain(..) {
-            match defer {
-                Defer::One(entity) => {
-                    if let Some(datum) = entities.get_datum_mut(entity) {
-                        let index = datum.index() as usize;
-                        let segment = datum.segment() as usize;
-                        if query.segments[segment].is_some() {
-                            entities.release(&[entity]);
-                            let segment = &mut world.segments[segment];
-                            if segment.remove_at(index) {
-                                // SAFETY: When it exists, the entity store is always the first. This segment must have
-                                // an entity store since the destroyed entity was in it.
-                                let moved = *unsafe { segment.stores[0].get::<Entity>(index) };
-                                entities
-                                    .get_datum_mut_unchecked(moved)
-                                    .update(index as u32, segment.index as u32);
-                            }
+        let set = &mut state.set;
+        set.clear();
+
+        for entity in state.defer.drain(..) {
+            if entities.has(entity) {
+                destroy(entity.index, true, set, entities, world);
+            }
+        }
+
+        if set.len() > 0 {
+            entities.release(set.drain());
+        }
+
+        fn destroy(
+            index: u32,
+            root: bool,
+            set: &mut HashSet<Entity>,
+            entities: &mut Entities,
+            world: &mut World,
+        ) -> Option<u32> {
+            if let Some(datum) = entities.data.0.get(index as usize).cloned() {
+                let entity = Entity {
+                    index,
+                    generation: datum.generation,
+                };
+
+                if set.insert(entity) {
+                    let mut child = datum.first_child;
+                    while let Some(next) = destroy(child, false, set, entities, world) {
+                        child = next;
+                    }
+
+                    if root {
+                        if let Some(previous_sibling) =
+                            entities.data.0.get_mut(datum.previous_sibling as usize)
+                        {
+                            previous_sibling.next_sibling = datum.next_sibling;
+                        } else if let Some(parent) = entities.data.0.get_mut(datum.parent as usize)
+                        {
+                            // Only an entity with no 'previous_sibling' can ever be the 'first_child' of its parent.
+                            parent.first_child = datum.next_sibling;
+                        }
+
+                        if let Some(next_sibling) =
+                            entities.data.0.get_mut(datum.next_sibling as usize)
+                        {
+                            next_sibling.previous_sibling = datum.previous_sibling;
                         }
                     }
-                }
-                Defer::All(_) => {
-                    for segment in query.segments() {
-                        let segment = &mut world.segments[segment];
-                        if segment.count > 0 {
-                            entities
-                                .release(unsafe { segment.stores[0].get_all(0, segment.count) });
-                            segment.clear();
-                        }
+
+                    let segment = &mut world.segments[datum.segment_index as usize];
+                    if segment.remove_at(datum.store_index as usize) {
+                        // SAFETY: When it exists, the entity store is always the first. This segment must have
+                        // an entity store since the destroyed entity was in it.
+                        let moved =
+                            *unsafe { segment.stores[0].get::<Entity>(datum.store_index as usize) };
+                        entities.data.0[moved.index as usize]
+                            .update(datum.store_index, datum.segment_index);
                     }
                 }
+
+                Some(datum.next_sibling)
+            } else {
+                None
             }
         }
     }
 }
 
-impl<'a, I: Item + 'static, F: Filter> Get<'a> for State<I, F> {
-    type Item = Destroy<'a, I, F>;
+impl<'a> Get<'a> for State {
+    type Item = Destroy<'a>;
 
     #[inline]
-    fn get(&'a mut self, world: &'a World) -> Self::Item {
+    fn get(&'a mut self, _: &'a World) -> Self::Item {
         Destroy {
             defer: &mut self.defer,
-            query: self.query.get(world),
         }
     }
 }
 
-unsafe impl<I: Item, F: Filter> Depend for State<I, F> {
-    fn depend(&self, _: &World) -> Vec<Dependency> {
+unsafe impl Depend for State {
+    fn depend(&self, world: &World) -> Vec<Dependency> {
         let mut dependencies = Vec::new();
-        for segment in self.query.inner.as_ref().segments() {
-            dependencies.push(Dependency::Defer(segment, TypeId::of::<Entity>()));
+        for segment in world.segments.iter() {
+            dependencies.push(Dependency::Defer(segment.index, TypeId::of::<Entity>()));
         }
         dependencies
     }

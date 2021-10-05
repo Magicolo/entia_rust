@@ -5,7 +5,7 @@ use crate::{filter::Filter, item::*};
 use std::any::TypeId;
 use std::sync::Arc;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Entity {
     pub(crate) index: u32,
     pub(crate) generation: u32,
@@ -13,16 +13,16 @@ pub struct Entity {
 pub struct State(pub(crate) Arc<Store>, usize);
 
 impl Entity {
-    pub const ZERO: Self = Self {
-        index: 0,
-        generation: 0,
+    pub const NULL: Self = Self {
+        index: u32::MAX,
+        generation: u32::MAX,
     };
 }
 
 impl Default for Entity {
     #[inline]
     fn default() -> Self {
-        Self::ZERO
+        Self::NULL
     }
 }
 

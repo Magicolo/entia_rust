@@ -1,49 +1,53 @@
-pub mod component;
-pub mod create;
-pub mod defer;
-pub mod depend;
-pub mod destroy;
-pub mod emit;
-pub mod entities;
-pub mod entity;
-pub mod family;
-pub mod filter;
-pub mod initial;
-pub mod inject;
-pub mod item;
-pub mod local;
-pub mod message;
-pub mod query;
-pub mod read;
-pub mod receive;
-pub mod resource;
-pub mod schedule;
-pub mod segment;
-pub mod system;
-pub mod world;
-pub mod write;
+mod component;
+mod create;
+mod defer;
+mod depend;
+mod destroy;
+mod emit;
+mod entities;
+mod entity;
+mod family;
+mod filter;
+mod initial;
+mod inject;
+mod item;
+mod local;
+mod message;
+mod query;
+mod read;
+mod receive;
+mod resource;
+mod schedule;
+mod segment;
+mod system;
+mod world;
+mod write;
 
 pub mod core {
     pub use entia_core::*;
 }
 
-pub use crate::component::Component;
-pub use crate::create::Create;
-pub use crate::destroy::Destroy;
-pub use crate::emit::Emit;
-pub use crate::entity::Entity;
-pub use crate::family::initial::{Direction, Families, Family};
-pub use crate::family::item::{Child, Parent};
-pub use crate::filter::Not;
-pub use crate::initial::{spawn, with, Initial, StaticInitial};
-pub use crate::inject::Injector;
-pub use crate::message::Message;
-pub use crate::query::Query;
-pub use crate::receive::Receive;
-pub use crate::resource::Resource;
-pub use crate::schedule::Scheduler;
-pub use crate::system::Runner;
-pub use crate::world::World;
+pub use crate::{
+    component::Component,
+    create::Create,
+    defer::Defer,
+    destroy::Destroy,
+    emit::Emit,
+    entities::Direction,
+    entity::Entity,
+    family::initial::{Families, Family},
+    family::item::{Child, Parent},
+    filter::Not,
+    initial::{spawn, with, Initial, StaticInitial},
+    inject::Injector,
+    message::Message,
+    query::Query,
+    receive::Receive,
+    resource::Resource,
+    schedule::Scheduler,
+    system::Runner,
+    world::World,
+};
 
 #[cfg(test)]
 mod test {
@@ -188,10 +192,12 @@ mod test {
             .schedule(|on_kill: Receive<OnKill>| for _ in on_kill {})
             .schedule(|mut on_kill: Receive<OnKill>| while let Some(_) = on_kill.next() {})
             .schedule(
-                |query: Query<Entity>, mut destroy: Destroy<(), (Position, Velocity)>| {
+                |query: Query<Entity, (Position, Velocity)>, mut destroy: Destroy| {
                     for entity in &query {
                         destroy.one(entity);
                     }
+
+                    destroy.all(&query);
                 },
             )
             .schedule(|query: Query<Entity>, mut destroy: Destroy| {
