@@ -4,8 +4,7 @@ use crate::{
         item::{Item, ItemContext},
     },
     read::Read,
-    segment::Segment,
-    world::World,
+    world::{segment::Segment, World},
     write::Write,
 };
 

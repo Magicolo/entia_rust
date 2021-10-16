@@ -5,8 +5,7 @@ use crate::{
     inject::{Get, Inject, InjectContext},
     query::item::{At, Item, ItemContext},
     resource::initialize,
-    segment::Store,
-    world::World,
+    world::{store::Store, World},
     Resource,
 };
 

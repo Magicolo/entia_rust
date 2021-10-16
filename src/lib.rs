@@ -14,7 +14,6 @@ mod query;
 mod read;
 mod resource;
 mod schedule;
-mod segment;
 mod system;
 mod world;
 mod write;

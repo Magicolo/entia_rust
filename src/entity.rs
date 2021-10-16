@@ -6,8 +6,7 @@ use crate::{
         filter::Filter,
         item::{At, Item, ItemContext},
     },
-    segment::{Segment, Store},
-    world::World,
+    world::{segment::Segment, store::Store, World},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

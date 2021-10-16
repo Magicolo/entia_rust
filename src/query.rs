@@ -5,8 +5,7 @@ use crate::{
     entity::Entity,
     inject::{Get, Inject, InjectContext},
     resource::Resource,
-    segment::Segment,
-    world::World,
+    world::{segment::Segment, World},
     write::{self, Write},
 };
 use std::{any::TypeId, iter, marker::PhantomData};

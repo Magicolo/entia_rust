@@ -11,8 +11,7 @@ use crate::{
     entities::Entities,
     entity::Entity,
     family::initial::{EntityIndices, Family, SegmentIndices},
-    segment::{Segment, Store},
-    world::{Meta, World},
+    world::{segment::Segment, store::Store, Meta, World},
 };
 
 pub struct GetMeta(fn(&mut World) -> Arc<Meta>);

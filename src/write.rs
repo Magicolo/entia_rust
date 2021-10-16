@@ -5,8 +5,7 @@ use crate::{
     inject::{Get, Inject, InjectContext},
     query::item::{At, Item, ItemContext},
     resource::{initialize, Resource},
-    segment::Store,
-    world::World,
+    world::{store::Store, World},
 };
 
 pub struct Write<T>(Arc<Store>, PhantomData<T>);
