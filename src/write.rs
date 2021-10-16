@@ -3,7 +3,7 @@ use std::{any::TypeId, marker::PhantomData, sync::Arc};
 use crate::{
     depend::{Depend, Dependency},
     inject::{Get, Inject, InjectContext},
-    item::{At, Item, ItemContext},
+    query::item::{At, Item, ItemContext},
     resource::{initialize, Resource},
     segment::Store,
     world::World,

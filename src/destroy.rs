@@ -9,24 +9,35 @@ use crate::{
 use std::{any::TypeId, collections::HashSet};
 
 pub struct Destroy<'a> {
-    defer: &'a mut Vec<Entity>,
+    defer: &'a mut Vec<Defer>,
 }
 
 pub struct State {
-    defer: Vec<Entity>,
+    defer: Vec<Defer>,
     set: HashSet<Entity>,
     entities: write::State<Entities>,
+}
+
+struct Defer {
+    entity: Entity,
+    family: bool,
 }
 
 impl Destroy<'_> {
     #[inline]
     pub fn one(&mut self, entity: Entity) {
-        self.defer.push(entity);
+        self.defer.push(Defer {
+            entity,
+            family: false,
+        });
     }
 
     #[inline]
-    pub fn all(&mut self, entities: impl IntoIterator<Item = Entity>) {
-        self.defer.extend(entities);
+    pub fn family(&mut self, entity: Entity) {
+        self.defer.push(Defer {
+            entity,
+            family: true,
+        });
     }
 }
 
@@ -48,9 +59,9 @@ unsafe impl Inject for Destroy<'_> {
         let set = &mut state.set;
         set.clear();
 
-        for entity in state.defer.drain(..) {
+        for Defer { entity, family } in state.defer.drain(..) {
             if entities.has(entity) {
-                destroy(entity.index, true, set, entities, world);
+                destroy(entity.index, true, family, set, entities, world);
             }
         }
 
@@ -61,6 +72,7 @@ unsafe impl Inject for Destroy<'_> {
         fn destroy(
             index: u32,
             root: bool,
+            family: bool,
             set: &mut HashSet<Entity>,
             entities: &mut Entities,
             world: &mut World,
@@ -72,9 +84,11 @@ unsafe impl Inject for Destroy<'_> {
                 };
 
                 if set.insert(entity) {
-                    let mut child = datum.first_child;
-                    while let Some(next) = destroy(child, false, set, entities, world) {
-                        child = next;
+                    if family {
+                        let mut child = datum.first_child;
+                        while let Some(next) = destroy(child, false, family, set, entities, world) {
+                            child = next;
+                        }
                     }
 
                     if root {

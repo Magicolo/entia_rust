@@ -1,10 +1,11 @@
 use std::{
     cmp::{max, min},
+    iter,
     ops::Index,
 };
 
 pub struct Slice<'a, T>(&'a [T], usize);
-pub struct SliceIterator<'a, 'b, T>(&'b Slice<'a, T>, usize);
+pub struct Iterator<'a, 'b, T>(&'b Slice<'a, T>, usize);
 
 pub trait IntoSlice {
     type Item;
@@ -67,14 +68,14 @@ impl<'a, T> Index<usize> for Slice<'a, T> {
 
 impl<'a, 'b, T> IntoIterator for &'b Slice<'a, T> {
     type Item = &'a T;
-    type IntoIter = SliceIterator<'a, 'b, T>;
+    type IntoIter = Iterator<'a, 'b, T>;
 
     fn into_iter(self) -> Self::IntoIter {
-        SliceIterator(self, 0)
+        Iterator(self, 0)
     }
 }
 
-impl<'a, 'b, T> Iterator for SliceIterator<'a, 'b, T> {
+impl<'a, 'b, T> iter::Iterator for Iterator<'a, 'b, T> {
     type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {

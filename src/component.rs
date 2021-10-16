@@ -1,6 +1,8 @@
 use crate::{
-    filter::Filter,
-    item::{Item, ItemContext},
+    query::{
+        filter::Filter,
+        item::{Item, ItemContext},
+    },
     read::Read,
     segment::Segment,
     world::World,

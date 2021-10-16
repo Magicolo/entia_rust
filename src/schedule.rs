@@ -1,5 +1,3 @@
-use std::array::IntoIter;
-
 use entia_core::Call;
 
 use crate::{
@@ -10,20 +8,66 @@ use crate::{
 };
 
 pub struct Scheduler<'a> {
+    // TODO: 'Option' should be a 'Result' in order to preserve failures and collect them later.
     pub(crate) systems: Vec<Option<System>>,
     pub(crate) world: &'a mut World,
 }
 
-// trait Run<I> {
-//     fn run(&mut self, input: I);
-// }
+pub trait IntoSystem<M = ()> {
+    type Input;
+    fn into_system(self, input: Self::Input, world: &mut World) -> Option<System>;
+}
 
-// impl<'a, I: Inject, C: Call<I> + Call<<I::State as Get<'a>>::Item>> Run<I> for C {
-//     fn run(&mut self, input: I) {
-//         self.call(input);
-//     }
-// }
-// type Runz<'a, I> = Call<I> + Call<<I::State as Get<'a>>::Item;
+impl IntoSystem for System {
+    type Input = ();
+
+    fn into_system(self, _: Self::Input, _: &mut World) -> Option<System> {
+        Some(self)
+    }
+}
+
+impl IntoSystem for Vec<Dependency> {
+    type Input = ();
+
+    fn into_system(self, _: Self::Input, _: &mut World) -> Option<System> {
+        Some(unsafe {
+            System::new(
+                None,
+                self,
+                |_, _| {},
+                |_, _| {},
+                |_, _| {},
+                |state, _| state.clone(),
+            )
+        })
+    }
+}
+
+impl<'a, I: Inject, C: Call<I> + Call<<I::State as Get<'a>>::Item> + 'static> IntoSystem<[I; 0]>
+    for C
+{
+    type Input = I::Input;
+
+    fn into_system(self, input: Self::Input, world: &mut World) -> Option<System> {
+        let identifier = System::reserve();
+        let state = I::initialize(input, InjectContext::new(identifier, world))?;
+        let system = unsafe {
+            System::new(
+                Some(identifier),
+                (self, state, identifier),
+                |(run, state, _), world| run.call(state.get(world)),
+                |(_, state, identifier), world| {
+                    I::update(state, InjectContext::new(*identifier, world))
+                },
+                |(_, state, identifier), world| {
+                    I::resolve(state, InjectContext::new(*identifier, world))
+                },
+                |(_, state, _), world| state.depend(world),
+            )
+        };
+        Some(system)
+    }
+}
 
 impl World {
     pub fn scheduler(&mut self) -> Scheduler {
@@ -33,43 +77,17 @@ impl World {
         }
     }
 
-    pub fn run<'a, I: Inject, R: Call<I> + Call<<I::State as Get<'a>>::Item> + 'static>(
-        &'a mut self,
-        run: R,
-    ) -> Option<()>
+    pub fn run<'a, M, S: IntoSystem<M>>(&'a mut self, system: S) -> Option<()>
     where
-        I::Input: Default,
+        S::Input: Default,
     {
-        self.run_with::<I, _>(I::Input::default(), run)
+        self.run_with(S::Input::default(), system)
     }
 
-    pub fn run_with<'a, I: Inject, R: Call<I> + Call<<I::State as Get<'a>>::Item> + 'static>(
-        &mut self,
-        input: I::Input,
-        run: R,
-    ) -> Option<()> {
-        let system = self.system::<I, _>(input, run)?;
-        let mut runner = Runner::new(IntoIter::new([system]), self)?;
+    pub fn run_with<M, S: IntoSystem<M>>(&mut self, input: S::Input, system: S) -> Option<()> {
+        let mut runner = self.scheduler().schedule_with(input, system).runner()?;
         runner.run(self);
         Some(())
-    }
-
-    fn system<'a, I: Inject, R: Call<I> + Call<<I::State as Get<'a>>::Item> + 'static>(
-        &mut self,
-        input: I::Input,
-        run: R,
-    ) -> Option<System> {
-        let identifier = System::reserve();
-        I::initialize(input, InjectContext::new(identifier, self)).map(|state| unsafe {
-            System::new(
-                Some(System::reserve()),
-                (run, state),
-                |(run, state), world| run.call(state.get(world)),
-                |(_, state), world| I::update(state, world),
-                |(_, state), world| I::resolve(state, world),
-                |(_, state), world| state.depend(world),
-            )
-        })
     }
 }
 
@@ -78,38 +96,21 @@ impl<'a> Scheduler<'a> {
         schedule(self)
     }
 
-    pub fn schedule<I: Inject, R: Call<I> + Call<<I::State as Get<'a>>::Item> + 'static>(
-        self,
-        run: R,
-    ) -> Self
+    pub fn schedule<M, S: IntoSystem<M>>(self, system: S) -> Self
     where
-        I::Input: Default,
+        S::Input: Default,
     {
-        self.schedule_with::<I, _>(I::Input::default(), run)
+        self.schedule_with(S::Input::default(), system)
     }
 
-    pub fn schedule_with<I: Inject, R: Call<I> + Call<<I::State as Get<'a>>::Item> + 'static>(
-        mut self,
-        input: I::Input,
-        run: R,
-    ) -> Self {
-        self.systems.push(self.world.system::<I, _>(input, run));
+    pub fn schedule_with<M, S: IntoSystem<M>>(mut self, input: S::Input, system: S) -> Self {
+        let system = system.into_system(input, self.world);
+        self.systems.push(system);
         self
     }
 
-    pub fn synchronize(mut self) -> Self {
-        let system = unsafe {
-            System::new(
-                None,
-                vec![Dependency::Unknown],
-                |_, _| {},
-                |_, _| {},
-                |_, _| {},
-                |state, _| state.clone(),
-            )
-        };
-        self.systems.push(Some(system));
-        self
+    pub fn synchronize(self) -> Self {
+        self.schedule(vec![Dependency::Unknown])
     }
 
     pub fn runner(self) -> Option<Runner> {

@@ -1,5 +1,5 @@
 use std::convert::TryInto;
-use std::iter::FromIterator;
+use std::iter::{self, FromIterator};
 use std::mem::size_of;
 use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not};
 use std::{cmp::min, hash::Hash};
@@ -9,7 +9,7 @@ pub struct Bits {
     buckets: Vec<u128>,
 }
 
-pub struct BitsIterator<'a> {
+pub struct Iterator<'a> {
     index: usize,
     shift: usize,
     bits: &'a Bits,
@@ -136,10 +136,10 @@ impl Bits {
 
 impl<'a> IntoIterator for &'a Bits {
     type Item = usize;
-    type IntoIter = BitsIterator<'a>;
+    type IntoIter = Iterator<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
-        BitsIterator {
+        Iterator {
             index: 0,
             shift: 0,
             bits: self,
@@ -147,7 +147,7 @@ impl<'a> IntoIterator for &'a Bits {
     }
 }
 
-impl Iterator for BitsIterator<'_> {
+impl iter::Iterator for Iterator<'_> {
     type Item = usize;
 
     fn next(&mut self) -> Option<Self::Item> {

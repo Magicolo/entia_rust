@@ -175,7 +175,9 @@ fn main() {
             }
             println!("C: {:?}", query.len())
         })
-        .schedule(|query: Query<Entity>, mut destroy: Destroy| destroy.all(&query))
+        .schedule(|query: Query<Entity>, mut destroy: Destroy| {
+            query.each(|entity| destroy.one(entity))
+        })
         .runner()
         .unwrap();
 

@@ -3,10 +3,13 @@ use std::{iter::from_fn, marker::PhantomData};
 use crate::{
     depend::{Depend, Dependency},
     entity::Entity,
-    filter::Filter,
     inject::Inject,
-    item::{At, Item, ItemContext},
-    query::{self, Query},
+    query::{
+        self,
+        filter::Filter,
+        item::{At, Item, ItemContext},
+        Query,
+    },
     read::Read,
     world::World,
     write,

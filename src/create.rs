@@ -9,7 +9,6 @@ use crate::{
         spawn, ApplyContext, CountContext, DeclareContext, Initial, InitializeContext, Spawn,
     },
     inject::{Get, Inject, InjectContext},
-    segment::Segment,
     world::World,
     write::{self, Write},
 };
@@ -86,15 +85,17 @@ impl<I: Initial> Inner<I> {
         world: &World,
     ) -> Families {
         self.initial_roots.clear();
-        self.entity_roots.clear();
-
         for initial in initials {
             self.initial_roots.push(spawn(initial));
-            self.entity_roots.push((self.entity_roots.len(), 0));
         }
 
         if self.initial_roots.len() == 0 {
             return Families::EMPTY;
+        }
+
+        self.entity_roots.truncate(self.initial_roots.len());
+        while self.entity_roots.len() < self.initial_roots.len() {
+            self.entity_roots.push((self.entity_roots.len(), 0));
         }
 
         let (index, success) = self.reserve(count * self.initial_roots.len(), entities, world);
@@ -189,13 +190,9 @@ impl<I: Initial> Inner<I> {
 
             if success {
                 last = i;
-                initialize(
-                    &self.entity_instances,
-                    segment,
-                    segment_index,
-                    segment_count,
-                    pair.0,
-                );
+                let instances =
+                    &self.entity_instances[segment_index..segment_index + segment_count];
+                unsafe { segment.stores[0].set_all(pair.0, instances) };
             }
 
             segment_index += segment_count;
@@ -306,13 +303,15 @@ unsafe impl<I: Initial> Inject for Create<'_, I> {
         for defer in inner.defer.drain(..) {
             let multiplier = defer.entity_instances.len() / defer.entity_indices.len();
             for segment_indices in defer.segment_indices[defer.index..].iter() {
-                initialize(
-                    &defer.entity_instances,
-                    &world.segments[segment_indices.segment],
-                    segment_indices.index,
-                    segment_indices.count * multiplier,
-                    segment_indices.store,
-                );
+                let segment_count = segment_indices.count * multiplier;
+                if segment_count == 0 {
+                    return;
+                }
+
+                let segment = &world.segments[segment_indices.segment];
+                let instances = &defer.entity_instances
+                    [segment_indices.index..segment_indices.index + segment_count];
+                unsafe { segment.stores[0].set_all(segment_indices.store, instances) };
             }
 
             apply(
@@ -326,21 +325,6 @@ unsafe impl<I: Initial> Inject for Create<'_, I> {
             );
         }
     }
-}
-
-fn initialize(
-    entity_instances: &[Entity],
-    segment: &Segment,
-    segment_index: usize,
-    segment_count: usize,
-    segment_store: usize,
-) {
-    if segment_count == 0 {
-        return;
-    }
-
-    let instances = &entity_instances[segment_index..segment_index + segment_count];
-    unsafe { segment.stores[0].set_all(segment_store, instances) };
 }
 
 fn apply<I: Initial>(

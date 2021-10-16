@@ -45,6 +45,43 @@
         {
             "type": "lldb",
             "request": "launch",
+            "name": "Debug executable 'entia_example_01'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=entia_example_01",
+                    "--package=entia_example_01"
+                ],
+                "filter": {
+                    "name": "entia_example_01",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'entia_example_01'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=entia_example_01",
+                    "--package=entia_example_01"
+                ],
+                "filter": {
+                    "name": "entia_example_01",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
             "name": "Debug unit tests in library 'entia'",
             "cargo": {
                 "args": [

@@ -3,19 +3,15 @@ mod create;
 mod defer;
 mod depend;
 mod destroy;
-mod emit;
 mod entities;
 mod entity;
 mod family;
-mod filter;
 mod initial;
 mod inject;
-mod item;
 mod local;
 mod message;
 mod query;
 mod read;
-mod receive;
 mod resource;
 mod schedule;
 mod segment;
@@ -32,17 +28,17 @@ pub use crate::{
     create::Create,
     defer::Defer,
     destroy::Destroy,
-    emit::Emit,
     entities::Direction,
     entity::Entity,
     family::initial::{Families, Family},
     family::item::{Child, Parent},
-    filter::Not,
     initial::{spawn, with, Initial, StaticInitial},
     inject::Injector,
+    message::emit::Emit,
+    message::receive::Receive,
     message::Message,
+    query::filter::Not,
     query::Query,
-    receive::Receive,
     resource::Resource,
     schedule::Scheduler,
     system::Runner,
@@ -117,7 +113,10 @@ mod test {
             )
             .schedule(|_: Query<(Entity, (&Position, &Velocity))>| {})
             .schedule(|query: Query<(&mut Position, &mut Position)>| {
-                query.each(|(_1, _2)| {});
+                query
+                    .into_iter()
+                    .filter(|(position, _)| position.0 < 1.)
+                    .for_each(|(_1, _2)| {});
                 query.each(|_12| {});
                 for _12 in &query {}
                 for (_1, _2) in &query {}
@@ -197,7 +196,7 @@ mod test {
                         destroy.one(entity);
                     }
 
-                    destroy.all(&query);
+                    query.each(|entity| destroy.one(entity));
                 },
             )
             .schedule(|query: Query<Entity>, mut destroy: Destroy| {
