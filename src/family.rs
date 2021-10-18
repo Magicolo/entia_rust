@@ -2,6 +2,7 @@ use std::{iter::from_fn, marker::PhantomData};
 
 use crate::{
     depend::{Depend, Dependency},
+    entities::{Datum, Entities},
     entity::Entity,
     inject::Inject,
     query::{
@@ -295,8 +296,6 @@ pub mod initial {
 }
 
 pub mod item {
-    use crate::entities::{Datum, Entities};
-
     use super::*;
 
     pub struct Child<'a, I: Item, F: Filter = ()> {
@@ -456,7 +455,7 @@ pub mod item {
         fn initialize(mut context: ItemContext) -> Option<Self::State> {
             Some(ParentState {
                 entity: <Read<Entity> as Item>::initialize(context.owned())?,
-                entities: <Read<Entities> as Item>::initialize(context.owned())?,
+                entities: <Read<Entities> as Inject>::initialize(None, context.owned().into())?,
                 query: <Query<I, F> as Inject>::initialize((), context.into())?,
             })
         }

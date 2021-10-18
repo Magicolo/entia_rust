@@ -135,10 +135,16 @@ fn main() {
     }
 
     let mut world = World::new();
-    world.run(|mut create: Create<_>| {
-        let families = create.all((3..=4).map(dynamic));
-        println!("CREATE: {:?}", families);
-    });
+    world
+        .scheduler()
+        .schedule(|mut create: Create<_>| {
+            let families = create.all((3..=4).map(dynamic));
+            println!("CREATE: {:?}", families);
+        })
+        .runner()
+        .unwrap()
+        .run(&mut world)
+        .unwrap();
 
     let mut runner = world
         .scheduler()
@@ -182,6 +188,6 @@ fn main() {
         .unwrap();
 
     for _ in 0..10_000_000 {
-        runner.run(&mut world);
+        runner = runner.run(&mut world).unwrap();
     }
 }

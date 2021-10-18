@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use entia::*;
 use winput::message_loop::Event;
 use winput::{message_loop, Action, Vk};
@@ -15,13 +17,37 @@ struct Position(usize, usize);
 impl Component for Position {}
 
 struct Controller;
+impl Component for Controller {}
+
+#[derive(Default)]
+struct Time {
+    pub frames: usize,
+    pub total: Duration,
+    pub delta: Duration,
+}
+impl Resource for Time {}
 
 fn main() {
-    let mut world = World::new();
-    let mut runner = world.scheduler().pipe(input).runner().unwrap();
-    loop {
-        runner.run(&mut world);
+    fn run() -> Result<(), Error> {
+        let mut world = World::new();
+        let mut runner = world.scheduler().pipe(time).pipe(input).runner()?;
+        loop {
+            runner = runner.run(&mut world)?;
+        }
     }
+    run().unwrap();
+}
+
+fn time(scheduler: Scheduler) -> Scheduler {
+    let start = Instant::now();
+    scheduler.schedule(move |time: &mut Time| {
+        let total = Instant::now().duration_since(start);
+        *time = Time {
+            frames: time.frames + 1,
+            delta: total - time.total,
+            total,
+        };
+    })
 }
 
 fn input(scheduler: Scheduler) -> Scheduler {
@@ -54,10 +80,18 @@ fn input(scheduler: Scheduler) -> Scheduler {
                 }
             }
         })
-        .schedule(|inputs: Receive<Input>| {
-            for input in inputs {
-                println!("INPUT: {:?}", input);
-            }
-        })
-        .schedule(|input: Receive<Input>| for input in input {})
+        .schedule(
+            |inputs: Receive<Input>, query: Query<&mut Position, Controller>| {
+                for input in inputs {
+                    match input {
+                        Input::Left(true) => query.each(|position| position.0 -= 1),
+                        Input::Right(true) => query.each(|position| position.0 += 1),
+                        Input::Down(true) => query.each(|position| position.1 -= 1),
+                        Input::Up(true) => query.each(|position| position.1 += 1),
+                        _ => {}
+                    }
+                    println!("INPUT: {:?}", input);
+                }
+            },
+        )
 }

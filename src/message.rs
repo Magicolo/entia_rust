@@ -18,38 +18,38 @@ struct Inner<M: Message> {
     pub queues: Vec<Queue<M>>,
 }
 
+impl<M: Message> Resource for Inner<M> {}
+impl<M: Message> Default for Inner<M> {
+    fn default() -> Self {
+        Self { queues: Vec::new() }
+    }
+}
+
+impl<M: Message> Queue<M> {
+    #[inline]
+    pub fn new(capacity: usize) -> Self {
+        Self(capacity, VecDeque::new())
+    }
+
+    #[inline]
+    pub fn enqueue(&mut self, messages: impl Iterator<Item = M>) {
+        self.1.extend(messages);
+        while self.0 > 0 && self.1.len() > self.0 {
+            self.dequeue();
+        }
+    }
+
+    #[inline]
+    pub fn dequeue(&mut self) -> Option<M> {
+        self.1.pop_front()
+    }
+}
+
 pub mod emit {
     use super::*;
 
     pub struct Emit<'a, M: Message>(&'a mut Vec<M>);
     pub struct State<M: Message>(write::State<Inner<M>>, Vec<M>);
-
-    impl<M: Message> Resource for Inner<M> {}
-    impl<M: Message> Default for Inner<M> {
-        fn default() -> Self {
-            Self { queues: Vec::new() }
-        }
-    }
-
-    impl<M: Message> Queue<M> {
-        #[inline]
-        pub fn new(capacity: usize) -> Self {
-            Self(capacity, VecDeque::new())
-        }
-
-        #[inline]
-        pub fn enqueue(&mut self, messages: impl Iterator<Item = M>) {
-            self.1.extend(messages);
-            while self.0 > 0 && self.1.len() > self.0 {
-                self.dequeue();
-            }
-        }
-
-        #[inline]
-        pub fn dequeue(&mut self) -> Option<M> {
-            self.1.pop_front()
-        }
-    }
 
     impl<M: Message> Emit<'_, M> {
         #[inline]
@@ -68,7 +68,8 @@ pub mod emit {
         }
 
         fn resolve(State(inner, messages): &mut Self::State, _: InjectContext) {
-            for queue in inner.as_mut().queues.iter_mut() {
+            let inner = inner.as_mut();
+            for queue in inner.queues.iter_mut() {
                 queue.enqueue(messages.iter().cloned());
             }
             messages.clear();

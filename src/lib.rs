@@ -40,7 +40,7 @@ pub use crate::{
     query::Query,
     resource::Resource,
     schedule::Scheduler,
-    system::Runner,
+    system::{Error, IntoSystem, Runner, System},
     world::World,
 };
 
@@ -207,7 +207,7 @@ mod test {
             .unwrap();
 
         loop {
-            runner.run(&mut world);
+            runner = runner.run(&mut world).unwrap();
         }
     }
 }
