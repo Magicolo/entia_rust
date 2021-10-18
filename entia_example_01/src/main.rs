@@ -30,11 +30,17 @@ impl Resource for Time {}
 fn main() {
     fn run() -> Result<(), Error> {
         let mut world = World::new();
+
+        world.run(|mut create: Create<_>| {
+            create.one((Position(0, 0), Controller));
+        })?;
+
         let mut runner = world.scheduler().pipe(time).pipe(input).runner()?;
         loop {
             runner = runner.run(&mut world)?;
         }
     }
+
     run().unwrap();
 }
 

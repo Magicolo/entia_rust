@@ -13,7 +13,6 @@ mod message;
 mod query;
 mod read;
 mod resource;
-mod schedule;
 mod system;
 mod world;
 mod write;
@@ -39,8 +38,7 @@ pub use crate::{
     query::filter::Not,
     query::Query,
     resource::Resource,
-    schedule::Scheduler,
-    system::{Error, IntoSystem, Runner, System},
+    system::{runner::Runner, schedule::Scheduler, Error, IntoSystem, System},
     world::World,
 };
 
