@@ -1,8 +1,11 @@
-use std::{iter::from_fn, marker::PhantomData};
+use std::{any::type_name, fmt, iter::from_fn, marker::PhantomData};
 
 use crate::{
     depend::{Depend, Dependency},
-    entities::{Datum, Entities},
+    entities::{
+        family::{Horizontal, Vertical},
+        Datum, Entities,
+    },
     entity::Entity,
     inject::Inject,
     query::{
@@ -17,8 +20,6 @@ use crate::{
 };
 
 pub mod initial {
-    use crate::entities::Direction;
-
     use super::*;
 
     #[derive(Clone)]
@@ -105,7 +106,8 @@ pub mod initial {
                 .unwrap_or(self.clone())
         }
 
-        pub fn children(&self) -> impl Iterator<Item = Family<'a>> {
+        pub fn children(&self, direction: Horizontal) -> impl Iterator<Item = Family<'a>> {
+            // TODO: Implement 'Horizontal::FromRight' or, if possible, unify this implementation with 'entities::family'.
             let local = self.clone();
             let parent = Some(self.entity_index);
             let mut next = parent.map(|index| index + 1).filter(|&index| {
@@ -119,42 +121,60 @@ pub mod initial {
             })
         }
 
-        pub fn descend(&self, direction: Direction, mut each: impl FnMut(Self)) {
-            fn top_down<'a>(parent: &Family<'a>, each: &mut impl FnMut(Family<'a>)) {
-                for child in parent.children() {
-                    each(child.clone());
-                    top_down(&child, each);
+        pub fn ascend(&self, direction: Vertical, mut each: impl FnMut(Self)) {
+            fn from_top<'a>(family: &Family<'a>, each: &mut impl FnMut(Family<'a>)) {
+                if let Some(parent) = family.parent() {
+                    from_top(&parent, each);
+                    each(parent);
                 }
             }
 
-            fn bottom_up<'a>(parent: &Family<'a>, each: &mut impl FnMut(Family<'a>)) {
-                for child in parent.children() {
-                    bottom_up(&child, each);
+            fn from_bottom<'a>(family: &Family<'a>, each: &mut impl FnMut(Family<'a>)) {
+                if let Some(parent) = family.parent() {
+                    each(parent.clone());
+                    from_bottom(&parent, each);
+                }
+            }
+
+            match direction {
+                Vertical::FromTop => from_top(self, &mut each),
+                Vertical::FromBottom => from_bottom(self, &mut each),
+            }
+        }
+
+        pub fn descend(&self, direction: (Horizontal, Vertical), mut each: impl FnMut(Self)) {
+            fn from_top<'a>(
+                family: &Family<'a>,
+                direction: Horizontal,
+                each: &mut impl FnMut(Family<'a>),
+            ) {
+                for child in family.children(direction) {
+                    each(child.clone());
+                    from_top(&child, direction, each);
+                }
+            }
+
+            fn from_bototm<'a>(
+                family: &Family<'a>,
+                direction: Horizontal,
+                each: &mut impl FnMut(Family<'a>),
+            ) {
+                for child in family.children(direction) {
+                    from_bototm(&child, direction, each);
                     each(child);
                 }
             }
 
-            match direction {
-                Direction::TopDown => top_down(self, &mut each),
-                Direction::BottomUp => bottom_up(self, &mut each),
+            match direction.1 {
+                Vertical::FromTop => from_top(self, direction.0, &mut each),
+                Vertical::FromBottom => from_bototm(self, direction.0, &mut each),
             }
         }
 
-        pub fn all(&self, direction: Direction) -> impl Iterator<Item = Family<'a>> {
-            let root = self.root();
-            match direction {
-                Direction::TopDown => Some(root.clone())
-                    .into_iter()
-                    .chain(root.descendants(direction))
-                    .chain(None),
-                Direction::BottomUp => None
-                    .into_iter()
-                    .chain(root.descendants(direction))
-                    .chain(Some(root.clone())),
-            }
-        }
-
-        pub fn descendants(&self, direction: Direction) -> impl Iterator<Item = Family<'a>> {
+        pub fn descendants(
+            &self,
+            direction: (Horizontal, Vertical),
+        ) -> impl Iterator<Item = Family<'a>> {
             let mut descendants = Vec::new();
             self.descend(direction, |child| descendants.push(child));
             descendants.into_iter()
@@ -170,28 +190,13 @@ pub mod initial {
             })
         }
 
-        pub fn previous_siblings(&self) -> impl Iterator<Item = Family<'a>> {
+        pub fn siblings(&self, direction: Horizontal) -> impl Iterator<Item = Family<'a>> {
             let entity_index = self.entity_index;
             self.parent()
-                .map(|parent| parent.children())
+                .map(|parent| parent.children(direction))
                 .into_iter()
                 .flatten()
-                .take_while(move |child| child.entity_index != entity_index)
-        }
-
-        pub fn next_siblings(&self) -> impl Iterator<Item = Family<'a>> {
-            let local = self.clone();
-            let mut next = local.entity_indices[self.entity_index].next_sibling;
-
-            from_fn(move || {
-                let current = next?;
-                next = local.entity_indices[current].next_sibling;
-                Some(local.with(current))
-            })
-        }
-
-        pub fn siblings(&self) -> impl Iterator<Item = Family<'a>> {
-            self.previous_siblings().chain(self.next_siblings())
+                .filter(move |child| child.entity_index != entity_index)
         }
 
         fn with(&self, entity_index: usize) -> Self {
@@ -209,7 +214,10 @@ pub mod initial {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             let entity = self.entity();
             let parent = self.parent().map(|parent| parent.entity());
-            let children: Vec<_> = self.children().map(|child| child.entity()).collect();
+            let children: Vec<_> = self
+                .children(Horizontal::FromLeft)
+                .map(|child| child.entity())
+                .collect();
             f.debug_struct("Family")
                 .field("entity", &entity)
                 .field("parent", &parent)
@@ -355,7 +363,7 @@ pub mod item {
         where
             I::State: At<'a>,
         {
-            let current = get_datum_at::<Self>(self.index, index, self.entities)?;
+            let current = get_datum_at::<Self>(self.index, index + 1, self.entities)?;
             get_item(current.0, self.query.as_ref(), self.world)
         }
     }
@@ -364,6 +372,16 @@ pub mod item {
         #[inline]
         fn next(datum: &Datum) -> u32 {
             datum.previous_sibling
+        }
+    }
+
+    impl<I: Item + 'static, F: Filter> fmt::Debug for Child<'_, I, F>
+    where
+        for<'a> <I::State as At<'a>>::Item: fmt::Debug,
+    {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str(type_name::<Self>())?;
+            f.debug_list().entries(self).finish()
         }
     }
 
@@ -437,7 +455,7 @@ pub mod item {
         where
             I::State: At<'a>,
         {
-            let pair = get_datum_at::<Self>(self.index, index, self.entities)?;
+            let pair = get_datum_at::<Self>(self.index, index + 1, self.entities)?;
             get_item(pair.0, self.query.as_ref(), self.world)
         }
     }
@@ -446,6 +464,16 @@ pub mod item {
         #[inline]
         fn next(datum: &Datum) -> u32 {
             datum.parent
+        }
+    }
+
+    impl<I: Item + 'static, F: Filter> fmt::Debug for Parent<'_, I, F>
+    where
+        for<'a> <I::State as At<'a>>::Item: fmt::Debug,
+    {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str(type_name::<Self>())?;
+            f.debug_list().entries(self).finish()
         }
     }
 
@@ -516,8 +544,8 @@ pub mod item {
         type Item = <I::State as At<'a>>::Item;
 
         fn next(&mut self) -> Option<Self::Item> {
-            while let Some((datum, index)) = get_datum_at::<N>(self.index, 1, self.entities) {
-                self.index = index;
+            while let Some(datum) = self.entities.data.0.get(self.index as usize) {
+                self.index = N::next(datum);
                 if let Some(item) = get_item(datum, self.query, self.world) {
                     return Some(item);
                 }

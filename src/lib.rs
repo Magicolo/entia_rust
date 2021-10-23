@@ -26,9 +26,11 @@ pub use crate::{
     create::Create,
     defer::Defer,
     destroy::Destroy,
-    entities::Direction,
+    entities::{
+        family::{Family, Horizontal, Vertical},
+        Entities,
+    },
     entity::Entity,
-    family::initial::{Families, Family},
     family::item::{Child, Parent},
     initial::{spawn, with, Initial, StaticInitial},
     inject::Injector,

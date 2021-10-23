@@ -4,13 +4,19 @@ use crate::{
     entities::Entities,
     entity::Entity,
     inject::{Get, Inject, InjectContext},
+    read::{self, Read},
     resource::Resource,
     world::{segment::Segment, World},
     write::{self, Write},
 };
-use std::{any::TypeId, iter, marker::PhantomData};
+use std::{
+    any::{type_name, TypeId},
+    fmt::{self},
+    iter,
+    marker::PhantomData,
+};
 
-pub struct Query<'a, I: item::Item, F: Filter = ()> {
+pub struct Query<'a, I: Item, F: Filter = ()> {
     pub(crate) inner: &'a Inner<I, F>,
     pub(crate) entities: &'a Entities,
     pub(crate) world: &'a World,
@@ -18,7 +24,7 @@ pub struct Query<'a, I: item::Item, F: Filter = ()> {
 
 pub struct State<I: Item, F: Filter> {
     pub(crate) inner: write::State<Inner<I, F>>,
-    pub(crate) entities: write::State<Entities>,
+    pub(crate) entities: read::State<Entities>,
 }
 
 pub struct Iterator<'a, 'b, I: Item, F: Filter> {
@@ -121,6 +127,15 @@ impl<'a, 'b: 'a, I: Item, F: Filter> iter::Iterator for Iterator<'a, 'b, I, F> {
         None
     }
 }
+impl<I: Item + 'static, F: Filter> fmt::Debug for Query<'_, I, F>
+where
+    for<'a> <I::State as At<'a>>::Item: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(type_name::<Self>())?;
+        f.debug_list().entries(self).finish()
+    }
+}
 
 unsafe impl<'a, I: Item + 'static, F: Filter> Inject for Query<'a, I, F> {
     type Input = ();
@@ -128,7 +143,7 @@ unsafe impl<'a, I: Item + 'static, F: Filter> Inject for Query<'a, I, F> {
 
     fn initialize(_: Self::Input, mut context: InjectContext) -> Option<Self::State> {
         let inner = <Write<Inner<I, F>> as Inject>::initialize(None, context.owned())?;
-        let entities = <Write<Entities> as Inject>::initialize(None, context.owned())?;
+        let entities = <Read<Entities> as Inject>::initialize(None, context.owned())?;
         Some(State { inner, entities })
     }
 
@@ -140,7 +155,7 @@ unsafe impl<'a, I: Item + 'static, F: Filter> Inject for Query<'a, I, F> {
             if F::filter(segment, world) {
                 let segment = segment.index;
                 if let Some(item) = I::initialize(ItemContext::new(identifier, segment, world)) {
-                    inner.segments.push(Some(segment));
+                    inner.segments.push(Some(inner.states.len()));
                     inner.states.push((item, segment));
                     continue;
                 }
@@ -169,8 +184,8 @@ impl<'a, I: Item + 'static, F: Filter> Get<'a> for State<I, F> {
 
     fn get(&'a mut self, world: &'a World) -> Self::Item {
         Query {
-            inner: self.inner.get(world),
-            entities: self.entities.get(world),
+            inner: self.inner.as_ref(),
+            entities: self.entities.as_ref(),
             world,
         }
     }

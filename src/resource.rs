@@ -7,7 +7,10 @@ use crate::{
     write::Write,
 };
 
-pub trait Resource: Default + Send + 'static {}
+pub trait Resource: Default + Send + 'static {
+    // TODO: Consider adding 'depend_ref()' and 'depend_mut()' methods with default empty implementations
+    // to allow adding additionnal resource-specific dependencies.
+}
 
 unsafe impl<R: Resource> Inject for &R {
     type Input = <Read<R> as Inject>::Input;

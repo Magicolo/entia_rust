@@ -1,3 +1,5 @@
+use std::any::type_name;
+
 use crate::{depend::Depend, world::World};
 
 pub struct InjectContext<'a> {
@@ -8,6 +10,10 @@ pub struct InjectContext<'a> {
 pub unsafe trait Inject {
     type Input;
     type State: for<'a> Get<'a> + Depend;
+
+    fn name() -> String {
+        type_name::<Self>().into()
+    }
     fn initialize(input: Self::Input, context: InjectContext) -> Option<Self::State>;
     #[inline]
     fn update(_: &mut Self::State, _: InjectContext) {}

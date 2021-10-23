@@ -6,9 +6,10 @@ use crate::{
 };
 use entia_core::Call;
 use std::{
-    any::TypeId,
+    any::{type_name, TypeId},
     cell::UnsafeCell,
     collections::HashSet,
+    fmt,
     mem::replace,
     mem::swap,
     sync::atomic::{AtomicUsize, Ordering},
@@ -17,6 +18,7 @@ use std::{
 
 pub struct System {
     identifier: usize,
+    name: String, // TODO: Replace with 'Lazy<String>'
     pub(crate) run: Box<dyn FnMut(&World)>,
     pub(crate) update: Box<dyn FnMut(&mut World)>,
     pub(crate) resolve: Box<dyn FnMut(&mut World)>,
@@ -28,7 +30,7 @@ pub enum Error {
     WrongWorld,
     MissingSystem,
     FailedToInject,
-    DependencyConflict,
+    DependencyConflict(usize),
     All(Vec<Error>),
 }
 
@@ -69,21 +71,6 @@ impl<I, M, S: IntoSystem<I, M>, E: Into<Error>> IntoSystem<I, (I, M, S)> for Res
     }
 }
 
-impl IntoSystem<()> for Vec<Dependency> {
-    fn into_system(self, _: (), _: &mut World) -> Result<System, Error> {
-        Ok(unsafe {
-            System::new(
-                None,
-                self,
-                |_, _| {},
-                |_, _| {},
-                |_, _| {},
-                |state, _| state.clone(),
-            )
-        })
-    }
-}
-
 impl<'a, I: Inject, C: Call<I> + Call<<I::State as Get<'a>>::Item> + 'static>
     IntoSystem<I::Input, (I, C)> for C
 {
@@ -94,6 +81,7 @@ impl<'a, I: Inject, C: Call<I> + Call<<I::State as Get<'a>>::Item> + 'static>
         let system = unsafe {
             System::new(
                 Some(identifier),
+                I::name(),
                 (self, state, identifier),
                 |(run, state, _), world| run.call(state.get(world)),
                 |(_, state, identifier), world| {
@@ -108,8 +96,6 @@ impl<'a, I: Inject, C: Call<I> + Call<<I::State as Get<'a>>::Item> + 'static>
         Ok(system)
     }
 }
-
-unsafe impl Send for System {}
 
 impl Error {
     pub fn merge(self, error: Self) -> Self {
@@ -168,6 +154,7 @@ impl System {
     #[inline]
     pub unsafe fn new<'a, T: 'static>(
         identifier: Option<usize>,
+        name: String,
         state: T,
         run: fn(&'a mut T, &'a World),
         update: fn(&'a mut T, &'a mut World),
@@ -185,6 +172,7 @@ impl System {
         let identifier = identifier.unwrap_or_else(Self::reserve);
         let state = Arc::new(UnsafeCell::new(state));
         Self {
+            name,
             identifier,
             run: {
                 let state = state.clone();
@@ -211,6 +199,19 @@ impl System {
     pub const fn identifier(&self) -> usize {
         self.identifier
     }
+
+    #[inline]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl fmt::Debug for System {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple(type_name::<Self>())
+            .field(&self.name())
+            .finish()
+    }
 }
 
 pub mod runner {
@@ -218,9 +219,17 @@ pub mod runner {
 
     pub struct Runner {
         pub(crate) identifier: usize,
-        pub(crate) blocks: Vec<Vec<System>>,
+        pub(crate) blocks: Vec<Block>,
         pub(crate) segments: usize,
     }
+
+    #[derive(Default)]
+    pub struct Block {
+        systems: Vec<System>,
+        dependencies: Vec<Dependency>,
+    }
+
+    unsafe impl Send for System {}
 
     impl Runner {
         pub fn new(
@@ -240,23 +249,29 @@ pub mod runner {
             }
 
             if self.segments != world.segments.len() {
-                self.blocks = Self::schedule(self.blocks.drain(..).flatten(), world)?;
+                self.blocks = Self::schedule(
+                    self.blocks.into_iter().map(|block| block.systems).flatten(),
+                    world,
+                )?;
                 self.segments = world.segments.len();
             }
 
             for block in self.blocks.iter_mut() {
                 // If segments have been added to the world, this may mean that the dependencies used to schedule the systems
-                // are not be up to date, therefore it is not safe to run the systems in parallel.
-                if self.segments == world.segments.len() && block.len() > 1 {
+                // are not up to date, therefore it is not safe to run the systems in parallel.
+                if self.segments == world.segments.len() && block.systems.len() > 1 {
                     use rayon::prelude::*;
-                    block.par_iter_mut().for_each(|system| (system.run)(world));
+                    block
+                        .systems
+                        .par_iter_mut()
+                        .for_each(|system| (system.run)(world));
                 } else {
-                    for system in block.iter_mut() {
+                    for system in block.systems.iter_mut() {
                         (system.run)(world);
                     }
                 }
 
-                for system in block.iter_mut() {
+                for system in block.systems.iter_mut() {
                     (system.resolve)(world);
                 }
             }
@@ -267,7 +282,7 @@ pub mod runner {
         pub(crate) fn schedule(
             systems: impl Iterator<Item = System>,
             world: &mut World,
-        ) -> Result<Vec<Vec<System>>, Error> {
+        ) -> Result<Vec<Block>, Error> {
             #[derive(Debug, Default)]
             struct State {
                 unknown: bool,
@@ -353,35 +368,39 @@ pub mod runner {
                 }
             }
 
-            let mut sequence = Vec::new();
-            let mut parallel = Vec::new();
+            let mut blocks = Vec::new();
+            let mut block = Block::default();
             let mut inner = State::default();
             let mut outer = State::default();
 
             for mut system in systems {
                 (system.update)(world);
-                let dependencies = (system.depend)(world);
+
+                let mut dependencies = (system.depend)(world);
                 if inner.inner_conflicts(&dependencies) {
                     // TODO: Add more details to the error.
-                    return Err(Error::DependencyConflict);
+                    // TODO: Rather than returning early, continue collecting errors.
+                    return Err(Error::DependencyConflict(system.identifier()));
                 } else if outer.outer_conflicts(&dependencies) {
                     // TODO: When 'outer_conflicts' are detected, can later systems be still included in the block if they do not
                     // have 'outer_conflicts'? Dependencies would need to be accumulated even for conflicting systems and a system
                     // that has a 'Dependency::Unknown' should never be crossed.
-                    if parallel.len() > 0 {
-                        sequence.push(replace(&mut parallel, Vec::new()));
+                    if block.systems.len() > 0 {
+                        blocks.push(replace(&mut block, Block::default()));
                     }
                     swap(&mut inner, &mut outer);
                 }
 
-                parallel.push(system);
+                block.systems.push(system);
+                block.dependencies.append(&mut dependencies);
                 inner.clear();
             }
 
-            if parallel.len() > 0 {
-                sequence.push(parallel);
+            if block.systems.len() > 0 {
+                blocks.push(block);
             }
-            Ok(sequence)
+
+            Ok(blocks)
         }
     }
 }
@@ -433,7 +452,17 @@ pub mod schedule {
         }
 
         pub fn synchronize(self) -> Self {
-            self.schedule(vec![Dependency::Unknown])
+            self.schedule(unsafe {
+                System::new(
+                    None,
+                    "Synchronize".into(),
+                    (),
+                    |_, _| {},
+                    |_, _| {},
+                    |_, _| {},
+                    |_, _| vec![Dependency::Unknown],
+                )
+            })
         }
 
         pub fn runner(self) -> Result<Runner, Error> {

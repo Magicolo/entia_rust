@@ -45,7 +45,7 @@ struct Defer<I: Initial> {
 }
 
 impl<I: Initial> Create<'_, I> {
-    pub fn all(&mut self, initials: impl Iterator<Item = I>) -> Families {
+    pub fn all(&mut self, initials: impl IntoIterator<Item = I>) -> Families {
         match self.inner.count {
             Some(count) => self
                 .inner
@@ -80,7 +80,7 @@ impl<I: Initial> Inner<I> {
     fn all_static(
         &mut self,
         count: usize,
-        initials: impl Iterator<Item = I>,
+        initials: impl IntoIterator<Item = I>,
         entities: &mut Entities,
         world: &World,
     ) -> Families {
@@ -118,7 +118,7 @@ impl<I: Initial> Inner<I> {
 
     fn all_dynamic(
         &mut self,
-        initials: impl Iterator<Item = I>,
+        initials: impl IntoIterator<Item = I>,
         entities: &mut Entities,
         world: &World,
     ) -> Families {
@@ -239,6 +239,7 @@ unsafe impl<I: Initial> Inject for Create<'_, I> {
             let index = match segment_to_index.get(&segment) {
                 Some(&index) => index,
                 None => {
+                    let index = segment_indices.len();
                     segment_to_index.insert(segment, segment_indices.len());
                     segment_indices.push(SegmentIndices {
                         segment,
@@ -246,7 +247,7 @@ unsafe impl<I: Initial> Inject for Create<'_, I> {
                         index: 0,
                         store: 0,
                     });
-                    i
+                    index
                 }
             };
             metas_to_segment.insert(i, index);

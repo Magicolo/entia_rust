@@ -1,4 +1,4 @@
-use std::{any::TypeId, sync::Arc};
+use std::{any::TypeId, fmt, sync::Arc};
 
 use crate::{
     depend::{Depend, Dependency},
@@ -9,7 +9,7 @@ use crate::{
     world::{segment::Segment, store::Store, World},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Entity {
     pub(crate) index: u32,
     pub(crate) generation: u32,
@@ -21,6 +21,15 @@ impl Entity {
         index: u32::MAX,
         generation: u32::MAX,
     };
+}
+
+impl fmt::Debug for Entity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Entity")
+            .field(&self.index)
+            .field(&self.generation)
+            .finish()
+    }
 }
 
 impl Default for Entity {

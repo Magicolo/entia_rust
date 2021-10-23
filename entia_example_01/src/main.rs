@@ -13,9 +13,11 @@ enum Input {
 }
 impl Message for Input {}
 
-struct Position(usize, usize);
+#[derive(Copy, Clone, Debug)]
+struct Position(isize, isize);
 impl Component for Position {}
 
+#[derive(Copy, Clone, Debug)]
 struct Controller;
 impl Component for Controller {}
 
@@ -32,7 +34,7 @@ fn main() {
         let mut world = World::new();
 
         world.run(|mut create: Create<_>| {
-            create.one((Position(0, 0), Controller));
+            create.one(spawn(spawn(spawn((Position(0, 0), Controller)))));
         })?;
 
         let mut runner = world.scheduler().pipe(time).pipe(input).runner()?;
@@ -87,16 +89,48 @@ fn input(scheduler: Scheduler) -> Scheduler {
             }
         })
         .schedule(
-            |inputs: Receive<Input>, query: Query<&mut Position, Controller>| {
+            |inputs: Receive<Input>,
+             entities: &mut Entities,
+             query: Query<(&mut Position, Entity, Parent<Entity>), Controller>| {
                 for input in inputs {
                     match input {
-                        Input::Left(true) => query.each(|position| position.0 -= 1),
-                        Input::Right(true) => query.each(|position| position.0 += 1),
-                        Input::Down(true) => query.each(|position| position.1 -= 1),
-                        Input::Up(true) => query.each(|position| position.1 += 1),
+                        Input::Left(true) => query.each(|(position, ..)| position.0 -= 1),
+                        Input::Right(true) => query.each(|(position, ..)| position.0 += 1),
+                        Input::Down(true) => query.each(|(position, ..)| position.1 -= 1),
+                        Input::Up(true) => query.each(|(position, ..)| position.1 += 1),
                         _ => {}
                     }
-                    println!("INPUT: {:?}", input);
+
+                    // TODO
+                    // for (_, entity, parent) in &query {
+                    //     if let Some(parent) = parent.get(0) {
+                    //         entities.reject(entity, parent);
+                    //     }
+                    // }
+
+                    println!(
+                        "INPUT: {:?} | {:?}",
+                        input,
+                        query
+                            .into_iter()
+                            .map(|(.., entity, parent)| (
+                                entity,
+                                entities.root(entity),
+                                entities.parent(entity),
+                                entities
+                                    .ancestors(entity, Vertical::FromBottom)
+                                    .collect::<Vec<_>>(),
+                                parent.get(0),
+                                parent.get(1),
+                                parent.get(2),
+                                parent.get(3),
+                                parent.get(4),
+                                parent.get(5),
+                                parent.into_iter().collect::<Vec<_>>(),
+                                parent.into_iter().last().unwrap_or(entity)
+                            ))
+                            .collect::<Vec<_>>()
+                    );
                 }
             },
         )

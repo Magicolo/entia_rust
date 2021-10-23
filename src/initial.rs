@@ -97,7 +97,8 @@ impl<'a> DeclareContext<'a> {
 
     pub fn child<T>(&mut self, scope: impl FnOnce(usize, DeclareContext) -> T) -> T {
         let metas_index = self.segment_metas.len();
-        self.segment_metas.push(Vec::new());
+        self.segment_metas
+            .push(vec![self.world.get_or_add_meta::<Entity>()]);
         scope(metas_index, self.with(metas_index))
     }
 }
@@ -317,8 +318,16 @@ impl<'a> ApplyContext<'a> {
 
         if let Some(previous) = entity_previous_sibling {
             self.entities.data.0[previous as usize].next_sibling = entity_instance.index;
-        } else if let Some(parent) = entity_parent {
-            self.entities.data.0[parent as usize].first_child = entity_instance.index;
+        }
+
+        if let Some(parent) = entity_parent {
+            let parent = &mut self.entities.data.0[parent as usize];
+            if entity_previous_sibling.is_none() {
+                parent.first_child = entity_instance.index;
+            }
+            if entity_indices.next_sibling.is_none() {
+                parent.last_child = entity_instance.index;
+            }
         }
 
         self.entities.data.0[entity_instance.index as usize].initialize(
@@ -326,6 +335,7 @@ impl<'a> ApplyContext<'a> {
             store_index as u32,
             segment_index as u32,
             entity_parent,
+            None,
             None,
             entity_previous_sibling,
             None,
@@ -475,6 +485,8 @@ unsafe impl<I: StaticInitial + LeafInitial, F: FnOnce(Family) -> I + Send + 'sta
 {
 }
 
+impl<I, F: Copy> Copy for With<I, F> {}
+
 impl<I, F: Clone> Clone for With<I, F> {
     fn clone(&self) -> Self {
         Self(self.0.clone(), PhantomData)
@@ -484,11 +496,6 @@ impl<I, F: Clone> Clone for With<I, F> {
 #[inline]
 pub fn with<I: StaticInitial, F: FnOnce(Family) -> I + Send + 'static>(with: F) -> With<I, F> {
     With(with, PhantomData)
-}
-
-#[inline]
-pub fn spawn<I: Initial>(initial: I) -> Spawn<I> {
-    Spawn(initial)
 }
 
 pub struct Spawn<T>(T);
@@ -523,6 +530,8 @@ unsafe impl<I: Initial> Initial for Spawn<I> {
 
 unsafe impl<I: StaticInitial> StaticInitial for Spawn<I> {}
 
+impl<T: Copy> Copy for Spawn<T> {}
+
 impl<T: Clone> Clone for Spawn<T> {
     fn clone(&self) -> Self {
         Self(self.0.clone())
@@ -552,6 +561,11 @@ impl<T> AsMut<T> for Spawn<T> {
     fn as_mut(&mut self) -> &mut T {
         &mut self.0
     }
+}
+
+#[inline]
+pub fn spawn<I: Initial>(initial: I) -> Spawn<I> {
+    Spawn(initial)
 }
 
 macro_rules! modify {

@@ -8,7 +8,10 @@ use crate::{
     write::Write,
 };
 
-pub trait Component: Sync + Send + 'static {}
+pub trait Component: Sync + Send + 'static {
+    // TODO: Consider adding 'depend_ref()' and 'depend_mut()' methods with default empty implementations
+    // to allow adding additionnal component-specific dependencies.
+}
 
 impl<C: Component> Filter for C {
     fn filter(segment: &Segment, world: &World) -> bool {
