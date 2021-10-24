@@ -90,8 +90,8 @@ fn input(scheduler: Scheduler) -> Scheduler {
         })
         .schedule(
             |inputs: Receive<Input>,
-             entities: &mut Entities,
-             query: Query<(&mut Position, Entity, Parent<Entity>), Controller>| {
+             entities: &Entities,
+             query: Query<(&mut Position, Family, Entity, Parent<Entity>), Controller>| {
                 for input in inputs {
                     match input {
                         Input::Left(true) => query.each(|(position, ..)| position.0 -= 1),
@@ -109,27 +109,39 @@ fn input(scheduler: Scheduler) -> Scheduler {
                     // }
 
                     println!(
-                        "INPUT: {:?} | {:?}",
+                        "INPUT: {:?} \n {:?} \n {:?} \n {:?} \n {:?}",
                         input,
+                        query.into_iter().map(|(position, ..)| position).collect::<Vec<_>>(),
                         query
                             .into_iter()
-                            .map(|(.., entity, parent)| (
+                            .map(|(.., entity, _)| (
                                 entity,
                                 entities.root(entity),
                                 entities.parent(entity),
                                 entities
                                     .ancestors(entity, Vertical::FromBottom)
                                     .collect::<Vec<_>>(),
+                            ))
+                            .collect::<Vec<_>>(),
+                        query
+                            .into_iter()
+                            .map(|(.., family, _, _)| (
+                                family.entity(),
+                                family.parent(),
+                                family.ancestors(Vertical::FromBottom).collect::<Vec<_>>(),
+                            ))
+                            .collect::<Vec<_>>(),
+                        query
+                            .into_iter()
+                            .map(|(.., entity, parent)| (
                                 parent.get(0),
                                 parent.get(1),
                                 parent.get(2),
                                 parent.get(3),
-                                parent.get(4),
-                                parent.get(5),
                                 parent.into_iter().collect::<Vec<_>>(),
                                 parent.into_iter().last().unwrap_or(entity)
                             ))
-                            .collect::<Vec<_>>()
+                            .collect::<Vec<_>>(),
                     );
                 }
             },

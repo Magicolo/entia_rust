@@ -1,5 +1,6 @@
 use std::{
     cmp::{max, min},
+    fmt,
     iter::from_fn,
     sync::atomic::{AtomicIsize, AtomicUsize, Ordering},
     vec,
@@ -69,14 +70,16 @@ impl Datum {
         next_sibling: Option<u32>,
     ) -> bool {
         if self.released() {
-            self.generation = generation;
-            self.store_index = store_index;
-            self.segment_index = segment_index;
-            self.parent = parent.unwrap_or(u32::MAX);
-            self.first_child = first_child.unwrap_or(u32::MAX);
-            self.last_child = last_child.unwrap_or(u32::MAX);
-            self.previous_sibling = previous_sibling.unwrap_or(u32::MAX);
-            self.next_sibling = next_sibling.unwrap_or(u32::MAX);
+            *self = Datum {
+                generation,
+                store_index,
+                segment_index,
+                parent: parent.unwrap_or(u32::MAX),
+                first_child: first_child.unwrap_or(u32::MAX),
+                last_child: last_child.unwrap_or(u32::MAX),
+                previous_sibling: previous_sibling.unwrap_or(u32::MAX),
+                next_sibling: next_sibling.unwrap_or(u32::MAX),
+            };
             true
         } else {
             false
@@ -235,6 +238,415 @@ pub mod family {
         FromBottom,
     }
 
+    impl Entities {
+        #[inline]
+        pub const fn family(&self, entity: Entity) -> Family {
+            Family(entity, self)
+        }
+
+        pub fn roots(&self) -> impl Iterator<Item = Entity> + '_ {
+            self.data
+                .0
+                .iter()
+                .enumerate()
+                .filter_map(move |(index, datum)| {
+                    if datum.initialized() && datum.parent == u32::MAX {
+                        Some(Entity {
+                            index: index as u32,
+                            generation: datum.generation,
+                        })
+                    } else {
+                        None
+                    }
+                })
+        }
+
+        pub fn root(&self, mut entity: Entity) -> Entity {
+            // Only the entry entity needs to be validated; linked entities can be assumed to be valid.
+            if let Some(datum) = self.get_datum(entity) {
+                let mut index = datum.parent;
+                while let Some(datum) = self.data.0.get(index as usize) {
+                    entity = Entity {
+                        index,
+                        generation: datum.generation,
+                    };
+                    index = datum.parent;
+                }
+            }
+            entity
+        }
+
+        pub fn parent(&self, entity: Entity) -> Option<Entity> {
+            let datum = self.get_datum(entity)?;
+            let parent = self.data.0.get(datum.parent as usize)?;
+            Some(Entity {
+                index: datum.parent,
+                generation: parent.generation,
+            })
+        }
+
+        pub fn children(
+            &self,
+            entity: Entity,
+            direction: Horizontal,
+        ) -> impl Iterator<Item = Entity> + '_ {
+            match direction {
+                Horizontal::FromLeft => self.link_iterator(
+                    entity,
+                    |parent| parent.first_child,
+                    |child| child.next_sibling,
+                ),
+                Horizontal::FromRight => self.link_iterator(
+                    entity,
+                    |parent| parent.last_child,
+                    |child| child.previous_sibling,
+                ),
+            }
+        }
+
+        pub fn ancestors(
+            &self,
+            entity: Entity,
+            direction: Vertical,
+        ) -> impl Iterator<Item = Entity> + '_ {
+            enum Ancestors<'a> {
+                FromTop(vec::IntoIter<Entity>),
+                FromBottom(Entity, &'a Entities),
+            }
+
+            impl<'a> Iterator for Ancestors<'a> {
+                type Item = Entity;
+
+                fn next(&mut self) -> Option<Self::Item> {
+                    match self {
+                        Self::FromTop(entities) => entities.next(),
+                        Self::FromBottom(entity, entities) => {
+                            let parent = entities.parent(*entity)?;
+                            *entity = parent;
+                            Some(parent)
+                        }
+                    }
+                }
+            }
+
+            match direction {
+                Vertical::FromTop => {
+                    let mut entities = Vec::new();
+                    self.ascend(entity, direction, |parent| {
+                        entities.push(parent);
+                        true
+                    });
+                    Ancestors::FromTop(entities.into_iter())
+                }
+                Vertical::FromBottom => Ancestors::FromBottom(entity, self),
+            }
+        }
+
+        /// Parameter 'each' takes the current descendant and returns a 'bool' that indicates if the descent should continue.
+        /// Return value will be 'true' only if all descendants have been visited.
+        pub fn descendants(
+            &self,
+            entity: Entity,
+            direction: (Horizontal, Vertical),
+        ) -> impl Iterator<Item = Entity> {
+            let mut entities = Vec::new();
+            self.descend(entity, direction, |child| {
+                entities.push(child);
+                true
+            });
+            entities.into_iter()
+        }
+
+        pub fn siblings(
+            &self,
+            entity: Entity,
+            direction: Horizontal,
+        ) -> impl Iterator<Item = Entity> + '_ {
+            self.parent(entity)
+                .map(|parent| {
+                    self.children(parent, direction)
+                        .filter(move |&child| child != entity)
+                })
+                .into_iter()
+                .flatten()
+        }
+
+        /// Parameter 'each' takes the current ancestor and returns a 'bool' that indicates if the ascension should continue.
+        /// Return value will be 'true' only if all ancestors have been visited.
+        pub fn ascend(
+            &self,
+            entity: Entity,
+            direction: Vertical,
+            mut each: impl FnMut(Entity) -> bool,
+        ) -> bool {
+            fn from_top<'a>(
+                entities: &Entities,
+                entity: Entity,
+                each: &mut impl FnMut(Entity) -> bool,
+            ) -> bool {
+                if let Some(parent) = entities.parent(entity) {
+                    from_top(entities, parent, each) && each(parent)
+                } else {
+                    true
+                }
+            }
+
+            fn from_bottom<'a>(
+                entities: &Entities,
+                entity: Entity,
+                each: &mut impl FnMut(Entity) -> bool,
+            ) -> bool {
+                if let Some(parent) = entities.parent(entity) {
+                    each(parent.clone()) && from_bottom(entities, parent, each)
+                } else {
+                    true
+                }
+            }
+
+            match direction {
+                Vertical::FromTop => from_top(self, entity, &mut each),
+                Vertical::FromBottom => from_bottom(self, entity, &mut each),
+            }
+        }
+
+        /// Parameter 'each' takes the current descendant and returns a 'bool' that indicates if the descent should continue.
+        /// Return value will be 'true' only if all descendants have been visited.
+        pub fn descend(
+            &self,
+            entity: Entity,
+            direction: (Horizontal, Vertical),
+            mut each: impl FnMut(Entity) -> bool,
+        ) -> bool {
+            fn from_top<'a>(
+                entities: &Entities,
+                entity: Entity,
+                direction: Horizontal,
+                each: &mut impl FnMut(Entity) -> bool,
+            ) -> bool {
+                for child in entities.children(entity, direction) {
+                    if each(child.clone()) && from_top(entities, child, direction, each) {
+                        continue;
+                    } else {
+                        return false;
+                    }
+                }
+                true
+            }
+
+            fn from_bottom<'a>(
+                entities: &Entities,
+                entity: Entity,
+                direction: Horizontal,
+                each: &mut impl FnMut(Entity) -> bool,
+            ) -> bool {
+                for child in entities.children(entity, direction) {
+                    if from_bottom(entities, child, direction, each) && each(child) {
+                        continue;
+                    } else {
+                        return false;
+                    }
+                }
+                true
+            }
+
+            match direction.1 {
+                Vertical::FromTop => from_top(self, entity, direction.0, &mut each),
+                Vertical::FromBottom => from_bottom(self, entity, direction.0, &mut each),
+            }
+        }
+
+        pub fn adopt_first(&mut self, parent: Entity, child: Entity) -> Option<()> {
+            let (_, parent_datum) = self.adopt_step1(parent, child)?;
+            if let Some(first) = self.data.0.get_mut(parent_datum.first_child as usize) {
+                first.previous_sibling = child.index;
+            }
+
+            let child_datum = self.data.0.get_mut(child.index as usize)?;
+            child_datum.parent = parent.index;
+            child_datum.previous_sibling = u32::MAX;
+            child_datum.next_sibling = parent_datum.first_child;
+
+            let parent_datum = self.data.0.get_mut(parent.index as usize)?;
+            parent_datum.first_child = child.index;
+            if parent_datum.last_child == u32::MAX {
+                // Happens when the parent has no children.
+                parent_datum.last_child = child.index;
+            }
+
+            Some(())
+        }
+
+        pub fn adopt_last(&mut self, parent: Entity, child: Entity) -> Option<()> {
+            let (_, parent_datum) = self.adopt_step1(parent, child)?;
+            if let Some(last) = self.data.0.get_mut(parent_datum.last_child as usize) {
+                last.next_sibling = child.index;
+            }
+
+            let child_datum = self.data.0.get_mut(child.index as usize)?;
+            child_datum.parent = parent.index;
+            child_datum.previous_sibling = parent_datum.last_child;
+            child_datum.next_sibling = u32::MAX;
+
+            let parent_datum = self.data.0.get_mut(parent.index as usize)?;
+            parent_datum.last_child = child.index;
+            if parent_datum.first_child == u32::MAX {
+                // Happens when the parent has no children.
+                parent_datum.first_child = child.index;
+            }
+
+            Some(())
+        }
+
+        pub fn reject_first(&mut self, parent: Entity) -> Option<Entity> {
+            let parent_datum = self.get_datum(parent)?;
+            let child_index = parent_datum.first_child;
+            let child_datum = self.data.0.get(child_index as usize)?.clone();
+            self.reject_step1((child_index, child_datum));
+            self.reject_step2(child_index)
+        }
+
+        pub fn reject_last(&mut self, parent: Entity) -> Option<Entity> {
+            let parent_datum = self.get_datum(parent)?;
+            let child_index = parent_datum.last_child;
+            let child_datum = self.data.0.get(child_index as usize)?.clone();
+            self.reject_step1((child_index, child_datum));
+            self.reject_step2(child_index)
+        }
+
+        pub fn reject_at(
+            &mut self,
+            parent: Entity,
+            index: usize,
+            direction: Horizontal,
+        ) -> Option<Entity> {
+            let child = self.children(parent, direction).nth(index)?;
+            let datum = self.data.0.get(child.index as usize)?.clone();
+            self.reject_step1((child.index, datum));
+            self.reject_step2(child.index)
+        }
+
+        pub fn reject_filter(
+            &mut self,
+            parent: Entity,
+            mut filter: impl FnMut(Entity) -> bool,
+        ) -> Option<usize> {
+            let parent_datum = self.get_datum_mut(parent)?;
+            parent_datum.first_child = u32::MAX;
+            parent_datum.last_child = u32::MAX;
+
+            let mut count = 0;
+            self.link_each(
+                parent,
+                |parent| parent.first_child,
+                |child| child.next_sibling,
+                |index, datum| {
+                    let entity = Entity {
+                        index,
+                        generation: datum.generation,
+                    };
+                    if filter(entity) {
+                        datum.parent = u32::MAX;
+                        datum.previous_sibling = u32::MAX;
+                        datum.next_sibling = u32::MAX;
+                        count += 1;
+                    }
+                },
+            );
+
+            Some(count)
+        }
+
+        pub fn reject_all(&mut self, parent: Entity) -> Option<usize> {
+            self.reject_filter(parent, |_| true)
+        }
+
+        fn adopt_step1(&mut self, parent: Entity, child: Entity) -> Option<(Datum, Datum)> {
+            // A parent entity can adopt an entity that is already its child. In that case, that entity will simply be moved.
+
+            if parent.index == child.index {
+                // An entity cannot adopt itself.
+                // If generations don't match, then one of the entities is invalid, thus adoption also fails.
+                return None;
+            }
+
+            // As long as the entry point entities are validated, the linked ones can be assumed to be valid.
+            let child_datum = self.get_datum(child)?.clone();
+            let parent_datum = self.get_datum(parent)?.clone();
+
+            if !self.ascend(parent, Vertical::FromBottom, |parent| parent != child) {
+                // An entity cannot adopt an ancestor.
+                return None;
+            }
+
+            self.reject_step1((child.index, child_datum.clone()));
+            Some((child_datum, parent_datum))
+        }
+
+        fn reject_step1(&mut self, child: (u32, Datum)) {
+            if let Some(parent) = self.data.0.get_mut(child.1.parent as usize) {
+                if parent.first_child == child.0 {
+                    parent.first_child = child.1.next_sibling;
+                }
+                if parent.last_child == child.0 {
+                    parent.last_child = child.1.previous_sibling;
+                }
+            }
+
+            if let Some(previous) = self.data.0.get_mut(child.1.previous_sibling as usize) {
+                previous.next_sibling = child.1.next_sibling;
+            }
+
+            if let Some(next) = self.data.0.get_mut(child.1.next_sibling as usize) {
+                next.previous_sibling = child.1.previous_sibling;
+            }
+        }
+
+        fn reject_step2(&mut self, child_index: u32) -> Option<Entity> {
+            let child_datum = self.data.0.get_mut(child_index as usize)?;
+            child_datum.parent = u32::MAX;
+            child_datum.previous_sibling = u32::MAX;
+            child_datum.next_sibling = u32::MAX;
+            Some(Entity {
+                index: child_index,
+                generation: child_datum.generation,
+            })
+        }
+
+        #[inline]
+        fn link_iterator(
+            &self,
+            entity: Entity,
+            first: fn(&Datum) -> u32,
+            next: fn(&Datum) -> u32,
+        ) -> impl Iterator<Item = Entity> + '_ {
+            let mut index = self.get_datum(entity).map(first).unwrap_or(u32::MAX);
+            from_fn(move || {
+                let datum = self.data.0.get(index as usize)?;
+                let entity = Entity {
+                    index,
+                    generation: datum.generation,
+                };
+                index = next(datum);
+                Some(entity)
+            })
+        }
+
+        #[inline]
+        fn link_each(
+            &mut self,
+            entity: Entity,
+            first: fn(&Datum) -> u32,
+            next: fn(&Datum) -> u32,
+            mut each: impl FnMut(u32, &mut Datum),
+        ) {
+            let mut index = self.get_datum(entity).map(first).unwrap_or(u32::MAX);
+            while let Some(datum) = self.data.0.get_mut(index as usize) {
+                each(index, datum);
+                index = next(datum);
+            }
+        }
+    }
+
     impl<'a> Family<'a> {
         #[inline]
         pub const fn entity(&self) -> Entity {
@@ -289,309 +701,39 @@ pub mod family {
                 .map(move |sibling| family.1.family(sibling))
         }
 
+        /// Parameter 'each' takes the current ancestor and returns a 'bool' that indicates if the ascension should continue.
+        /// Return value will be 'true' only if all ancestors have been visited.
         #[inline]
-        pub fn ascend(&self, direction: Vertical, mut each: impl FnMut(Self)) {
+        pub fn ascend(&self, direction: Vertical, mut each: impl FnMut(Self) -> bool) -> bool {
             self.1
                 .ascend(self.0, direction, |parent| each(self.1.family(parent)))
         }
 
+        /// Parameter 'each' takes the current descendant and returns a 'bool' that indicates if the descent should continue.
+        /// Return value will be 'true' only if all descendants have been visited.
         #[inline]
-        pub fn descend(&self, direction: (Horizontal, Vertical), mut each: impl FnMut(Self)) {
+        pub fn descend(
+            &self,
+            direction: (Horizontal, Vertical),
+            mut each: impl FnMut(Self) -> bool,
+        ) -> bool {
             self.1
                 .descend(self.0, direction, |child| each(self.1.family(child)))
         }
     }
 
-    impl Entities {
-        #[inline]
-        pub const fn family(&self, entity: Entity) -> Family {
-            Family(entity, self)
-        }
-
-        pub fn roots(&self) -> impl Iterator<Item = Family> + '_ {
-            self.data
-                .0
-                .iter()
-                .enumerate()
-                .filter_map(move |(index, datum)| {
-                    if datum.initialized() && datum.parent == u32::MAX {
-                        Some(Family(
-                            Entity {
-                                index: index as u32,
-                                generation: datum.generation,
-                            },
-                            self,
-                        ))
-                    } else {
-                        None
-                    }
-                })
-        }
-
-        pub fn root(&self, entity: Entity) -> Entity {
-            match self.parent(entity) {
-                Some(parent) => self.root(parent),
-                None => entity,
-            }
-        }
-
-        pub fn parent(&self, entity: Entity) -> Option<Entity> {
-            self.link(entity, |datum| datum.parent, |datum| datum.parent)
-                .next()
-        }
-
-        pub fn children(
-            &self,
-            entity: Entity,
-            direction: Horizontal,
-        ) -> impl Iterator<Item = Entity> + '_ {
-            match direction {
-                Horizontal::FromLeft => self.link(
-                    entity,
-                    |datum| datum.first_child,
-                    |datum| datum.next_sibling,
-                ),
-                Horizontal::FromRight => self.link(
-                    entity,
-                    |datum| datum.last_child,
-                    |datum| datum.previous_sibling,
-                ),
-            }
-        }
-
-        pub fn ancestors(
-            &self,
-            entity: Entity,
-            direction: Vertical,
-        ) -> impl Iterator<Item = Entity> + '_ {
-            enum Ancestors<'a> {
-                FromTop(vec::IntoIter<Entity>),
-                FromBottom(Entity, &'a Entities),
-            }
-
-            impl<'a> Iterator for Ancestors<'a> {
-                type Item = Entity;
-
-                fn next(&mut self) -> Option<Self::Item> {
-                    match self {
-                        Self::FromTop(entities) => entities.next(),
-                        Self::FromBottom(entity, entities) => {
-                            let parent = entities.parent(*entity)?;
-                            *entity = parent;
-                            Some(parent)
-                        }
-                    }
-                }
-            }
-
-            match direction {
-                Vertical::FromTop => {
-                    let mut entities = Vec::new();
-                    self.ascend(entity, direction, |parent| entities.push(parent));
-                    Ancestors::FromTop(entities.into_iter())
-                }
-                Vertical::FromBottom => Ancestors::FromBottom(entity, self),
-            }
-        }
-
-        pub fn descendants(
-            &self,
-            entity: Entity,
-            direction: (Horizontal, Vertical),
-        ) -> impl Iterator<Item = Entity> {
-            let mut entities = Vec::new();
-            self.descend(entity, direction, |child| entities.push(child));
-            entities.into_iter()
-        }
-
-        pub fn siblings(
-            &self,
-            entity: Entity,
-            direction: Horizontal,
-        ) -> impl Iterator<Item = Entity> + '_ {
-            self.parent(entity)
-                .map(|parent| {
-                    self.children(parent, direction)
-                        .filter(move |&child| child != entity)
-                })
-                .into_iter()
-                .flatten()
-        }
-
-        pub fn ascend(&self, entity: Entity, direction: Vertical, mut each: impl FnMut(Entity)) {
-            fn from_top<'a>(entities: &Entities, entity: Entity, each: &mut impl FnMut(Entity)) {
-                if let Some(parent) = entities.parent(entity) {
-                    from_top(entities, parent, each);
-                    each(parent);
-                }
-            }
-
-            fn from_bottom<'a>(entities: &Entities, entity: Entity, each: &mut impl FnMut(Entity)) {
-                if let Some(parent) = entities.parent(entity) {
-                    each(parent.clone());
-                    from_bottom(entities, parent, each);
-                }
-            }
-
-            match direction {
-                Vertical::FromTop => from_top(self, entity, &mut each),
-                Vertical::FromBottom => from_bottom(self, entity, &mut each),
-            }
-        }
-
-        pub fn descend(
-            &self,
-            entity: Entity,
-            direction: (Horizontal, Vertical),
-            mut each: impl FnMut(Entity),
-        ) {
-            fn from_top<'a>(
-                entities: &Entities,
-                entity: Entity,
-                direction: Horizontal,
-                each: &mut impl FnMut(Entity),
-            ) {
-                for child in entities.children(entity, direction) {
-                    each(child.clone());
-                    from_top(entities, child, direction, each);
-                }
-            }
-
-            fn from_bottom<'a>(
-                entities: &Entities,
-                entity: Entity,
-                direction: Horizontal,
-                each: &mut impl FnMut(Entity),
-            ) {
-                for child in entities.children(entity, direction) {
-                    from_bottom(entities, child, direction, each);
-                    each(child);
-                }
-            }
-
-            match direction.1 {
-                Vertical::FromTop => from_top(self, entity, direction.0, &mut each),
-                Vertical::FromBottom => from_bottom(self, entity, direction.0, &mut each),
-            }
-        }
-
-        pub fn adopt_first(&mut self, parent: Entity, child: Entity) -> Option<()> {
-            let (_, parent_datum) = self.pre_adopt(parent, child)?;
-            let child_datum = self.data.0.get_mut(child.index as usize)?;
-            child_datum.parent = parent.index;
-            child_datum.previous_sibling = u32::MAX;
-            child_datum.next_sibling = parent_datum.first_child;
-
-            let parent_datum = self.data.0.get_mut(parent.index as usize)?;
-            parent_datum.first_child = child.index;
-            if parent_datum.last_child == u32::MAX {
-                // Happens when the parent has no children.
-                parent_datum.last_child = child.index;
-            }
-
-            Some(())
-        }
-
-        pub fn adopt_last(&mut self, parent: Entity, child: Entity) -> Option<()> {
-            let (_, parent_datum) = self.pre_adopt(parent, child)?;
-            let child_datum = self.data.0.get_mut(child.index as usize)?;
-            child_datum.parent = parent.index;
-            child_datum.previous_sibling = parent_datum.last_child;
-            child_datum.next_sibling = u32::MAX;
-
-            let parent_datum = self.data.0.get_mut(parent.index as usize)?;
-            parent_datum.last_child = child.index;
-            if parent_datum.first_child == u32::MAX {
-                // Happens when the parent has no children.
-                parent_datum.first_child = child.index;
-            }
-
-            Some(())
-        }
-
-        pub fn adopt_at(&mut self, parent: Entity, child: Entity, index: usize) {
-            todo!()
-        }
-
-        pub fn reject(&mut self, parent: Entity, child: Entity) {
-            todo!()
-        }
-
-        pub fn reject_at(&mut self, parent: Entity, index: usize) {
-            todo!()
-        }
-
-        pub fn reject_filter(&mut self, parent: Entity, filter: impl FnMut(Entity) -> bool) {
-            todo!()
-        }
-
-        pub fn reject_all(&mut self, parent: Entity) {
-            todo!()
-        }
-
-        fn pre_adopt(&mut self, parent: Entity, child: Entity) -> Option<(Datum, Datum)> {
-            // A parent entity can adopt an entity that is already its child. In that case, that entity will simply be moved.
-
-            if parent.index == child.index {
-                // An entity cannot adopt itself.
-                // If generations don't match, then one of the entities is invalid, thus adoption also fails.
-                return None;
-            }
-
-            let mut cycle = false;
-            self.family(parent).ascend(Vertical::FromBottom, |parent| {
-                cycle = parent.entity() == child
-            });
-            if cycle {
-                // An entity cannot adopt an ancestor.
-                return None;
-            }
-
-            // As long as the entry point entities are validated, the linked ones can be assumed to be valid.
-            let parent_datum = self.get_datum_mut(parent)?.clone();
-            let child_datum = self.get_datum_mut(child)?.clone();
-
-            if let Some(parent) = self.data.0.get_mut(child_datum.parent as usize) {
-                if parent.first_child == child.index {
-                    parent.first_child = child_datum.next_sibling;
-                }
-                if parent.last_child == child.index {
-                    parent.last_child = child_datum.previous_sibling;
-                }
-            }
-
-            if let Some(previous) = self.data.0.get_mut(child_datum.previous_sibling as usize) {
-                previous.next_sibling = child_datum.next_sibling;
-            }
-
-            if let Some(next) = self.data.0.get_mut(child_datum.next_sibling as usize) {
-                next.previous_sibling = child_datum.previous_sibling;
-            }
-
-            if let Some(first) = self.data.0.get_mut(parent_datum.first_child as usize) {
-                first.previous_sibling = child.index;
-            }
-
-            Some((child_datum, parent_datum))
-        }
-
-        #[inline]
-        fn link(
-            &self,
-            entity: Entity,
-            first: fn(&Datum) -> u32,
-            next: fn(&Datum) -> u32,
-        ) -> impl Iterator<Item = Entity> + '_ {
-            let mut index = self.get_datum(entity).map(first).unwrap_or(u32::MAX);
-            from_fn(move || {
-                let datum = self.data.0.get(index as usize)?;
-                let entity = Entity {
-                    index,
-                    generation: datum.generation,
-                };
-                index = next(datum);
-                Some(entity)
-            })
+    impl fmt::Debug for Family<'_> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct(&format!("{:?}", self.entity()))
+                .field("Parent", &self.parent().map(|parent| parent.entity()))
+                .field(
+                    "Children",
+                    &self
+                        .children(Horizontal::FromLeft)
+                        .map(|child| child.entity())
+                        .collect::<Vec<_>>(),
+                )
+                .finish()
         }
     }
 
@@ -616,7 +758,7 @@ pub mod family {
 
     unsafe impl Depend for State {
         fn depend(&self, world: &World) -> Vec<Dependency> {
-            // TODO: Can read from all entities.
+            // TODO: Could potentially read from all entities.
             let mut dependencies = self.0.depend(world);
             dependencies.append(&mut self.1.depend(world));
             dependencies
