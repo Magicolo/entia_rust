@@ -1,4 +1,4 @@
-use std::{any::TypeId, fmt, sync::Arc};
+use std::{fmt, sync::Arc};
 
 use crate::{
     depend::{Depend, Dependency},
@@ -71,6 +71,6 @@ impl<'a> At<'a> for State {
 
 unsafe impl Depend for State {
     fn depend(&self, _: &World) -> Vec<Dependency> {
-        vec![Dependency::Read(self.1, TypeId::of::<Entity>())]
+        vec![Dependency::read::<Entity>().at(self.1)]
     }
 }

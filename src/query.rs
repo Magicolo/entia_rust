@@ -10,7 +10,7 @@ use crate::{
     write::{self, Write},
 };
 use std::{
-    any::{type_name, TypeId},
+    any::type_name,
     fmt::{self},
     iter,
     marker::PhantomData,
@@ -64,34 +64,17 @@ impl<'a, I: Item, F: Filter> Query<'a, I, F> {
     pub fn each(&'a self, mut each: impl FnMut(<I::State as At<'a>>::Item)) {
         for (state, segment) in &self.inner.states {
             let segment = &self.world.segments[*segment];
-            let count = segment.count;
-            for i in 0..count {
+            for i in 0..segment.count {
                 each(state.at(i, self.world));
             }
         }
     }
 
     pub fn get(&self, entity: Entity) -> Option<<I::State as At<'_>>::Item> {
-        match self.entities.get_datum(entity) {
-            Some(datum) => {
-                let index = datum.index() as usize;
-                let segment = datum.segment() as usize;
-                for state in &self.inner.states {
-                    if state.1 == segment {
-                        return Some(state.0.at(index, self.world));
-                    }
-                }
-                None
-            }
-            None => None,
-        }
-    }
-
-    pub fn has(&self, entity: Entity) -> bool {
-        self.entities
-            .get_datum(entity)
-            .and_then(|datum| self.inner.segments[datum.segment() as usize])
-            .is_some()
+        let datum = self.entities.get_datum(entity)?;
+        let index = self.inner.segments[datum.segment_index as usize]?;
+        let (state, _) = &self.inner.states[index];
+        Some(state.at(datum.store_index as usize, self.world))
     }
 }
 
@@ -196,7 +179,7 @@ unsafe impl<I: Item + 'static, F: Filter> Depend for State<I, F> {
         let mut dependencies = self.entities.depend(world);
         let inner = self.inner.as_ref();
         for (item, segment) in inner.states.iter() {
-            dependencies.push(Dependency::Read(*segment, TypeId::of::<Entity>()));
+            dependencies.push(Dependency::read::<Entity>().at(*segment));
             dependencies.append(&mut item.depend(world));
         }
         dependencies

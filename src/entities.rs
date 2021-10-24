@@ -1,19 +1,20 @@
+use self::family::*;
+use crate::{
+    depend::{Depend, Dependency},
+    entity::Entity,
+    inject::{Get, Inject, InjectContext},
+    query::item::{At, Item, ItemContext},
+    read::{self, Read},
+    resource::Resource,
+    world::World,
+    write::{self, Write},
+};
 use std::{
     cmp::{max, min},
     fmt,
     iter::from_fn,
     sync::atomic::{AtomicIsize, AtomicUsize, Ordering},
     vec,
-};
-
-use crate::{
-    depend::{Depend, Dependency},
-    entity::Entity,
-    inject::Inject,
-    query::item::{At, Item, ItemContext},
-    read::{self, Read},
-    resource::Resource,
-    world::World,
 };
 
 pub struct Entities {
@@ -46,16 +47,6 @@ impl Datum {
         previous_sibling: u32::MAX,
         next_sibling: u32::MAX,
     };
-
-    #[inline]
-    pub const fn index(&self) -> u32 {
-        self.store_index
-    }
-
-    #[inline]
-    pub const fn segment(&self) -> u32 {
-        self.segment_index
-    }
 
     #[inline]
     pub fn initialize(
@@ -501,16 +492,22 @@ pub mod family {
             let parent_datum = self.get_datum(parent)?;
             let child_index = parent_datum.first_child;
             let child_datum = self.data.0.get(child_index as usize)?.clone();
-            self.reject_step1((child_index, child_datum));
-            self.reject_step2(child_index)
+            if self.reject_step1((child_index, child_datum)) {
+                Some(self.reject_step2(child_index))
+            } else {
+                None
+            }
         }
 
         pub fn reject_last(&mut self, parent: Entity) -> Option<Entity> {
             let parent_datum = self.get_datum(parent)?;
             let child_index = parent_datum.last_child;
             let child_datum = self.data.0.get(child_index as usize)?.clone();
-            self.reject_step1((child_index, child_datum));
-            self.reject_step2(child_index)
+            if self.reject_step1((child_index, child_datum)) {
+                Some(self.reject_step2(child_index))
+            } else {
+                None
+            }
         }
 
         pub fn reject_at(
@@ -521,8 +518,11 @@ pub mod family {
         ) -> Option<Entity> {
             let child = self.children(parent, direction).nth(index)?;
             let datum = self.data.0.get(child.index as usize)?.clone();
-            self.reject_step1((child.index, datum));
-            self.reject_step2(child.index)
+            if self.reject_step1((child.index, datum)) {
+                Some(self.reject_step2(child.index))
+            } else {
+                None
+            }
         }
 
         pub fn reject_filter(
@@ -530,6 +530,27 @@ pub mod family {
             parent: Entity,
             mut filter: impl FnMut(Entity) -> bool,
         ) -> Option<usize> {
+            let mut count = 0;
+            self.link_each(
+                parent,
+                |parent| parent.first_child,
+                |child| child.next_sibling,
+                |index, entities| {
+                    let datum = entities.data.0[index as usize].clone();
+                    let entity = Entity {
+                        index,
+                        generation: datum.generation,
+                    };
+                    if filter(entity) && entities.reject_step1((index, datum)) {
+                        entities.reject_step2(index);
+                        count += 1;
+                    }
+                },
+            )?;
+            Some(count)
+        }
+
+        pub fn reject_all(&mut self, parent: Entity) -> Option<usize> {
             let parent_datum = self.get_datum_mut(parent)?;
             parent_datum.first_child = u32::MAX;
             parent_datum.last_child = u32::MAX;
@@ -539,28 +560,29 @@ pub mod family {
                 parent,
                 |parent| parent.first_child,
                 |child| child.next_sibling,
-                |index, datum| {
-                    let entity = Entity {
-                        index,
-                        generation: datum.generation,
-                    };
-                    if filter(entity) {
-                        datum.parent = u32::MAX;
-                        datum.previous_sibling = u32::MAX;
-                        datum.next_sibling = u32::MAX;
-                        count += 1;
-                    }
+                |index, entities| {
+                    entities.reject_step2(index);
+                    count += 1;
                 },
-            );
-
+            )?;
             Some(count)
         }
 
-        pub fn reject_all(&mut self, parent: Entity) -> Option<usize> {
-            self.reject_filter(parent, |_| true)
+        pub fn reject(&mut self, child: Entity) -> Option<bool> {
+            let datum = self.get_datum(child)?.clone();
+            if self.reject_step1((child.index, datum)) {
+                self.reject_step2(child.index);
+                Some(true)
+            } else {
+                Some(false)
+            }
         }
 
-        fn adopt_step1(&mut self, parent: Entity, child: Entity) -> Option<(Datum, Datum)> {
+        pub(crate) fn adopt_step1(
+            &mut self,
+            parent: Entity,
+            child: Entity,
+        ) -> Option<(Datum, Datum)> {
             // A parent entity can adopt an entity that is already its child. In that case, that entity will simply be moved.
 
             if parent.index == child.index {
@@ -578,11 +600,12 @@ pub mod family {
                 return None;
             }
 
+            // The 'reject' step fails when the entity is a root which is fine here.
             self.reject_step1((child.index, child_datum.clone()));
             Some((child_datum, parent_datum))
         }
 
-        fn reject_step1(&mut self, child: (u32, Datum)) {
+        pub(crate) fn reject_step1(&mut self, child: (u32, Datum)) -> bool {
             if let Some(parent) = self.data.0.get_mut(child.1.parent as usize) {
                 if parent.first_child == child.0 {
                     parent.first_child = child.1.next_sibling;
@@ -590,6 +613,8 @@ pub mod family {
                 if parent.last_child == child.0 {
                     parent.last_child = child.1.previous_sibling;
                 }
+            } else {
+                return false;
             }
 
             if let Some(previous) = self.data.0.get_mut(child.1.previous_sibling as usize) {
@@ -599,17 +624,19 @@ pub mod family {
             if let Some(next) = self.data.0.get_mut(child.1.next_sibling as usize) {
                 next.previous_sibling = child.1.previous_sibling;
             }
+
+            true
         }
 
-        fn reject_step2(&mut self, child_index: u32) -> Option<Entity> {
-            let child_datum = self.data.0.get_mut(child_index as usize)?;
+        pub(crate) fn reject_step2(&mut self, child_index: u32) -> Entity {
+            let child_datum = &mut self.data.0[child_index as usize];
             child_datum.parent = u32::MAX;
             child_datum.previous_sibling = u32::MAX;
             child_datum.next_sibling = u32::MAX;
-            Some(Entity {
+            Entity {
                 index: child_index,
                 generation: child_datum.generation,
-            })
+            }
         }
 
         #[inline]
@@ -637,13 +664,15 @@ pub mod family {
             entity: Entity,
             first: fn(&Datum) -> u32,
             next: fn(&Datum) -> u32,
-            mut each: impl FnMut(u32, &mut Datum),
-        ) {
-            let mut index = self.get_datum(entity).map(first).unwrap_or(u32::MAX);
-            while let Some(datum) = self.data.0.get_mut(index as usize) {
-                each(index, datum);
-                index = next(datum);
+            mut each: impl FnMut(u32, &mut Self),
+        ) -> Option<()> {
+            let mut index = first(self.get_datum(entity)?);
+            while let Some(datum) = self.data.0.get(index as usize) {
+                let next = next(datum);
+                each(index, self);
+                index = next;
             }
+            Some(())
         }
     }
 
@@ -665,19 +694,18 @@ pub mod family {
 
         #[inline]
         pub fn children(&self, direction: Horizontal) -> impl Iterator<Item = Family<'a>> {
-            let family = self.clone();
-            self.1
-                .children(family.0, direction)
-                .map(move |child| family.1.family(child))
+            let Family(entity, entities) = *self;
+            entities
+                .children(entity, direction)
+                .map(move |child| entities.family(child))
         }
 
         #[inline]
         pub fn ancestors(&self, direction: Vertical) -> impl Iterator<Item = Family<'a>> {
-            let family = self.clone();
-            family
-                .1
-                .ancestors(family.0, direction)
-                .map(move |parent| family.1.family(parent))
+            let Family(entity, entities) = *self;
+            entities
+                .ancestors(entity, direction)
+                .map(move |parent| entities.family(parent))
         }
 
         #[inline]
@@ -685,20 +713,18 @@ pub mod family {
             &self,
             direction: (Horizontal, Vertical),
         ) -> impl Iterator<Item = Family<'a>> {
-            let family = self.clone();
-            family
-                .1
-                .descendants(family.0, direction)
-                .map(move |child| family.1.family(child))
+            let Family(entity, entities) = *self;
+            entities
+                .descendants(entity, direction)
+                .map(move |child| entities.family(child))
         }
 
         #[inline]
         pub fn siblings(&self, direction: Horizontal) -> impl Iterator<Item = Family<'a>> {
-            let family = self.clone();
-            family
-                .1
-                .siblings(family.0, direction)
-                .map(move |sibling| family.1.family(sibling))
+            let Family(entity, entities) = *self;
+            entities
+                .siblings(entity, direction)
+                .map(move |sibling| entities.family(sibling))
         }
 
         /// Parameter 'each' takes the current ancestor and returns a 'bool' that indicates if the ascension should continue.
@@ -719,6 +745,12 @@ pub mod family {
         ) -> bool {
             self.1
                 .descend(self.0, direction, |child| each(self.1.family(child)))
+        }
+    }
+
+    impl Into<Entity> for Family<'_> {
+        fn into(self) -> Entity {
+            self.entity()
         }
     }
 
@@ -758,10 +790,122 @@ pub mod family {
 
     unsafe impl Depend for State {
         fn depend(&self, world: &World) -> Vec<Dependency> {
-            // TODO: Could potentially read from all entities.
-            let mut dependencies = self.0.depend(world);
-            dependencies.append(&mut self.1.depend(world));
+            // 'Family' may read entities from any segment.
+            let mut dependencies = self.1.depend(world);
+            dependencies.push(Dependency::read::<Entity>());
             dependencies
+        }
+    }
+}
+
+pub mod families {
+    use super::*;
+
+    pub struct Families<'a>(&'a mut Vec<Defer>, &'a Entities);
+    pub struct State(Vec<Defer>, write::State<Entities>);
+    enum Defer {
+        AdoptFirst(Entity, Entity),
+        AdoptLast(Entity, Entity),
+        Reject(Entity),
+        RejectAll(Entity),
+    }
+
+    impl<'a> Families<'a> {
+        #[inline]
+        pub const fn family(&self, entity: Entity) -> Family<'a> {
+            self.1.family(entity)
+        }
+
+        pub fn roots(&self) -> impl Iterator<Item = Family<'a>> {
+            let entities = self.1;
+            entities.roots().map(move |entity| entities.family(entity))
+        }
+
+        pub fn adopt_first(&mut self, parent: Entity, child: Entity) {
+            self.0.push(Defer::AdoptFirst(parent, child));
+        }
+
+        pub fn adopt_last(&mut self, parent: Entity, child: Entity) {
+            self.0.push(Defer::AdoptLast(parent, child));
+        }
+
+        pub fn reject_first(&mut self, parent: Entity) {
+            if let Some(child) = self.1.children(parent, Horizontal::FromLeft).next() {
+                self.reject(child);
+            }
+        }
+
+        pub fn reject_last(&mut self, parent: Entity) {
+            if let Some(child) = self.1.children(parent, Horizontal::FromRight).next() {
+                self.reject(child);
+            }
+        }
+
+        pub fn reject_at(&mut self, parent: Entity, index: usize, direction: Horizontal) {
+            if let Some(child) = self.1.children(parent, direction).nth(index) {
+                self.reject(child);
+            }
+        }
+
+        pub fn reject(&mut self, child: Entity) {
+            self.0.push(Defer::Reject(child));
+        }
+
+        pub fn reject_all(&mut self, parent: Entity) {
+            Defer::RejectAll(parent);
+        }
+    }
+
+    unsafe impl Inject for Families<'_> {
+        type Input = ();
+        type State = State;
+
+        fn initialize(_: Self::Input, context: InjectContext) -> Option<Self::State> {
+            Some(State(
+                Vec::new(),
+                <Write<Entities> as Inject>::initialize(None, context)?,
+            ))
+        }
+
+        fn resolve(state: &mut Self::State, _: InjectContext) {
+            let entities = state.1.as_mut();
+            for defer in state.0.drain(..) {
+                match defer {
+                    Defer::AdoptFirst(parent, child) => {
+                        entities.adopt_first(parent, child);
+                    }
+                    Defer::AdoptLast(parent, child) => {
+                        entities.adopt_last(parent, child);
+                    }
+                    Defer::Reject(child) => {
+                        if let Some(datum) = entities.get_datum(child).cloned() {
+                            if entities.reject_step1((child.index, datum)) {
+                                entities.reject_step2(child.index);
+                            }
+                        }
+                    }
+                    Defer::RejectAll(parent) => {
+                        entities.reject_all(parent);
+                    }
+                }
+            }
+        }
+    }
+
+    impl<'a> Get<'a> for State {
+        type Item = Families<'a>;
+
+        fn get(&'a mut self, world: &'a World) -> Self::Item {
+            Families(&mut self.0, self.1.get(world))
+        }
+    }
+
+    unsafe impl Depend for State {
+        fn depend(&self, _: &World) -> Vec<Dependency> {
+            vec![
+                Dependency::defer::<Entities>(),
+                Dependency::read::<Entity>(),
+            ]
         }
     }
 }

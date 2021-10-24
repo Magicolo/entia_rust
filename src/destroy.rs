@@ -6,7 +6,7 @@ use crate::{
     world::World,
     write::{self, Write},
 };
-use std::{any::TypeId, collections::HashSet};
+use std::collections::HashSet;
 
 pub struct Destroy<'a> {
     defer: &'a mut Vec<Defer>,
@@ -140,11 +140,7 @@ impl<'a> Get<'a> for State {
 }
 
 unsafe impl Depend for State {
-    fn depend(&self, world: &World) -> Vec<Dependency> {
-        let mut dependencies = Vec::new();
-        for segment in world.segments.iter() {
-            dependencies.push(Dependency::Defer(segment.index, TypeId::of::<Entity>()));
-        }
-        dependencies
+    fn depend(&self, _: &World) -> Vec<Dependency> {
+        vec![Dependency::defer::<Entity>()]
     }
 }

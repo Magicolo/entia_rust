@@ -6,6 +6,7 @@ mod destroy;
 mod entities;
 mod entity;
 mod family;
+mod ignore;
 mod initial;
 mod inject;
 mod local;
@@ -27,11 +28,13 @@ pub use crate::{
     defer::Defer,
     destroy::Destroy,
     entities::{
+        families::Families,
         family::{Family, Horizontal, Vertical},
         Entities,
     },
     entity::Entity,
     family::item::{Child, Parent},
+    ignore::Ignore,
     initial::{spawn, with, Initial, StaticInitial},
     inject::Injector,
     message::emit::Emit,

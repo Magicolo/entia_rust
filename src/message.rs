@@ -1,4 +1,4 @@
-use std::{any::TypeId, collections::VecDeque};
+use std::collections::VecDeque;
 
 // TODO: implement react?
 // - Try again to add the 'Run' trait such that there may be different implementations: Every, Depend
@@ -93,7 +93,7 @@ pub mod emit {
 
     unsafe impl<M: Message> Depend for State<M> {
         fn depend(&self, _: &World) -> Vec<Dependency> {
-            vec![Dependency::Defer(self.0.segment(), TypeId::of::<M>())]
+            vec![Dependency::defer::<M>().at(self.0.segment())]
         }
     }
 }
@@ -146,7 +146,7 @@ pub mod receive {
 
     unsafe impl<M: Message> Depend for State<M> {
         fn depend(&self, _: &World) -> Vec<Dependency> {
-            vec![Dependency::Read(self.1.segment(), TypeId::of::<M>())]
+            vec![Dependency::read::<M>().at(self.1.segment())]
         }
     }
 }

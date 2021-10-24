@@ -10,11 +10,42 @@ pub unsafe trait Depend {
 }
 
 #[derive(Debug, Clone)]
+pub enum Scope {
+    All,
+    Inner,
+    Outer,
+}
+
+#[derive(Debug, Clone)]
 pub enum Dependency {
     Unknown,
-    Read(usize, TypeId),
-    Write(usize, TypeId),
-    Defer(usize, TypeId),
+    Read(TypeId),
+    Write(TypeId),
+    Defer(TypeId),
+    At(usize, Box<Dependency>),
+    Ignore(Scope, Box<Dependency>),
+}
+
+impl Dependency {
+    pub fn read<T: 'static>() -> Self {
+        Self::Read(TypeId::of::<T>())
+    }
+
+    pub fn write<T: 'static>() -> Self {
+        Self::Write(TypeId::of::<T>())
+    }
+
+    pub fn defer<T: 'static>() -> Self {
+        Self::Defer(TypeId::of::<T>())
+    }
+
+    pub fn at(self, index: usize) -> Self {
+        Self::At(index, self.into())
+    }
+
+    pub fn ignore(self, scope: Scope) -> Self {
+        Self::Ignore(scope, self.into())
+    }
 }
 
 unsafe impl<D: Depend> Depend for Option<D> {

@@ -8,7 +8,6 @@ use entia_core::Call;
 use std::{
     any::{type_name, TypeId},
     cell::UnsafeCell,
-    collections::HashSet,
     fmt,
     mem::replace,
     mem::swap,
@@ -215,6 +214,12 @@ impl fmt::Debug for System {
 }
 
 pub mod runner {
+    use std::collections::HashMap;
+
+    use entia_core::bits::Bits;
+
+    use crate::depend::Scope;
+
     use super::*;
 
     pub struct Runner {
@@ -283,81 +288,66 @@ pub mod runner {
             systems: impl Iterator<Item = System>,
             world: &mut World,
         ) -> Result<Vec<Block>, Error> {
+            #[derive(Debug)]
+            enum Has {
+                All,
+                None,
+                Indices(Bits),
+            }
+
             #[derive(Debug, Default)]
             struct State {
                 unknown: bool,
-                reads: HashSet<(usize, TypeId)>,
-                writes: HashSet<(usize, TypeId)>,
-                defers: HashSet<(usize, TypeId)>,
+                reads: HashMap<TypeId, Has>,
+                writes: HashMap<TypeId, Has>,
+                defers: HashMap<TypeId, Has>,
+            }
+
+            impl Has {
+                pub fn add(&mut self, index: usize) -> bool {
+                    match self {
+                        Self::All => false,
+                        Self::None => {
+                            *self = Has::Indices(Bits::new());
+                            self.add(index)
+                        }
+                        Self::Indices(bits) => {
+                            if bits.has(index) {
+                                false
+                            } else {
+                                bits.set(index, true);
+                                true
+                            }
+                        }
+                    }
+                }
+
+                pub fn has(&self, index: usize) -> bool {
+                    match self {
+                        Self::All => true,
+                        Self::None => false,
+                        Self::Indices(bits) => bits.has(index),
+                    }
+                }
+            }
+
+            impl Default for Has {
+                fn default() -> Self {
+                    Self::None
+                }
             }
 
             impl State {
                 pub fn inner_conflicts(&mut self, dependencies: &Vec<Dependency>) -> bool {
-                    let Self {
-                        unknown,
-                        reads,
-                        writes,
-                        defers,
-                    } = self;
-
-                    for dependency in dependencies {
-                        if match *dependency {
-                            Dependency::Unknown => {
-                                *unknown = true;
-                                false
-                            }
-                            Dependency::Read(segment, store) => {
-                                let key = (segment, store);
-                                reads.insert(key);
-                                writes.contains(&key)
-                            }
-                            Dependency::Write(segment, store) => {
-                                let key = (segment, store);
-                                reads.contains(&key) || !writes.insert(key)
-                            }
-                            Dependency::Defer(segment, store) => {
-                                defers.insert((segment, store));
-                                false
-                            }
-                        } {
-                            return true;
-                        }
-                    }
-                    false
+                    dependencies
+                        .iter()
+                        .any(|dependency| self.inner_conflict(None, dependency.clone()))
                 }
 
                 pub fn outer_conflicts(&mut self, dependencies: &Vec<Dependency>) -> bool {
-                    let Self {
-                        unknown,
-                        reads,
-                        writes,
-                        defers,
-                    } = self;
-                    if *unknown {
-                        return true;
-                    }
-
-                    for dependency in dependencies {
-                        if match *dependency {
-                            Dependency::Unknown => true,
-                            Dependency::Read(segment, store) => {
-                                let key = (segment, store);
-                                reads.insert(key);
-                                defers.contains(&key) || writes.contains(&key)
-                            }
-                            Dependency::Write(segment, store) => {
-                                let key = (segment, store);
-                                defers.contains(&key) || reads.contains(&key) || writes.insert(key)
-                            }
-                            Dependency::Defer(segment, store) => {
-                                defers.insert((segment, store));
-                                false
-                            }
-                        } {
-                            return true;
-                        }
-                    }
-                    false
+                    dependencies
+                        .iter()
+                        .any(|dependency| self.outer_conflict(None, dependency.clone()))
                 }
 
                 pub fn clear(&mut self) {
@@ -366,6 +356,148 @@ pub mod runner {
                     self.writes.clear();
                     self.defers.clear();
                 }
+
+                fn inner_conflict(&mut self, index: Option<usize>, dependency: Dependency) -> bool {
+                    match (index, dependency) {
+                        (_, Dependency::Unknown) => {
+                            self.unknown = true;
+                            false
+                        }
+                        (_, Dependency::At(index, dependency)) => {
+                            self.inner_conflict(Some(index), *dependency)
+                        }
+                        (_, Dependency::Ignore(Scope::All, _)) => false,
+                        (_, Dependency::Ignore(Scope::Inner, _)) => false,
+                        (index, Dependency::Ignore(Scope::Outer, dependency)) => {
+                            self.inner_conflict(index, *dependency)
+                        }
+                        (Some(index), Dependency::Read(identifier)) => {
+                            if has(&self.writes, identifier, index) {
+                                true
+                            } else {
+                                add(&mut self.reads, identifier, index);
+                                false
+                            }
+                        }
+                        (Some(index), Dependency::Write(identifier)) => {
+                            if has(&self.reads, identifier, index)
+                                || has(&self.writes, identifier, index)
+                            {
+                                return true;
+                            } else {
+                                add(&mut self.writes, identifier, index);
+                                false
+                            }
+                        }
+                        (Some(index), Dependency::Defer(identifier)) => {
+                            add(&mut self.defers, identifier, index);
+                            false
+                        }
+                        (None, Dependency::Read(identifier)) => {
+                            if has_any(&self.writes, identifier) {
+                                true
+                            } else {
+                                add_all(&mut self.reads, identifier);
+                                false
+                            }
+                        }
+                        (None, Dependency::Write(identifier)) => {
+                            if has_any(&self.reads, identifier) || has_any(&self.writes, identifier)
+                            {
+                                return true;
+                            } else {
+                                add_all(&mut self.writes, identifier);
+                                false
+                            }
+                        }
+                        (None, Dependency::Defer(identifier)) => {
+                            add_all(&mut self.defers, identifier);
+                            false
+                        }
+                    }
+                }
+
+                fn outer_conflict(&mut self, index: Option<usize>, dependency: Dependency) -> bool {
+                    match (index, dependency) {
+                        (_, Dependency::Unknown) => true,
+                        (_, Dependency::At(index, dependency)) => {
+                            self.outer_conflict(Some(index), *dependency)
+                        }
+                        (_, Dependency::Ignore(Scope::All, _)) => false,
+                        (_, Dependency::Ignore(Scope::Outer, _)) => false,
+                        (index, Dependency::Ignore(Scope::Inner, dependency)) => {
+                            self.inner_conflict(index, *dependency)
+                        }
+                        (Some(index), Dependency::Read(identifier)) => {
+                            if has(&self.writes, identifier, index)
+                                || has(&self.defers, identifier, index)
+                            {
+                                true
+                            } else {
+                                add(&mut self.reads, identifier, index);
+                                false
+                            }
+                        }
+                        (Some(index), Dependency::Write(identifier)) => {
+                            if has(&self.reads, identifier, index)
+                                || has(&self.writes, identifier, index)
+                                || has(&self.defers, identifier, index)
+                            {
+                                true
+                            } else {
+                                add(&mut self.writes, identifier, index);
+                                false
+                            }
+                        }
+                        (Some(index), Dependency::Defer(identifier)) => {
+                            add(&mut self.defers, identifier, index);
+                            false
+                        }
+                        (None, Dependency::Read(identifier)) => {
+                            if has_any(&self.writes, identifier)
+                                || has_any(&self.defers, identifier)
+                            {
+                                true
+                            } else {
+                                add_all(&mut self.reads, identifier);
+                                false
+                            }
+                        }
+                        (None, Dependency::Write(identifier)) => {
+                            if has_any(&self.reads, identifier)
+                                || has_any(&self.writes, identifier)
+                                || has_any(&self.defers, identifier)
+                            {
+                                true
+                            } else {
+                                add_all(&mut self.writes, identifier);
+                                false
+                            }
+                        }
+                        (None, Dependency::Defer(identifier)) => {
+                            add_all(&mut self.defers, identifier);
+                            false
+                        }
+                    }
+                }
+            }
+
+            fn add(map: &mut HashMap<TypeId, Has>, identifier: TypeId, index: usize) -> bool {
+                map.entry(identifier).or_default().add(index)
+            }
+
+            fn add_all(map: &mut HashMap<TypeId, Has>, identifier: TypeId) {
+                *map.entry(identifier).or_default() = Has::All;
+            }
+
+            fn has(map: &HashMap<TypeId, Has>, identifier: TypeId, index: usize) -> bool {
+                map.get(&identifier)
+                    .map(|has| has.has(index))
+                    .unwrap_or(false)
+            }
+
+            fn has_any(map: &HashMap<TypeId, Has>, identifier: TypeId) -> bool {
+                has(map, identifier, usize::MAX)
             }
 
             let mut blocks = Vec::new();

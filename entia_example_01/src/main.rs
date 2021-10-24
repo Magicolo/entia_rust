@@ -90,8 +90,9 @@ fn input(scheduler: Scheduler) -> Scheduler {
         })
         .schedule(
             |inputs: Receive<Input>,
-             entities: &Entities,
+             entities: Ignore<&mut Entities>,
              query: Query<(&mut Position, Family, Entity, Parent<Entity>), Controller>| {
+                let entities = unsafe { entities.get() };
                 for input in inputs {
                     match input {
                         Input::Left(true) => query.each(|(position, ..)| position.0 -= 1),
@@ -101,48 +102,9 @@ fn input(scheduler: Scheduler) -> Scheduler {
                         _ => {}
                     }
 
-                    // TODO
-                    // for (_, entity, parent) in &query {
-                    //     if let Some(parent) = parent.get(0) {
-                    //         entities.reject(entity, parent);
-                    //     }
-                    // }
-
-                    println!(
-                        "INPUT: {:?} \n {:?} \n {:?} \n {:?} \n {:?}",
-                        input,
-                        query.into_iter().map(|(position, ..)| position).collect::<Vec<_>>(),
-                        query
-                            .into_iter()
-                            .map(|(.., entity, _)| (
-                                entity,
-                                entities.root(entity),
-                                entities.parent(entity),
-                                entities
-                                    .ancestors(entity, Vertical::FromBottom)
-                                    .collect::<Vec<_>>(),
-                            ))
-                            .collect::<Vec<_>>(),
-                        query
-                            .into_iter()
-                            .map(|(.., family, _, _)| (
-                                family.entity(),
-                                family.parent(),
-                                family.ancestors(Vertical::FromBottom).collect::<Vec<_>>(),
-                            ))
-                            .collect::<Vec<_>>(),
-                        query
-                            .into_iter()
-                            .map(|(.., entity, parent)| (
-                                parent.get(0),
-                                parent.get(1),
-                                parent.get(2),
-                                parent.get(3),
-                                parent.into_iter().collect::<Vec<_>>(),
-                                parent.into_iter().last().unwrap_or(entity)
-                            ))
-                            .collect::<Vec<_>>(),
-                    );
+                    for (.., entity, _) in &query {
+                        entities.reject(entity);
+                    }
                 }
             },
         )

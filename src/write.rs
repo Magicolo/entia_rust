@@ -1,4 +1,4 @@
-use std::{any::TypeId, marker::PhantomData, sync::Arc};
+use std::{marker::PhantomData, sync::Arc};
 
 use crate::{
     depend::{Depend, Dependency},
@@ -71,7 +71,7 @@ impl<T> Clone for State<T> {
 
 unsafe impl<T: 'static> Depend for State<T> {
     fn depend(&self, _: &World) -> Vec<Dependency> {
-        vec![Dependency::Write(self.1, TypeId::of::<T>())]
+        vec![Dependency::write::<T>().at(self.1)]
     }
 }
 

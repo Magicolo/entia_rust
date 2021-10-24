@@ -1,8 +1,4 @@
-use std::{
-    any::{Any, TypeId},
-    collections::VecDeque,
-    marker::PhantomData,
-};
+use std::{any::Any, collections::VecDeque, marker::PhantomData};
 
 use crate::{
     depend::{Depend, Dependency},
@@ -146,7 +142,7 @@ impl<'a, R: Resolve> Get<'a> for State<R> {
 unsafe impl<R: Resolve> Depend for State<R> {
     fn depend(&self, _: &World) -> Vec<Dependency> {
         // TODO: Find a way to reduce dependencies.
-        vec![Dependency::Defer(usize::MAX, TypeId::of::<Entity>())]
+        vec![Dependency::defer::<Entity>()]
     }
 }
 

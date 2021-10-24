@@ -1,4 +1,4 @@
-use std::{any::TypeId, collections::HashMap, iter::once};
+use std::{collections::HashMap, iter::once};
 
 use crate::{
     depend::{Depend, Dependency},
@@ -168,7 +168,7 @@ impl<I: Initial> Inner<I> {
         self.families()
     }
 
-    fn reserve(&mut self, count: usize, entities: &mut Entities, world: &World) -> (usize, bool) {
+    fn reserve(&mut self, count: usize, entities: &Entities, world: &World) -> (usize, bool) {
         self.entity_instances.resize(count, Entity::NULL);
         let ready = entities.reserve(&mut self.entity_instances);
         let mut last = 0;
@@ -374,7 +374,7 @@ unsafe impl<I: Initial> Depend for State<I> {
         self.inner
             .segment_indices
             .iter()
-            .map(|indices| Dependency::Defer(indices.segment, TypeId::of::<Entity>()))
+            .map(|indices| Dependency::defer::<Entity>().at(indices.segment))
             .collect()
     }
 }
