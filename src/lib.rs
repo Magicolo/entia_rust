@@ -5,7 +5,9 @@ mod depend;
 mod destroy;
 mod entities;
 mod entity;
+mod families;
 mod family;
+mod familyzzz;
 mod ignore;
 mod initial;
 mod inject;
@@ -27,13 +29,11 @@ pub use crate::{
     create::Create,
     defer::Defer,
     destroy::Destroy,
-    entities::{
-        families::Families,
-        family::{Family, Horizontal, Vertical},
-        Entities,
-    },
+    entities::{Horizontal, Vertical},
     entity::Entity,
-    family::item::{Child, Parent},
+    families::Families,
+    family::Family,
+    familyzzz::item::{Child, Parent},
     ignore::{Ignore, Scope},
     initial::{spawn, with, Initial, StaticInitial},
     inject::Injector,

@@ -1,7 +1,5 @@
 use std::collections::VecDeque;
 
-// TODO: implement react?
-// - Try again to add the 'Run' trait such that there may be different implementations: Every, Depend
 use crate::{
     depend::{Depend, Dependency},
     inject::{Get, Inject, InjectContext},
