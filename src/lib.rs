@@ -34,7 +34,7 @@ pub use crate::{
     },
     entity::Entity,
     family::item::{Child, Parent},
-    ignore::Ignore,
+    ignore::{Ignore, Scope},
     initial::{spawn, with, Initial, StaticInitial},
     inject::Injector,
     message::emit::Emit,

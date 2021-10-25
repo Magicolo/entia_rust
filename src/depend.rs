@@ -1,6 +1,5 @@
-use std::any::TypeId;
-
 use crate::world::World;
+use std::any::{type_name, TypeId};
 
 /// SAFETY: This trait is unsafe since a wrong implementation may lead to undefined behavior. Every
 /// implementor must declare all necessary dependencies in order to properly inform a scheduler of what it
@@ -9,7 +8,7 @@ pub unsafe trait Depend {
     fn depend(&self, world: &World) -> Vec<Dependency>;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Scope {
     All,
     Inner,
@@ -19,30 +18,35 @@ pub enum Scope {
 #[derive(Debug, Clone)]
 pub enum Dependency {
     Unknown,
-    Read(TypeId),
-    Write(TypeId),
-    Defer(TypeId),
+    Read(TypeId, &'static str),
+    Write(TypeId, &'static str),
+    Defer(TypeId, &'static str),
     At(usize, Box<Dependency>),
     Ignore(Scope, Box<Dependency>),
 }
 
 impl Dependency {
+    #[inline]
     pub fn read<T: 'static>() -> Self {
-        Self::Read(TypeId::of::<T>())
+        Self::Read(TypeId::of::<T>(), type_name::<T>())
     }
 
+    #[inline]
     pub fn write<T: 'static>() -> Self {
-        Self::Write(TypeId::of::<T>())
+        Self::Write(TypeId::of::<T>(), type_name::<T>())
     }
 
+    #[inline]
     pub fn defer<T: 'static>() -> Self {
-        Self::Defer(TypeId::of::<T>())
+        Self::Defer(TypeId::of::<T>(), type_name::<T>())
     }
 
+    #[inline]
     pub fn at(self, index: usize) -> Self {
         Self::At(index, self.into())
     }
 
+    #[inline]
     pub fn ignore(self, scope: Scope) -> Self {
         Self::Ignore(scope, self.into())
     }

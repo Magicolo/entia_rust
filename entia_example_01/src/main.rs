@@ -90,9 +90,8 @@ fn input(scheduler: Scheduler) -> Scheduler {
         })
         .schedule(
             |inputs: Receive<Input>,
-             entities: Ignore<&mut Entities>,
-             query: Query<(&mut Position, Family, Entity, Parent<Entity>), Controller>| {
-                let entities = unsafe { entities.get() };
+            entities: &mut Entities,
+            query: Query<(&mut Position, Family, Entity, Parent<Entity>), Controller>| {
                 for input in inputs {
                     match input {
                         Input::Left(true) => query.each(|(position, ..)| position.0 -= 1),
@@ -100,6 +99,10 @@ fn input(scheduler: Scheduler) -> Scheduler {
                         Input::Down(true) => query.each(|(position, ..)| position.1 -= 1),
                         Input::Up(true) => query.each(|(position, ..)| position.1 += 1),
                         _ => {}
+                    }
+
+                    for (_, family, ..) in &query {
+                        println!("{:?}", family);
                     }
 
                     for (.., entity, _) in &query {

@@ -1,13 +1,14 @@
 use self::runner::*;
 use crate::{
-    depend::{Depend, Dependency},
+    depend::{Depend, Dependency, Scope},
     inject::{Get, Inject, InjectContext},
     world::World,
 };
-use entia_core::Call;
+use entia_core::{bits::Bits, Call, Change};
 use std::{
     any::{type_name, TypeId},
     cell::UnsafeCell,
+    collections::{HashMap, HashSet},
     fmt,
     mem::replace,
     mem::swap,
@@ -24,12 +25,18 @@ pub struct System {
     pub(crate) depend: Box<dyn Fn(&World) -> Vec<Dependency>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Error {
     WrongWorld,
     MissingSystem,
     FailedToInject,
-    DependencyConflict(usize),
+    SystemInnerConflict(String, Box<Error>),
+    SystemOuterConflict(String, Box<Error>),
+    UnknownConflict,
+    ReadWriteConflict(&'static str, Option<usize>),
+    WriteWriteConflict(&'static str, Option<usize>),
+    ReadDeferConflict(&'static str, Option<usize>),
+    WriteDeferConflict(&'static str, Option<usize>),
     All(Vec<Error>),
 }
 
@@ -214,12 +221,6 @@ impl fmt::Debug for System {
 }
 
 pub mod runner {
-    use std::collections::HashMap;
-
-    use entia_core::bits::Bits;
-
-    use crate::depend::Scope;
-
     use super::*;
 
     pub struct Runner {
@@ -232,6 +233,7 @@ pub mod runner {
     pub struct Block {
         systems: Vec<System>,
         dependencies: Vec<Dependency>,
+        error: Option<Error>,
     }
 
     unsafe impl Send for System {}
@@ -253,12 +255,11 @@ pub mod runner {
                 return Err(Error::WrongWorld);
             }
 
-            if self.segments != world.segments.len() {
+            if self.segments.change(world.segments.len()) {
                 self.blocks = Self::schedule(
                     self.blocks.into_iter().map(|block| block.systems).flatten(),
                     world,
                 )?;
-                self.segments = world.segments.len();
             }
 
             for block in self.blocks.iter_mut() {
@@ -288,6 +289,8 @@ pub mod runner {
             systems: impl Iterator<Item = System>,
             world: &mut World,
         ) -> Result<Vec<Block>, Error> {
+            use Scope::*;
+
             #[derive(Debug)]
             enum Has {
                 All,
@@ -338,16 +341,26 @@ pub mod runner {
             }
 
             impl State {
-                pub fn inner_conflicts(&mut self, dependencies: &Vec<Dependency>) -> bool {
-                    dependencies
-                        .iter()
-                        .any(|dependency| self.inner_conflict(None, dependency.clone()))
-                }
+                pub fn conflicts(
+                    &mut self,
+                    scope: Scope,
+                    dependencies: &Vec<Dependency>,
+                ) -> Result<(), Error> {
+                    let mut errors = Vec::new();
+                    if scope == Outer && self.unknown {
+                        errors.push(Error::UnknownConflict);
+                    }
 
-                pub fn outer_conflicts(&mut self, dependencies: &Vec<Dependency>) -> bool {
-                    dependencies
-                        .iter()
-                        .any(|dependency| self.outer_conflict(None, dependency.clone()))
+                    for dependency in dependencies {
+                        match self.conflict(scope, None, dependency.clone()) {
+                            Ok(_) => {}
+                            Err(error) => errors.push(error),
+                        }
+                    }
+
+                    let mut set = HashSet::new();
+                    errors.retain(move |error| set.insert(error.clone()));
+                    Error::All(errors).flatten(true).map(Err).unwrap_or(Ok(()))
                 }
 
                 pub fn clear(&mut self) {
@@ -357,126 +370,83 @@ pub mod runner {
                     self.defers.clear();
                 }
 
-                fn inner_conflict(&mut self, index: Option<usize>, dependency: Dependency) -> bool {
+                fn conflict(
+                    &mut self,
+                    scope: Scope,
+                    index: Option<usize>,
+                    dependency: Dependency,
+                ) -> Result<(), Error> {
                     match (index, dependency) {
                         (_, Dependency::Unknown) => {
                             self.unknown = true;
-                            false
+                            if scope == Outer {
+                                Err(Error::UnknownConflict)
+                            } else {
+                                Ok(())
+                            }
                         }
                         (_, Dependency::At(index, dependency)) => {
-                            self.inner_conflict(Some(index), *dependency)
+                            self.conflict(scope, Some(index), *dependency)
                         }
-                        (_, Dependency::Ignore(Scope::All, _)) => false,
-                        (_, Dependency::Ignore(Scope::Inner, _)) => false,
-                        (index, Dependency::Ignore(Scope::Outer, dependency)) => {
-                            self.inner_conflict(index, *dependency)
+                        (index, Dependency::Ignore(inner, dependency)) => {
+                            if scope == inner || inner == All {
+                                self.conflict(scope, index, *dependency)
+                            } else {
+                                Ok(())
+                            }
                         }
-                        (Some(index), Dependency::Read(identifier)) => {
+                        (Some(index), Dependency::Read(identifier, name)) => {
                             if has(&self.writes, identifier, index) {
-                                true
+                                Err(Error::ReadWriteConflict(name, Some(index)))
+                            } else if scope == Outer && has(&self.defers, identifier, index) {
+                                Err(Error::ReadDeferConflict(name, Some(index)))
                             } else {
                                 add(&mut self.reads, identifier, index);
-                                false
+                                Ok(())
                             }
                         }
-                        (Some(index), Dependency::Write(identifier)) => {
-                            if has(&self.reads, identifier, index)
-                                || has(&self.writes, identifier, index)
-                            {
-                                return true;
-                            } else {
-                                add(&mut self.writes, identifier, index);
-                                false
-                            }
-                        }
-                        (Some(index), Dependency::Defer(identifier)) => {
-                            add(&mut self.defers, identifier, index);
-                            false
-                        }
-                        (None, Dependency::Read(identifier)) => {
-                            if has_any(&self.writes, identifier) {
-                                true
-                            } else {
-                                add_all(&mut self.reads, identifier);
-                                false
-                            }
-                        }
-                        (None, Dependency::Write(identifier)) => {
-                            if has_any(&self.reads, identifier) || has_any(&self.writes, identifier)
-                            {
-                                return true;
-                            } else {
-                                add_all(&mut self.writes, identifier);
-                                false
-                            }
-                        }
-                        (None, Dependency::Defer(identifier)) => {
-                            add_all(&mut self.defers, identifier);
-                            false
-                        }
-                    }
-                }
 
-                fn outer_conflict(&mut self, index: Option<usize>, dependency: Dependency) -> bool {
-                    match (index, dependency) {
-                        (_, Dependency::Unknown) => true,
-                        (_, Dependency::At(index, dependency)) => {
-                            self.outer_conflict(Some(index), *dependency)
-                        }
-                        (_, Dependency::Ignore(Scope::All, _)) => false,
-                        (_, Dependency::Ignore(Scope::Outer, _)) => false,
-                        (index, Dependency::Ignore(Scope::Inner, dependency)) => {
-                            self.inner_conflict(index, *dependency)
-                        }
-                        (Some(index), Dependency::Read(identifier)) => {
-                            if has(&self.writes, identifier, index)
-                                || has(&self.defers, identifier, index)
-                            {
-                                true
-                            } else {
-                                add(&mut self.reads, identifier, index);
-                                false
-                            }
-                        }
-                        (Some(index), Dependency::Write(identifier)) => {
-                            if has(&self.reads, identifier, index)
-                                || has(&self.writes, identifier, index)
-                                || has(&self.defers, identifier, index)
-                            {
-                                true
+                        (Some(index), Dependency::Write(identifier, name)) => {
+                            if has(&self.reads, identifier, index) {
+                                Err(Error::ReadWriteConflict(name, Some(index)))
+                            } else if has(&self.writes, identifier, index) {
+                                Err(Error::WriteWriteConflict(name, Some(index)))
+                            } else if scope == Outer && has(&self.defers, identifier, index) {
+                                Err(Error::WriteDeferConflict(name, Some(index)))
                             } else {
                                 add(&mut self.writes, identifier, index);
-                                false
+                                Ok(())
                             }
                         }
-                        (Some(index), Dependency::Defer(identifier)) => {
+                        (Some(index), Dependency::Defer(identifier, _)) => {
                             add(&mut self.defers, identifier, index);
-                            false
+                            Ok(())
                         }
-                        (None, Dependency::Read(identifier)) => {
-                            if has_any(&self.writes, identifier)
-                                || has_any(&self.defers, identifier)
-                            {
-                                true
+                        (None, Dependency::Read(identifier, name)) => {
+                            if has_any(&self.writes, identifier) {
+                                Err(Error::ReadWriteConflict(name, None))
+                            } else if scope == Outer && has_any(&self.defers, identifier) {
+                                Err(Error::ReadDeferConflict(name, None))
                             } else {
                                 add_all(&mut self.reads, identifier);
-                                false
+                                Ok(())
                             }
                         }
-                        (None, Dependency::Write(identifier)) => {
-                            if has_any(&self.reads, identifier)
-                                || has_any(&self.writes, identifier)
-                                || has_any(&self.defers, identifier)
-                            {
-                                true
+                        (None, Dependency::Write(identifier, name)) => {
+                            if has_any(&self.reads, identifier) {
+                                Err(Error::ReadWriteConflict(name, None))
+                            } else if has_any(&self.writes, identifier) {
+                                Err(Error::WriteWriteConflict(name, None))
+                            } else if scope == Outer && has_any(&self.defers, identifier) {
+                                Err(Error::WriteDeferConflict(name, None))
                             } else {
                                 add_all(&mut self.writes, identifier);
-                                false
+                                Ok(())
                             }
                         }
-                        (None, Dependency::Defer(identifier)) => {
+                        (None, Dependency::Defer(identifier, _)) => {
                             add_all(&mut self.defers, identifier);
-                            false
+                            Ok(())
                         }
                     }
                 }
@@ -504,23 +474,35 @@ pub mod runner {
             let mut block = Block::default();
             let mut inner = State::default();
             let mut outer = State::default();
+            let mut errors = Vec::new();
 
             for mut system in systems {
                 (system.update)(world);
 
                 let mut dependencies = (system.depend)(world);
-                if inner.inner_conflicts(&dependencies) {
-                    // TODO: Add more details to the error.
-                    // TODO: Rather than returning early, continue collecting errors.
-                    return Err(Error::DependencyConflict(system.identifier()));
-                } else if outer.outer_conflicts(&dependencies) {
-                    // TODO: When 'outer_conflicts' are detected, can later systems be still included in the block if they do not
-                    // have 'outer_conflicts'? Dependencies would need to be accumulated even for conflicting systems and a system
-                    // that has a 'Dependency::Unknown' should never be crossed.
-                    if block.systems.len() > 0 {
-                        blocks.push(replace(&mut block, Block::default()));
+                match inner.conflicts(Inner, &dependencies) {
+                    Ok(()) => {}
+                    Err(error) => errors.push(Error::SystemInnerConflict(
+                        system.name().into(),
+                        error.into(),
+                    )),
+                }
+
+                match outer.conflicts(Outer, &dependencies) {
+                    Ok(_) => {}
+                    Err(error) => {
+                        // TODO: When 'outer_conflicts' are detected, can later systems be still included in the block if they do not
+                        // have 'outer_conflicts'? Dependencies would need to be accumulated even for conflicting systems and a system
+                        // that has a 'Dependency::Unknown' should never be crossed.
+                        if block.systems.len() > 0 {
+                            block.error = Some(Error::SystemOuterConflict(
+                                system.name().into(),
+                                error.into(),
+                            ));
+                            blocks.push(replace(&mut block, Block::default()));
+                        }
+                        swap(&mut inner, &mut outer);
                     }
-                    swap(&mut inner, &mut outer);
                 }
 
                 block.systems.push(system);
@@ -532,7 +514,10 @@ pub mod runner {
                 blocks.push(block);
             }
 
-            Ok(blocks)
+            Error::All(errors)
+                .flatten(true)
+                .map(Err)
+                .unwrap_or(Ok(blocks))
         }
     }
 }

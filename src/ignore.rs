@@ -1,14 +1,41 @@
+use std::marker::PhantomData;
+
 use crate::{
-    depend::{Depend, Dependency},
+    depend::{self, Depend, Dependency},
     inject::{Get, Inject, InjectContext},
     query::item::{At, Item, ItemContext},
     world::World,
 };
 
-pub struct Ignore<I>(I);
-pub struct State<S>(S);
+pub struct Ignore<I, S: Scope = All>(I, PhantomData<S>);
+pub struct State<T, S: Scope>(T, PhantomData<S>);
 
-impl<I> Ignore<I> {
+pub struct All;
+pub struct Inner;
+pub struct Outer;
+pub trait Scope: Send + 'static {
+    fn scope() -> depend::Scope;
+}
+
+impl Scope for All {
+    fn scope() -> depend::Scope {
+        depend::Scope::All
+    }
+}
+
+impl Scope for Inner {
+    fn scope() -> depend::Scope {
+        depend::Scope::Inner
+    }
+}
+
+impl Scope for Outer {
+    fn scope() -> depend::Scope {
+        depend::Scope::Outer
+    }
+}
+
+impl<I, S: Scope> Ignore<I, S> {
     /// SAFETY: Since 'Ignore' removes the dependency checks that ensure Rust's invariants, the user must maintain them through some
     /// other means. This should not be used lightly since dependency logic can be quite tricky to get right.
     #[inline]
@@ -17,42 +44,46 @@ impl<I> Ignore<I> {
     }
 }
 
-unsafe impl<I: Inject + 'static> Inject for Ignore<I> {
+unsafe impl<I: Inject + 'static, S: Scope> Inject for Ignore<I, S> {
     type Input = I::Input;
-    type State = State<I::State>;
+    type State = State<I::State, S>;
 
     fn initialize(input: Self::Input, context: InjectContext) -> Option<Self::State> {
-        Some(State(I::initialize(input, context)?))
+        Some(State(I::initialize(input, context)?, PhantomData))
     }
 }
 
-impl<'a, S: Get<'a>> Get<'a> for State<S> {
-    type Item = Ignore<S::Item>;
+impl<'a, T: Get<'a>, S: Scope> Get<'a> for State<T, S> {
+    type Item = Ignore<T::Item, S>;
 
     fn get(&'a mut self, world: &'a World) -> Self::Item {
-        Ignore(self.0.get(world))
+        Ignore(self.0.get(world), PhantomData)
     }
 }
 
-unsafe impl<I: Item + 'static> Item for Ignore<I> {
-    type State = State<I::State>;
+unsafe impl<I: Item + 'static, S: Scope> Item for Ignore<I, S> {
+    type State = State<I::State, S>;
 
     fn initialize(context: ItemContext) -> Option<Self::State> {
-        Some(State(I::initialize(context)?))
+        Some(State(I::initialize(context)?, PhantomData))
     }
 }
 
-impl<'a, S: At<'a>> At<'a> for State<S> {
-    type Item = Ignore<S::Item>;
+impl<'a, T: At<'a>, S: Scope> At<'a> for State<T, S> {
+    type Item = Ignore<T::Item>;
 
     #[inline]
     fn at(&'a self, index: usize, world: &'a World) -> Self::Item {
-        Ignore(self.0.at(index, world))
+        Ignore(self.0.at(index, world), PhantomData)
     }
 }
 
-unsafe impl<S> Depend for State<S> {
-    fn depend(&self, _: &World) -> Vec<Dependency> {
-        Vec::new()
+unsafe impl<T: Depend, S: Scope> Depend for State<T, S> {
+    fn depend(&self, world: &World) -> Vec<Dependency> {
+        let mut dependencies = self.0.depend(world);
+        for dependency in dependencies.iter_mut() {
+            *dependency = dependency.clone().ignore(S::scope());
+        }
+        dependencies
     }
 }

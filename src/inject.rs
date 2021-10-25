@@ -1,4 +1,4 @@
-use std::any::type_name;
+use entia_core::utility::short_type_name;
 
 use crate::{depend::Depend, world::World};
 
@@ -12,7 +12,7 @@ pub unsafe trait Inject {
     type State: for<'a> Get<'a> + Depend;
 
     fn name() -> String {
-        type_name::<Self>().into()
+        short_type_name::<Self>()
     }
     fn initialize(input: Self::Input, context: InjectContext) -> Option<Self::State>;
     #[inline]
