@@ -12,8 +12,11 @@ use std::vec;
 pub struct Families<'a>(&'a mut Vec<Defer>, &'a Entities);
 pub struct State(Vec<Defer>, write::State<Entities>);
 enum Defer {
+    AdoptAt(Entity, Entity, usize),
     AdoptFirst(Entity, Entity),
     AdoptLast(Entity, Entity),
+    AdoptBefore(Entity, Entity),
+    AdoptAfter(Entity, Entity),
     Reject(Entity),
     RejectAll(Entity),
 }
@@ -31,12 +34,24 @@ impl<'a> Families<'a> {
             .map(move |entity| Family::new(entity, entities))
     }
 
+    pub fn adopt_at(&mut self, parent: Entity, child: Entity, index: usize) {
+        self.0.push(Defer::AdoptAt(parent, child, index));
+    }
+
     pub fn adopt_first(&mut self, parent: Entity, child: Entity) {
         self.0.push(Defer::AdoptFirst(parent, child));
     }
 
     pub fn adopt_last(&mut self, parent: Entity, child: Entity) {
         self.0.push(Defer::AdoptLast(parent, child));
+    }
+
+    pub fn adopt_before(&mut self, sibling: Entity, child: Entity) {
+        self.0.push(Defer::AdoptBefore(sibling, child));
+    }
+
+    pub fn adopt_after(&mut self, sibling: Entity, child: Entity) {
+        self.0.push(Defer::AdoptAfter(sibling, child));
     }
 
     pub fn reject_first(&mut self, parent: Entity) {
@@ -81,11 +96,20 @@ unsafe impl Inject for Families<'_> {
         let entities = state.1.as_mut();
         for defer in state.0.drain(..) {
             match defer {
+                Defer::AdoptAt(parent, child, index) => {
+                    entities.adopt_at(parent, child, index);
+                }
                 Defer::AdoptFirst(parent, child) => {
                     entities.adopt_first(parent, child);
                 }
                 Defer::AdoptLast(parent, child) => {
                     entities.adopt_last(parent, child);
+                }
+                Defer::AdoptBefore(sibling, child) => {
+                    entities.adopt_before(sibling, child);
+                }
+                Defer::AdoptAfter(sibling, child) => {
+                    entities.adopt_after(sibling, child);
                 }
                 Defer::Reject(child) => {
                     entities.reject(child);
@@ -108,8 +132,6 @@ impl<'a> Get<'a> for State {
 
 unsafe impl Depend for State {
     fn depend(&self, _: &World) -> Vec<Dependency> {
-        // TODO: As it stands, 'Families' could be injected twice in a system. While it would respect Rust's invariants, it might
-        // have an unintuitive resolution.
         vec![
             Dependency::defer::<Entities>(),
             Dependency::read::<Entities>(),

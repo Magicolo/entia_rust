@@ -29,7 +29,7 @@ struct Time {
 }
 impl Resource for Time {}
 
-// TODO: Fix and unify 'familyzzz'.
+// TODO: Rename and/or unify 'familyzzz'.
 // TODO: Review 'families'.
 // TODO: More aggressive parallelization of systems.
 // - Try to bundle systems after a conflict?

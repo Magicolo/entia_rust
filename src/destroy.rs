@@ -136,6 +136,9 @@ impl<'a> Get<'a> for State {
 
 unsafe impl Depend for State {
     fn depend(&self, _: &World) -> Vec<Dependency> {
-        vec![Dependency::defer::<Entity>()]
+        vec![
+            Dependency::defer::<Entities>(),
+            Dependency::defer::<Entity>(),
+        ]
     }
 }
