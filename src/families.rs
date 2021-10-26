@@ -1,6 +1,6 @@
 use crate::{
     depend::{Depend, Dependency},
-    entities::{Entities, Horizontal},
+    entities::Entities,
     entity::Entity,
     family::Family,
     inject::{Get, Inject, InjectContext},
@@ -24,7 +24,7 @@ impl<'a> Families<'a> {
         Family::new(entity, self.1)
     }
 
-    pub fn roots(&self) -> impl Iterator<Item = Family<'a>> {
+    pub fn roots(&self) -> impl DoubleEndedIterator<Item = Family<'a>> {
         let entities = self.1;
         entities
             .roots()
@@ -40,19 +40,19 @@ impl<'a> Families<'a> {
     }
 
     pub fn reject_first(&mut self, parent: Entity) {
-        if let Some(child) = self.1.children(parent, Horizontal::FromLeft).next() {
+        if let Some(child) = self.1.children(parent).next() {
             self.reject(child);
         }
     }
 
     pub fn reject_last(&mut self, parent: Entity) {
-        if let Some(child) = self.1.children(parent, Horizontal::FromRight).next() {
+        if let Some(child) = self.1.children(parent).next_back() {
             self.reject(child);
         }
     }
 
-    pub fn reject_at(&mut self, parent: Entity, index: usize, direction: Horizontal) {
-        if let Some(child) = self.1.children(parent, direction).nth(index) {
+    pub fn reject_at(&mut self, parent: Entity, index: usize) {
+        if let Some(child) = self.1.children(parent).nth(index) {
             self.reject(child);
         }
     }
@@ -108,6 +108,8 @@ impl<'a> Get<'a> for State {
 
 unsafe impl Depend for State {
     fn depend(&self, _: &World) -> Vec<Dependency> {
+        // TODO: As it stands, 'Families' could be injected twice in a system. While it would respect Rust's invariants, it might
+        // have an unintuitive resolution.
         vec![
             Dependency::defer::<Entities>(),
             Dependency::read::<Entities>(),

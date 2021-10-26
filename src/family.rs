@@ -1,6 +1,6 @@
 use crate::{
     depend::{Depend, Dependency},
-    entities::{Entities, Horizontal, Vertical},
+    entities::Entities,
     entity::Entity,
     inject::Inject,
     query::item::{At, Item, ItemContext},
@@ -15,7 +15,7 @@ pub struct State(read::State<Entity>, read::State<Entities>);
 
 impl<'a> Family<'a> {
     #[inline]
-    pub const fn new(entity: Entity, entities: &'a Entities) -> Self {
+    pub(crate) const fn new(entity: Entity, entities: &'a Entities) -> Self {
         Self(entity, entities)
     }
 
@@ -35,58 +35,61 @@ impl<'a> Family<'a> {
     }
 
     #[inline]
-    pub fn children(&self, direction: Horizontal) -> impl Iterator<Item = Family<'a>> {
+    pub fn children(&self) -> impl DoubleEndedIterator<Item = Family<'a>> {
         let Self(entity, entities) = *self;
         entities
-            .children(entity, direction)
+            .children(entity)
             .map(move |child| Self(child, entities))
     }
 
     #[inline]
-    pub fn ancestors(&self, direction: Vertical) -> impl Iterator<Item = Family<'a>> {
+    pub fn ancestors(&self) -> impl DoubleEndedIterator<Item = Family<'a>> {
         let Self(entity, entities) = *self;
         entities
-            .ancestors(entity, direction)
+            .ancestors(entity)
             .map(move |parent| Self(parent, entities))
     }
 
     #[inline]
-    pub fn descendants(
-        &self,
-        direction: (Horizontal, Vertical),
-    ) -> impl Iterator<Item = Family<'a>> {
+    pub fn descendants(&self) -> impl DoubleEndedIterator<Item = Family<'a>> {
         let Self(entity, entities) = *self;
         entities
-            .descendants(entity, direction)
+            .descendants(entity)
             .map(move |child| Self(child, entities))
     }
 
     #[inline]
-    pub fn siblings(&self, direction: Horizontal) -> impl Iterator<Item = Family<'a>> {
+    pub fn siblings(&self) -> impl DoubleEndedIterator<Item = Family<'a>> {
         let Self(entity, entities) = *self;
         entities
-            .siblings(entity, direction)
+            .siblings(entity)
             .map(move |sibling| Self(sibling, entities))
     }
 
-    /// Parameter 'each' takes the current ancestor and returns a 'bool' that indicates if the ascension should continue.
-    /// Return value will be 'true' only if all ancestors have been visited.
     #[inline]
-    pub fn ascend(&self, direction: Vertical, mut each: impl FnMut(Self) -> bool) -> bool {
-        self.1
-            .ascend(self.0, direction, |parent| each(Self(parent, self.1)))
+    pub fn ascend(
+        &self,
+        mut up: impl FnMut(Self) -> bool,
+        mut down: impl FnMut(Self) -> bool,
+    ) -> Option<bool> {
+        self.1.ascend(
+            self.0,
+            |parent| up(Self(parent, self.1)),
+            |parent| down(Self(parent, self.1)),
+        )
     }
 
-    /// Parameter 'each' takes the current descendant and returns a 'bool' that indicates if the descent should continue.
-    /// Return value will be 'true' only if all descendants have been visited.
     #[inline]
     pub fn descend(
         &self,
-        direction: (Horizontal, Vertical),
-        mut each: impl FnMut(Self) -> bool,
-    ) -> bool {
-        self.1
-            .descend(self.0, direction, |child| each(Self(child, self.1)))
+        mut down: impl FnMut(Self) -> bool,
+        mut up: impl FnMut(Self) -> bool,
+    ) -> Option<bool> {
+        self.1.descend(
+            self.0,
+            |child| down(Self(child, self.1)),
+            |child| up(Self(child, self.1)),
+        )
     }
 }
 
@@ -99,11 +102,11 @@ impl Into<Entity> for Family<'_> {
 impl fmt::Debug for Family<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct(&format!("{:?}", self.entity()))
-            .field("Parent", &self.parent().map(|parent| parent.entity()))
+            .field("parent", &self.parent().map(|parent| parent.entity()))
             .field(
-                "Children",
+                "children",
                 &self
-                    .children(Horizontal::FromLeft)
+                    .children()
                     .map(|child| child.entity())
                     .collect::<Vec<_>>(),
             )

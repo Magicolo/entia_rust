@@ -29,7 +29,6 @@ pub use crate::{
     create::Create,
     defer::Defer,
     destroy::Destroy,
-    entities::{Horizontal, Vertical},
     entity::Entity,
     families::Families,
     family::Family,

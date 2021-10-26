@@ -2,7 +2,7 @@ use std::{any::type_name, fmt, iter::from_fn, marker::PhantomData};
 
 use crate::{
     depend::{Depend, Dependency},
-    entities::{Datum, Entities, Horizontal, Vertical},
+    entities::{Datum, Entities},
     entity::Entity,
     inject::Inject,
     query::{
@@ -103,9 +103,8 @@ pub mod initial {
                 .unwrap_or(self.clone())
         }
 
-        pub fn children(&self, direction: Horizontal) -> impl Iterator<Item = Family<'a>> {
-            // TODO: Implement 'Horizontal::FromRight' or, if possible, unify this implementation with 'entities::family'.
-            let local = self.clone();
+        pub fn children(&self) -> impl Iterator<Item = Family<'a>> {
+            let family = self.clone();
             let parent = Some(self.entity_index);
             let mut next = parent.map(|index| index + 1).filter(|&index| {
                 index < self.entity_indices.len() && self.entity_indices[index].parent == parent
@@ -113,88 +112,165 @@ pub mod initial {
 
             from_fn(move || {
                 let current = next?;
-                next = local.entity_indices[current].next_sibling;
-                Some(local.with(current))
+                next = family.entity_indices[current].next_sibling;
+                Some(family.with(current))
             })
         }
 
-        pub fn ascend(&self, direction: Vertical, mut each: impl FnMut(Self)) {
-            fn from_top<'a>(family: &Family<'a>, each: &mut impl FnMut(Family<'a>)) {
-                if let Some(parent) = family.parent() {
-                    from_top(&parent, each);
-                    each(parent);
-                }
-            }
-
-            fn from_bottom<'a>(family: &Family<'a>, each: &mut impl FnMut(Family<'a>)) {
-                if let Some(parent) = family.parent() {
-                    each(parent.clone());
-                    from_bottom(&parent, each);
-                }
-            }
-
-            match direction {
-                Vertical::FromTop => from_top(self, &mut each),
-                Vertical::FromBottom => from_bottom(self, &mut each),
-            }
-        }
-
-        pub fn descend(&self, direction: (Horizontal, Vertical), mut each: impl FnMut(Self)) {
-            fn from_top<'a>(
-                family: &Family<'a>,
-                direction: Horizontal,
-                each: &mut impl FnMut(Family<'a>),
-            ) {
-                for child in family.children(direction) {
-                    each(child.clone());
-                    from_top(&child, direction, each);
-                }
-            }
-
-            fn from_bototm<'a>(
-                family: &Family<'a>,
-                direction: Horizontal,
-                each: &mut impl FnMut(Family<'a>),
-            ) {
-                for child in family.children(direction) {
-                    from_bototm(&child, direction, each);
-                    each(child);
-                }
-            }
-
-            match direction.1 {
-                Vertical::FromTop => from_top(self, direction.0, &mut each),
-                Vertical::FromBottom => from_bototm(self, direction.0, &mut each),
-            }
-        }
-
-        pub fn descendants(
-            &self,
-            direction: (Horizontal, Vertical),
-        ) -> impl Iterator<Item = Family<'a>> {
-            let mut descendants = Vec::new();
-            self.descend(direction, |child| descendants.push(child));
-            descendants.into_iter()
-        }
-
-        pub fn ancestors(&self) -> impl Iterator<Item = Family<'a>> {
-            let local = self.clone();
-            let mut next = self.entity_indices[self.entity_index].parent;
-            from_fn(move || {
-                let current = next?;
-                next = local.entity_indices[current].parent;
-                Some(local.with(current))
-            })
-        }
-
-        pub fn siblings(&self, direction: Horizontal) -> impl Iterator<Item = Family<'a>> {
-            let entity_index = self.entity_index;
+        pub fn siblings(&self) -> impl Iterator<Item = Family<'a>> {
+            let entity = self.entity();
             self.parent()
-                .map(|parent| parent.children(direction))
+                .map(|parent| {
+                    parent
+                        .children()
+                        .filter(move |child| child.entity() != entity)
+                })
                 .into_iter()
                 .flatten()
-                .filter(move |child| child.entity_index != entity_index)
         }
+
+        pub fn ancestors(&self) -> impl DoubleEndedIterator<Item = Family<'a>> {
+            let mut entities = Vec::new();
+            self.ascend(
+                |parent| {
+                    entities.push(parent);
+                    true
+                },
+                |_| true,
+            );
+            entities.into_iter()
+        }
+
+        pub fn descendants(&self) -> impl DoubleEndedIterator<Item = Family<'a>> {
+            let mut entities = Vec::new();
+            self.descend(
+                |child| {
+                    entities.push(child);
+                    true
+                },
+                |_| true,
+            );
+            entities.into_iter()
+        }
+
+        pub fn ascend(
+            &self,
+            mut up: impl FnMut(Self) -> bool,
+            mut down: impl FnMut(Self) -> bool,
+        ) -> bool {
+            fn next<'a>(
+                family: &Family<'a>,
+                up: &mut impl FnMut(Family<'a>) -> bool,
+                down: &mut impl FnMut(Family<'a>) -> bool,
+            ) -> bool {
+                if let Some(parent) = family.parent() {
+                    up(parent.clone()) && next(&parent, up, down) && down(parent)
+                } else {
+                    true
+                }
+            }
+
+            next(self, &mut up, &mut down)
+        }
+
+        pub fn descend(
+            &self,
+            mut down: impl FnMut(Self) -> bool,
+            mut up: impl FnMut(Self) -> bool,
+        ) -> bool {
+            #[inline]
+            fn next<'a>(
+                family: &Family<'a>,
+                down: &mut impl FnMut(Family<'a>) -> bool,
+                up: &mut impl FnMut(Family<'a>) -> bool,
+            ) -> bool {
+                for child in family.children() {
+                    if down(child.clone()) && next(&child, down, up) && up(child) {
+                        continue;
+                    } else {
+                        return false;
+                    }
+                }
+                true
+            }
+
+            next(self, &mut down, &mut up)
+        }
+
+        // pub fn ascend(&self, mut each: impl FnMut(Self)) {
+        //     fn from_top<'a>(family: &Family<'a>, each: &mut impl FnMut(Family<'a>)) {
+        //         if let Some(parent) = family.parent() {
+        //             from_top(&parent, each);
+        //             each(parent);
+        //         }
+        //     }
+
+        //     fn from_bottom<'a>(family: &Family<'a>, each: &mut impl FnMut(Family<'a>)) {
+        //         if let Some(parent) = family.parent() {
+        //             each(parent.clone());
+        //             from_bottom(&parent, each);
+        //         }
+        //     }
+
+        //     match direction {
+        //         Vertical::FromTop => from_top(self, &mut each),
+        //         Vertical::FromBottom => from_bottom(self, &mut each),
+        //     }
+        // }
+
+        // pub fn descend(&self, mut each: impl FnMut(Self)) {
+        //     fn from_top<'a>(
+        //         family: &Family<'a>,
+        //         direction: Horizontal,
+        //         each: &mut impl FnMut(Family<'a>),
+        //     ) {
+        //         for child in family.children(direction) {
+        //             each(child.clone());
+        //             from_top(&child, direction, each);
+        //         }
+        //     }
+
+        //     fn from_bototm<'a>(
+        //         family: &Family<'a>,
+        //         direction: Horizontal,
+        //         each: &mut impl FnMut(Family<'a>),
+        //     ) {
+        //         for child in family.children(direction) {
+        //             from_bototm(&child, direction, each);
+        //             each(child);
+        //         }
+        //     }
+
+        //     match direction.1 {
+        //         Vertical::FromTop => from_top(self, direction.0, &mut each),
+        //         Vertical::FromBottom => from_bototm(self, direction.0, &mut each),
+        //     }
+        // }
+
+        // pub fn descendants(&self) -> impl Iterator<Item = Family<'a>> {
+        //     let mut descendants = Vec::new();
+        //     self.descend(direction, |child| descendants.push(child));
+        //     descendants.into_iter()
+        // }
+
+        // pub fn ancestors(&self) -> impl Iterator<Item = Family<'a>> {
+        //     let local = self.clone();
+        //     let mut next = self.entity_indices[self.entity_index].parent;
+        //     from_fn(move || {
+        //         let current = next?;
+        //         next = local.entity_indices[current].parent;
+        //         Some(local.with(current))
+        //     })
+        // }
+
+        // pub fn siblings(&self) -> impl Iterator<Item = Family<'a>> {
+        //     let entity_index = self.entity_index;
+        //     self.parent()
+        //         .map(|parent| parent.children())
+        //         .into_iter()
+        //         .flatten()
+        //         .filter(move |child| child.entity_index != entity_index)
+        // }
 
         fn with(&self, entity_index: usize) -> Self {
             Self::new(
@@ -207,16 +283,12 @@ pub mod initial {
         }
     }
 
-    impl std::fmt::Debug for Family<'_> {
+    impl fmt::Debug for Family<'_> {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             let entity = self.entity();
             let parent = self.parent().map(|parent| parent.entity());
-            let children: Vec<_> = self
-                .children(Horizontal::FromLeft)
-                .map(|child| child.entity())
-                .collect();
-            f.debug_struct("Family")
-                .field("entity", &entity)
+            let children: Vec<_> = self.children().map(|child| child.entity()).collect();
+            f.debug_struct(&format!("{:?}", entity))
                 .field("parent", &parent)
                 .field("children", &children)
                 .finish()
@@ -414,7 +486,7 @@ pub mod item {
         #[inline]
         fn at(&'a self, index: usize, world: &'a World) -> Self::Item {
             Child {
-                index: self.entity.at(index, world).index,
+                index: self.entity.at(index, world).index(),
                 entities: self.entities.as_ref(),
                 query: self.query.inner.clone(),
                 world,
@@ -438,7 +510,7 @@ pub mod item {
         type IntoIter = LinkIterator<'a, I, F, Self>;
         fn into_iter(self) -> Self::IntoIter {
             LinkIterator {
-                index: self.entities.data.0[self.index as usize].first_child,
+                index: self.entities.get_datum_at(self.index).unwrap().first_child,
                 query: self.query.as_ref(),
                 entities: self.entities,
                 world: self.world,
@@ -506,7 +578,7 @@ pub mod item {
         #[inline]
         fn at(&'a self, index: usize, world: &'a World) -> Self::Item {
             Parent {
-                index: self.entity.at(index, world).index,
+                index: self.entity.at(index, world).index(),
                 entities: self.entities.as_ref(),
                 query: self.query.inner.clone(),
                 world,
@@ -528,7 +600,7 @@ pub mod item {
         type IntoIter = LinkIterator<'a, I, F, Self>;
         fn into_iter(self) -> Self::IntoIter {
             LinkIterator {
-                index: self.entities.data.0[self.index as usize].parent,
+                index: self.entities.get_datum_at(self.index).unwrap().parent,
                 query: self.query.as_ref(),
                 entities: self.entities,
                 world: self.world,
@@ -541,7 +613,7 @@ pub mod item {
         type Item = <I::State as At<'a>>::Item;
 
         fn next(&mut self) -> Option<Self::Item> {
-            while let Some(datum) = self.entities.data.0.get(self.index as usize) {
+            while let Some(datum) = self.entities.get_datum_at(self.index) {
                 self.index = N::next(datum);
                 if let Some(item) = get_item(datum, self.query, self.world) {
                     return Some(item);
@@ -557,11 +629,11 @@ pub mod item {
         mut at: usize,
         entities: &Entities,
     ) -> Option<(&Datum, u32)> {
-        let mut datum = entities.data.0.get(index as usize)?;
+        let mut datum = entities.get_datum_at(index)?;
         while at > 0 {
             at -= 1;
             index = N::next(datum);
-            datum = entities.data.0.get(index as usize)?;
+            datum = entities.get_datum_at(index)?;
         }
         Some((datum, index))
     }

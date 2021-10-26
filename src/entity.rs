@@ -11,8 +11,8 @@ use crate::{
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Entity {
-    pub(crate) index: u32,
-    pub(crate) generation: u32,
+    index: u32,
+    generation: u32,
 }
 pub struct State(pub(crate) Arc<Store>, usize);
 
@@ -21,6 +21,21 @@ impl Entity {
         index: u32::MAX,
         generation: u32::MAX,
     };
+
+    #[inline]
+    pub(crate) const fn new(index: u32, generation: u32) -> Self {
+        Self { index, generation }
+    }
+
+    #[inline]
+    pub const fn index(&self) -> u32 {
+        self.index
+    }
+
+    #[inline]
+    pub const fn generation(&self) -> u32 {
+        self.generation
+    }
 }
 
 impl fmt::Debug for Entity {

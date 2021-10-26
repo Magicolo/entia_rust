@@ -314,35 +314,39 @@ impl<'a> ApplyContext<'a> {
         let entity_previous_sibling = *self.entity_previous_sibling;
 
         *self.entity_count += 1;
-        *self.entity_previous_sibling = Some(entity_instance.index);
+        *self.entity_previous_sibling = Some(entity_instance.index());
 
         if let Some(previous) = entity_previous_sibling {
-            self.entities.data.0[previous as usize].next_sibling = entity_instance.index;
+            let previous = self.entities.get_datum_at_mut(previous).unwrap();
+            previous.next_sibling = entity_instance.index();
         }
 
         if let Some(parent) = entity_parent {
-            let parent = &mut self.entities.data.0[parent as usize];
+            let parent = &mut self.entities.get_datum_at_mut(parent).unwrap();
             if entity_previous_sibling.is_none() {
-                parent.first_child = entity_instance.index;
+                parent.first_child = entity_instance.index();
             }
             if entity_indices.next_sibling.is_none() {
-                parent.last_child = entity_instance.index;
+                parent.last_child = entity_instance.index();
             }
         }
 
-        self.entities.data.0[entity_instance.index as usize].initialize(
-            entity_instance.generation,
-            store_index as u32,
-            segment_index as u32,
-            entity_parent,
-            None,
-            None,
-            entity_previous_sibling,
-            None,
-        );
+        self.entities
+            .get_datum_at_mut(entity_instance.index())
+            .unwrap()
+            .initialize(
+                entity_instance.generation(),
+                store_index as u32,
+                segment_index as u32,
+                entity_parent,
+                None,
+                None,
+                entity_previous_sibling,
+                None,
+            );
         scope(self.with(
             entity_index,
-            Some(entity_instance.index),
+            Some(entity_instance.index()),
             &mut None,
             store_index,
         ))

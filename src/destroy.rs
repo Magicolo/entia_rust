@@ -61,7 +61,7 @@ unsafe impl Inject for Destroy<'_> {
 
         for Defer { entity, family } in state.defer.drain(..) {
             if entities.has(entity) {
-                destroy(entity.index, true, family, set, entities, world);
+                destroy(entity.index(), true, family, set, entities, world);
             }
         }
 
@@ -77,12 +77,8 @@ unsafe impl Inject for Destroy<'_> {
             entities: &mut Entities,
             world: &mut World,
         ) -> Option<u32> {
-            if let Some(datum) = entities.data.0.get(index as usize).cloned() {
-                let entity = Entity {
-                    index,
-                    generation: datum.generation,
-                };
-
+            if let Some(datum) = entities.get_datum_at(index).cloned() {
+                let entity = datum.entity(index);
                 if set.insert(entity) {
                     if family {
                         let mut child = datum.first_child;
@@ -93,18 +89,15 @@ unsafe impl Inject for Destroy<'_> {
 
                     if root {
                         if let Some(previous_sibling) =
-                            entities.data.0.get_mut(datum.previous_sibling as usize)
+                            entities.get_datum_at_mut(datum.previous_sibling)
                         {
                             previous_sibling.next_sibling = datum.next_sibling;
-                        } else if let Some(parent) = entities.data.0.get_mut(datum.parent as usize)
-                        {
+                        } else if let Some(parent) = entities.get_datum_at_mut(datum.parent) {
                             // Only an entity with no 'previous_sibling' can ever be the 'first_child' of its parent.
                             parent.first_child = datum.next_sibling;
                         }
 
-                        if let Some(next_sibling) =
-                            entities.data.0.get_mut(datum.next_sibling as usize)
-                        {
+                        if let Some(next_sibling) = entities.get_datum_at_mut(datum.next_sibling) {
                             next_sibling.previous_sibling = datum.previous_sibling;
                         }
                     }
@@ -115,7 +108,9 @@ unsafe impl Inject for Destroy<'_> {
                         // an entity store since the destroyed entity was in it.
                         let moved =
                             *unsafe { segment.stores[0].get::<Entity>(datum.store_index as usize) };
-                        entities.data.0[moved.index as usize]
+                        entities
+                            .get_datum_at_mut(moved.index())
+                            .unwrap()
                             .update(datum.store_index, datum.segment_index);
                     }
                 }
