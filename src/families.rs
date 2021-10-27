@@ -30,6 +30,7 @@ impl<'a> Families<'a> {
         Family::new(entity, self.1)
     }
 
+    #[inline]
     pub fn roots(&self) -> impl DoubleEndedIterator<Item = Family<'a>> {
         let entities = self.1;
         entities
@@ -37,42 +38,52 @@ impl<'a> Families<'a> {
             .map(move |entity| Family::new(entity, entities))
     }
 
+    #[inline]
     pub fn adopt_at(&mut self, parent: Entity, child: Entity, index: usize) {
         self.0.push(Defer::AdoptAt(parent, child, index));
     }
 
+    #[inline]
     pub fn adopt_first(&mut self, parent: Entity, child: Entity) {
         self.0.push(Defer::AdoptFirst(parent, child));
     }
 
+    #[inline]
     pub fn adopt_last(&mut self, parent: Entity, child: Entity) {
         self.0.push(Defer::AdoptLast(parent, child));
     }
 
+    #[inline]
     pub fn adopt_before(&mut self, sibling: Entity, child: Entity) {
         self.0.push(Defer::AdoptBefore(sibling, child));
     }
 
+    #[inline]
     pub fn adopt_after(&mut self, sibling: Entity, child: Entity) {
         self.0.push(Defer::AdoptAfter(sibling, child));
     }
 
+    #[inline]
     pub fn reject_first(&mut self, parent: Entity) {
         self.0.push(Defer::RejectFirst(parent));
     }
 
+    #[inline]
     pub fn reject_last(&mut self, parent: Entity) {
         self.0.push(Defer::RejectLast(parent));
     }
 
+    #[inline]
     pub fn reject_at(&mut self, parent: Entity, index: usize) {
         self.0.push(Defer::RejectAt(parent, index));
     }
 
+    #[inline]
     pub fn reject(&mut self, child: Entity) {
         self.0.push(Defer::Reject(child));
     }
 
+    #[inline]
     pub fn reject_all(&mut self, parent: Entity) {
         self.0.push(Defer::RejectAll(parent));
     }

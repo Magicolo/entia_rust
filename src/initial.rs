@@ -69,7 +69,7 @@ pub unsafe trait StaticInitial: Initial {}
 pub unsafe trait LeafInitial: Initial {}
 
 impl<'a> DeclareContext<'a> {
-    pub fn new(
+    pub(crate) fn new(
         metas_index: usize,
         segment_metas: &'a mut Vec<Vec<Arc<Meta>>>,
         world: &'a mut World,
@@ -104,7 +104,7 @@ impl<'a> DeclareContext<'a> {
 }
 
 impl<'a> InitializeContext<'a> {
-    pub const fn new(
+    pub(crate) const fn new(
         segment_index: usize,
         segment_indices: &'a [SegmentIndices],
         metas_to_segment: &'a HashMap<usize, usize>,
@@ -146,7 +146,7 @@ impl<'a> InitializeContext<'a> {
 }
 
 impl<'a> CountContext<'a> {
-    pub fn new(
+    pub(crate) fn new(
         segment_index: usize,
         segment_indices: &'a mut [SegmentIndices],
         entity_index: usize,
@@ -218,7 +218,7 @@ impl<'a> CountContext<'a> {
 }
 
 impl<'a> ApplyContext<'a> {
-    pub fn new(
+    pub(crate) fn new(
         entity_root: usize,
         entity_index: usize,
         entity_parent: Option<u32>,

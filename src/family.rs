@@ -168,13 +168,8 @@ pub mod initial {
         segment_indices: &'a [SegmentIndices],
     }
 
-    pub struct FamiliesIterator<'a, 'b> {
-        index: usize,
-        families: &'b Families<'a>,
-    }
-
     #[derive(Clone)]
-    pub struct EntityIndices {
+    pub(crate) struct EntityIndices {
         pub segment: usize,
         pub offset: usize,
         pub parent: Option<usize>,
@@ -183,7 +178,7 @@ pub mod initial {
     }
 
     #[derive(Clone)]
-    pub struct SegmentIndices {
+    pub(crate) struct SegmentIndices {
         pub segment: usize,
         pub count: usize,
         pub index: usize,
@@ -191,16 +186,8 @@ pub mod initial {
     }
 
     impl<'a> Family<'a> {
-        pub const EMPTY: Self = Self {
-            entity_root: 0,
-            entity_index: 0,
-            entity_instances: &[],
-            entity_indices: &[],
-            segment_indices: &[],
-        };
-
         #[inline]
-        pub const fn new(
+        pub(crate) const fn new(
             entity_root: usize,
             entity_index: usize,
             entity_instances: &'a [Entity],
@@ -351,14 +338,14 @@ pub mod initial {
     }
 
     impl<'a> Families<'a> {
-        pub const EMPTY: Self = Self {
+        pub(crate) const EMPTY: Self = Self {
             entity_roots: &[],
             entity_instances: &[],
             entity_indices: &[],
             segment_indices: &[],
         };
 
-        pub fn new(
+        pub(crate) fn new(
             entity_roots: &'a [(usize, usize)],
             entity_instances: &'a [Entity],
             entity_indices: &'a [EntityIndices],
@@ -372,8 +359,20 @@ pub mod initial {
             }
         }
 
-        pub fn len(&self) -> usize {
-            self.entity_roots.len()
+        pub fn roots(&self) -> impl DoubleEndedIterator<Item = Family<'a>> {
+            let families = self.clone();
+            families
+                .entity_roots
+                .iter()
+                .map(move |&(entity_root, entity_index)| {
+                    Family::new(
+                        entity_root,
+                        entity_index,
+                        families.entity_instances,
+                        families.entity_indices,
+                        families.segment_indices,
+                    )
+                })
         }
 
         pub fn get(&self, index: usize) -> Option<Family<'a>> {
@@ -390,39 +389,7 @@ pub mod initial {
 
     impl std::fmt::Debug for Families<'_> {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            f.debug_list().entries(self).finish()
-        }
-    }
-
-    impl<'a, 'b> IntoIterator for &'b Families<'a> {
-        type Item = Family<'a>;
-        type IntoIter = FamiliesIterator<'a, 'b>;
-
-        fn into_iter(self) -> Self::IntoIter {
-            Self::IntoIter {
-                index: 0,
-                families: self,
-            }
-        }
-    }
-
-    impl<'a, 'b> Iterator for FamiliesIterator<'a, 'b> {
-        type Item = Family<'a>;
-
-        fn next(&mut self) -> Option<Self::Item> {
-            let family = self.families.get(self.index)?;
-            self.index += 1;
-            Some(family)
-        }
-
-        fn size_hint(&self) -> (usize, Option<usize>) {
-            (self.len(), Some(self.len()))
-        }
-    }
-
-    impl<'a, 'b> ExactSizeIterator for FamiliesIterator<'a, 'b> {
-        fn len(&self) -> usize {
-            self.families.len() - self.index
+            f.debug_list().entries(self.roots()).finish()
         }
     }
 }

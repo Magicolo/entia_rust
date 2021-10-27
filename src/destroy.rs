@@ -18,26 +18,27 @@ pub struct State {
     entities: write::State<Entities>,
 }
 
-struct Defer {
-    entity: Entity,
-    family: bool,
+enum Defer {
+    One(Entity),
+    Family(Entity),
 }
 
 impl Destroy<'_> {
     #[inline]
     pub fn one(&mut self, entity: Entity) {
-        self.defer.push(Defer {
-            entity,
-            family: false,
-        });
+        self.defer.push(Defer::One(entity));
+    }
+
+    #[inline]
+    pub fn all(&mut self, entities: impl Iterator<Item = Entity>) {
+        for entity in entities {
+            self.one(entity);
+        }
     }
 
     #[inline]
     pub fn family(&mut self, entity: Entity) {
-        self.defer.push(Defer {
-            entity,
-            family: true,
-        });
+        self.defer.push(Defer::Family(entity));
     }
 }
 
@@ -58,9 +59,15 @@ unsafe impl Inject for Destroy<'_> {
         let world = context.world();
         let set = &mut state.set;
 
-        for Defer { entity, family } in state.defer.drain(..) {
-            if entities.has(entity) {
-                destroy(entity.index(), true, family, set, entities, world);
+        for defer in state.defer.drain(..) {
+            match defer {
+                Defer::One(entity) if entities.has(entity) => {
+                    destroy(entity.index(), true, false, set, entities, world);
+                }
+                Defer::Family(root) if entities.has(root) => {
+                    destroy(root.index(), true, true, set, entities, world);
+                }
+                _ => {}
             }
         }
 
@@ -76,48 +83,45 @@ unsafe impl Inject for Destroy<'_> {
             entities: &mut Entities,
             world: &mut World,
         ) -> Option<u32> {
-            if let Some(datum) = entities.get_datum_at(index).cloned() {
-                let entity = datum.entity(index);
-                if set.insert(entity) {
-                    if family {
-                        let mut child = datum.first_child;
-                        while let Some(next) = destroy(child, false, family, set, entities, world) {
-                            child = next;
-                        }
-                    }
-
-                    if root {
-                        if let Some(previous_sibling) =
-                            entities.get_datum_at_mut(datum.previous_sibling)
-                        {
-                            previous_sibling.next_sibling = datum.next_sibling;
-                        } else if let Some(parent) = entities.get_datum_at_mut(datum.parent) {
-                            // Only an entity with no 'previous_sibling' can ever be the 'first_child' of its parent.
-                            parent.first_child = datum.next_sibling;
-                        }
-
-                        if let Some(next_sibling) = entities.get_datum_at_mut(datum.next_sibling) {
-                            next_sibling.previous_sibling = datum.previous_sibling;
-                        }
-                    }
-
-                    let segment = &mut world.segments[datum.segment_index as usize];
-                    if segment.remove_at(datum.store_index as usize) {
-                        // SAFETY: When it exists, the entity store is always the first. This segment must have
-                        // an entity store since the destroyed entity was in it.
-                        let moved =
-                            *unsafe { segment.stores[0].get::<Entity>(datum.store_index as usize) };
-                        entities
-                            .get_datum_at_mut(moved.index())
-                            .unwrap()
-                            .update(datum.store_index, datum.segment_index);
+            let datum = entities.get_datum_at(index)?.clone();
+            let entity = datum.entity(index);
+            if set.insert(entity) {
+                if family {
+                    let mut child = datum.first_child;
+                    while let Some(next) = destroy(child, false, family, set, entities, world) {
+                        child = next;
                     }
                 }
 
-                Some(datum.next_sibling)
-            } else {
-                None
+                if root {
+                    if let Some(previous_sibling) =
+                        entities.get_datum_at_mut(datum.previous_sibling)
+                    {
+                        previous_sibling.next_sibling = datum.next_sibling;
+                    } else if let Some(parent) = entities.get_datum_at_mut(datum.parent) {
+                        // Only an entity with no 'previous_sibling' can ever be the 'first_child' of its parent.
+                        parent.first_child = datum.next_sibling;
+                    }
+
+                    if let Some(next_sibling) = entities.get_datum_at_mut(datum.next_sibling) {
+                        next_sibling.previous_sibling = datum.previous_sibling;
+                    }
+                }
+
+                let segment = &mut world.segments[datum.segment_index as usize];
+                if segment.remove_at(datum.store_index as usize) {
+                    // SAFETY: When it exists, the entity store is always the first. This segment must have
+                    // an entity store since the destroyed entity was in it.
+                    let moved =
+                        *unsafe { segment.stores[0].get::<Entity>(datum.store_index as usize) };
+                    entities
+                        .get_datum_at_mut(moved.index())
+                        .unwrap()
+                        .update(datum.store_index, datum.segment_index);
+                }
             }
+
+            Some(datum.next_sibling)
         }
     }
 }

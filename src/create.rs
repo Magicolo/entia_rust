@@ -56,7 +56,7 @@ impl<I: Initial> Create<'_, I> {
 
     #[inline]
     pub fn one(&mut self, initial: I) -> Family {
-        self.all(once(initial)).into_iter().next().unwrap()
+        self.all(once(initial)).roots().next().unwrap()
     }
 
     #[inline]
