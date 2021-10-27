@@ -276,9 +276,10 @@ impl Entities {
 
     pub fn siblings(&self, entity: Entity) -> impl DoubleEndedIterator<Item = Entity> + '_ {
         self.parent(entity)
-            .map(|parent| self.children(parent).filter(move |&child| child != entity))
+            .map(|parent| self.children(parent))
             .into_iter()
             .flatten()
+            .filter(move |&child| child != entity)
     }
 
     pub fn ancestors(&self, entity: Entity) -> impl DoubleEndedIterator<Item = Entity> {

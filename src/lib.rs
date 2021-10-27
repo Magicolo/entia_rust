@@ -1,24 +1,23 @@
-mod component;
-mod create;
-mod defer;
-mod depend;
-mod destroy;
-mod entities;
-mod entity;
-mod families;
-mod family;
-mod familyzzz;
-mod ignore;
-mod initial;
-mod inject;
-mod local;
-mod message;
-mod query;
-mod read;
-mod resource;
-mod system;
-mod world;
-mod write;
+pub mod component;
+pub mod create;
+pub mod defer;
+pub mod depend;
+pub mod destroy;
+pub mod entities;
+pub mod entity;
+pub mod families;
+pub mod family;
+pub mod ignore;
+pub mod initial;
+pub mod inject;
+pub mod local;
+pub mod message;
+pub mod query;
+pub mod read;
+pub mod resource;
+pub mod system;
+pub mod world;
+pub mod write;
 
 pub mod core {
     pub use entia_core::*;
@@ -31,8 +30,10 @@ pub use crate::{
     destroy::Destroy,
     entity::Entity,
     families::Families,
-    family::Family,
-    familyzzz::item::{Child, Parent},
+    family::{
+        item::{Child, Parent},
+        Family,
+    },
     ignore::{Ignore, Scope},
     initial::{spawn, with, Initial, StaticInitial},
     inject::Injector,

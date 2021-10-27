@@ -6,7 +6,6 @@ pub mod prepend;
 pub mod slice;
 pub mod utility;
 
-pub use append::*;
-pub use call::*;
-pub use change::*;
-pub use prepend::*;
+pub use crate::{
+    append::Append, bits::Bits, call::Call, change::Change, prepend::Prepend, slice::Slice,
+};

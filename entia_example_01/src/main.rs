@@ -29,7 +29,6 @@ struct Time {
 }
 impl Resource for Time {}
 
-// TODO: Rename and/or unify 'familyzzz'.
 // TODO: Review 'families'.
 // TODO: More aggressive parallelization of systems.
 // - Try to bundle systems after a conflict?
@@ -39,7 +38,7 @@ fn main() {
         let mut world = World::new();
 
         world.run(|mut create: Create<_>| {
-            create.one(spawn(spawn(spawn((Position(0, 0), Controller)))));
+            create.clones(spawn(spawn(spawn((Position(0, 0), Controller)))), 5);
         })?;
 
         let mut runner = world.scheduler().pipe(time).pipe(input).runner()?;

@@ -57,7 +57,6 @@ unsafe impl Inject for Destroy<'_> {
         let entities = state.entities.as_mut();
         let world = context.world();
         let set = &mut state.set;
-        set.clear();
 
         for Defer { entity, family } in state.defer.drain(..) {
             if entities.has(entity) {

@@ -18,6 +18,9 @@ enum Defer {
     AdoptBefore(Entity, Entity),
     AdoptAfter(Entity, Entity),
     Reject(Entity),
+    RejectAt(Entity, usize),
+    RejectFirst(Entity),
+    RejectLast(Entity),
     RejectAll(Entity),
 }
 
@@ -55,21 +58,15 @@ impl<'a> Families<'a> {
     }
 
     pub fn reject_first(&mut self, parent: Entity) {
-        if let Some(child) = self.1.children(parent).next() {
-            self.reject(child);
-        }
+        self.0.push(Defer::RejectFirst(parent));
     }
 
     pub fn reject_last(&mut self, parent: Entity) {
-        if let Some(child) = self.1.children(parent).next_back() {
-            self.reject(child);
-        }
+        self.0.push(Defer::RejectLast(parent));
     }
 
     pub fn reject_at(&mut self, parent: Entity, index: usize) {
-        if let Some(child) = self.1.children(parent).nth(index) {
-            self.reject(child);
-        }
+        self.0.push(Defer::RejectAt(parent, index));
     }
 
     pub fn reject(&mut self, child: Entity) {
@@ -77,7 +74,7 @@ impl<'a> Families<'a> {
     }
 
     pub fn reject_all(&mut self, parent: Entity) {
-        Defer::RejectAll(parent);
+        self.0.push(Defer::RejectAll(parent));
     }
 }
 
@@ -113,6 +110,15 @@ unsafe impl Inject for Families<'_> {
                 }
                 Defer::Reject(child) => {
                     entities.reject(child);
+                }
+                Defer::RejectAt(parent, index) => {
+                    entities.reject_at(parent, index);
+                }
+                Defer::RejectFirst(parent) => {
+                    entities.reject_first(parent);
+                }
+                Defer::RejectLast(parent) => {
+                    entities.reject_last(parent);
                 }
                 Defer::RejectAll(parent) => {
                     entities.reject_all(parent);

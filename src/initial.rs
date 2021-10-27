@@ -10,7 +10,7 @@ use crate::{
     component::Component,
     entities::Entities,
     entity::Entity,
-    familyzzz::initial::{EntityIndices, Family, SegmentIndices},
+    family::initial::{EntityIndices, Family, SegmentIndices},
     world::{segment::Segment, store::Store, Meta, World},
 };
 
