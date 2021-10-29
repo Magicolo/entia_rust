@@ -13,18 +13,15 @@ enum Input {
 
 #[derive(Copy, Clone, Debug)]
 struct Position(isize, isize);
-impl Component for Position {}
 
 #[derive(Copy, Clone, Debug)]
 struct Render {
     color: [f32; 4],
     visible: bool,
 }
-impl Component for Render {}
 
 #[derive(Copy, Clone, Debug)]
 struct Controller;
-impl Component for Controller {}
 
 #[derive(Default)]
 struct Time {
@@ -55,12 +52,12 @@ fn run() -> Result<(), Box<dyn error::Error>> {
         .add(|mut create: Create<_>| {
             create.all((0..10).map(|i| {
                 (
-                    Position(i, -i),
-                    Render {
+                    add(Position(i, -i)),
+                    add(Render {
                         color: [0.1, 0.1, 0.8, 1.],
                         visible: true,
-                    },
-                    Controller,
+                    }),
+                    add(Controller),
                 )
             }));
         })
@@ -133,7 +130,7 @@ fn run() -> Result<(), Box<dyn error::Error>> {
     Ok(())
 }
 
-fn apply_input_to_position(inputs: Receive<Input>, query: Query<&mut Position, Controller>) {
+fn apply_input_to_position(inputs: Receive<Input>, query: Query<&mut Position, Has<Controller>>) {
     for input in inputs {
         match input {
             Input::Left(true) => query.each(|position| position.0 -= 1),

@@ -7,7 +7,6 @@ use std::{
 };
 
 use crate::{
-    component::Component,
     entities::Entities,
     entity::Entity,
     family::initial::{EntityIndices, Family, SegmentIndices},
@@ -363,13 +362,14 @@ impl GetMeta {
     }
 }
 
-impl<C: Component> Initial for C {
+pub struct Add<T>(T);
+impl<T: Send + 'static> Initial for Add<T> {
     type Input = ();
     type Declare = Arc<Meta>;
     type State = Arc<Store>;
 
     fn declare(_: Self::Input, mut context: DeclareContext) -> Self::Declare {
-        context.meta(GetMeta::new::<C>())
+        context.meta(GetMeta::new::<T>())
     }
 
     fn initialize(state: Self::Declare, context: InitializeContext) -> Self::State {
@@ -383,12 +383,56 @@ impl<C: Component> Initial for C {
     fn dynamic_count(&self, _: &Self::State, _: CountContext) {}
 
     fn apply(self, state: &Self::State, context: ApplyContext) {
-        unsafe { state.set(context.store_index(), self) }
+        unsafe { state.set(context.store_index(), self.0) }
     }
 }
 
-unsafe impl<C: Component> StaticInitial for C {}
-unsafe impl<C: Component> LeafInitial for C {}
+unsafe impl<T: Send + 'static> StaticInitial for Add<T> {}
+unsafe impl<T: Send + 'static> LeafInitial for Add<T> {}
+
+impl<T: Copy> Copy for Add<T> {}
+
+impl<T: Clone> Clone for Add<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<T: Default> Default for Add<T> {
+    fn default() -> Self {
+        Self(T::default())
+    }
+}
+
+impl<T> Deref for Add<T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        self.as_ref()
+    }
+}
+
+impl<T> DerefMut for Add<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.as_mut()
+    }
+}
+
+impl<T> AsRef<T> for Add<T> {
+    fn as_ref(&self) -> &T {
+        &self.0
+    }
+}
+
+impl<T> AsMut<T> for Add<T> {
+    fn as_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+}
+
+#[inline]
+pub fn add<T: Sync + Send + 'static>(component: T) -> Add<T> {
+    Add(component)
+}
 
 impl<I: Initial> Initial for Vec<I> {
     type Input = I::Input;
@@ -541,6 +585,12 @@ impl<T: Copy> Copy for Spawn<T> {}
 impl<T: Clone> Clone for Spawn<T> {
     fn clone(&self) -> Self {
         Self(self.0.clone())
+    }
+}
+
+impl<T: Default> Default for Spawn<T> {
+    fn default() -> Self {
+        Self(T::default())
     }
 }
 

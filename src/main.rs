@@ -105,24 +105,25 @@ fn main() {
     #[derive(Default, Clone)]
     struct Frozen;
     struct Target(Entity);
-    impl Component for Position {}
-    impl Component for Frozen {}
-    impl Component for Target {}
 
     let create = || {
         let mut counter = 0;
         move |mut create: Create<_>| {
             let position = Position(Vec::with_capacity(counter));
             counter += counter / 100 + 1;
-            create.one((position.clone(), Frozen));
-            create.all((0..counter).map(|_| (position.clone(), Frozen)));
+            create.one((add(position.clone()), add(Frozen)));
+            create.all((0..counter).map(|_| (add(position.clone()), add(Frozen))));
             create.defaults(counter);
-            create.clones((position, Frozen), counter);
+            create.clones((add(position), add(Frozen)), counter);
         }
     };
 
     fn simple() -> impl StaticInitial<Input = impl Default> {
-        (Frozen, Position(Vec::new()), with(|_| Frozen))
+        (
+            add(Frozen),
+            add(Position(Vec::new())),
+            with(|_| add(Frozen)),
+        )
     }
 
     fn complex() -> impl StaticInitial<Input = impl Default> {
@@ -130,7 +131,7 @@ fn main() {
     }
 
     fn dynamic(count: usize) -> impl Initial<Input = impl Default> {
-        vec![spawn(Frozen); count]
+        vec![spawn(add(Frozen)); count]
     }
 
     let mut world = World::new();
@@ -159,16 +160,23 @@ fn main() {
             create.one(());
         })
         .add(|mut create: Create<_>| {
-            create.one((Frozen, Frozen, Frozen, Frozen, Frozen, Frozen));
+            create.one((
+                add(Frozen),
+                add(Frozen),
+                add(Frozen),
+                add(Frozen),
+                add(Frozen),
+                add(Frozen),
+            ));
         })
         .add(|mut create: Create<_>| {
             create.one(complex());
         })
         .add(|mut create: Create<_>| {
             create.one((
-                vec![with(|family| spawn(Target(family.entity())))],
-                spawn(vec![with(|family| Target(family.entity()))]),
-                spawn(with(|family| vec![Target(family.entity())])),
+                vec![with(|family| spawn(add(Target(family.entity()))))],
+                spawn(vec![with(|family| add(Target(family.entity())))]),
+                spawn(with(|family| vec![add(Target(family.entity()))])),
             ));
         })
         .add(|query: Query<(Entity, Child<Entity>, Parent<Entity>)>| {

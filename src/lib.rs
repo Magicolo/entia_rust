@@ -1,4 +1,3 @@
-pub mod component;
 pub mod create;
 pub mod defer;
 pub mod depend;
@@ -23,7 +22,6 @@ pub mod core {
 }
 
 pub use crate::{
-    component::Component,
     create::Create,
     defer::Defer,
     destroy::Destroy,
@@ -34,11 +32,11 @@ pub use crate::{
         Family,
     },
     ignore::{Ignore, Scope},
-    initial::{spawn, with, Initial, StaticInitial},
+    initial::{add, spawn, with, Initial, StaticInitial},
     inject::Injector,
     message::emit::Emit,
     message::receive::Receive,
-    query::filter::Not,
+    query::filter::{Has, Not},
     query::Query,
     system::{runner::Runner, schedule::Scheduler, Error, IntoSystem, System},
     world::World,
@@ -52,18 +50,11 @@ mod test {
     struct Time(f64);
     #[derive(Default)]
     struct Physics;
-    struct Player;
-    struct Enemy;
     struct Frozen;
     struct Position(f64, f64, f64);
     struct Velocity(f64, f64, f64);
     #[derive(Clone)]
     struct OnKill(Entity);
-    impl Component for Player {}
-    impl Component for Enemy {}
-    impl Component for Position {}
-    impl Component for Velocity {}
-    impl Component for Frozen {}
 
     #[test]
     fn test() {
@@ -102,8 +93,8 @@ mod test {
                 |_: Query<
                     (Entity,),
                     (
-                        Not<(Not<(Frozen, Frozen)>, Frozen)>,
-                        (Position, Not<Frozen>),
+                        Not<(Not<(Has<Frozen>, Has<Frozen>)>, Has<Frozen>)>,
+                        (Has<Position>, Not<Has<Frozen>>),
                     ),
                 >| {},
             )
@@ -142,7 +133,7 @@ mod test {
             .add(
                 |(time, queries): (
                     &Time,
-                    (Query<&mut Position, Not<Frozen>>, Query<&mut Velocity>),
+                    (Query<&mut Position, Not<Has<Frozen>>>, Query<&mut Velocity>),
                 )| {
                     queries.1.each(|velocity| {
                         velocity.0 += time.0;
@@ -187,7 +178,7 @@ mod test {
             .add(|on_kill: Receive<OnKill>| for _ in on_kill {})
             .add(|mut on_kill: Receive<OnKill>| while let Some(_) = on_kill.next() {})
             .add(
-                |query: Query<Entity, (Position, Velocity)>, mut destroy: Destroy| {
+                |query: Query<Entity, (Has<Position>, Has<Velocity>)>, mut destroy: Destroy| {
                     for entity in &query {
                         destroy.one(entity);
                     }

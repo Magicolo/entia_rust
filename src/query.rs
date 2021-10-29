@@ -300,7 +300,18 @@ pub mod filter {
         fn filter(segment: &Segment, world: &World) -> bool;
     }
 
+    pub struct Has<T>(PhantomData<T>);
     pub struct Not<F: Filter>(PhantomData<F>);
+
+    impl<T: Send + 'static> Filter for Has<T> {
+        fn filter(segment: &Segment, world: &World) -> bool {
+            if let Some(meta) = world.get_meta::<T>() {
+                segment.has(&meta)
+            } else {
+                false
+            }
+        }
+    }
 
     impl<F: Filter> Filter for Not<F> {
         fn filter(segment: &Segment, world: &World) -> bool {
