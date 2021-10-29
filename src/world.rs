@@ -17,7 +17,7 @@ use self::store::*;
 use crate::{
     depend::{Depend, Dependency},
     entity::Entity,
-    inject::{Get, Inject, InjectContext},
+    inject::{Context, Get, Inject},
 };
 use entia_core::{bits::Bits, utility::next_power_of_2};
 
@@ -35,7 +35,8 @@ pub struct Meta {
 }
 
 pub struct World {
-    pub(crate) identifier: usize,
+    identifier: usize,
+    version: usize,
     pub(crate) segments: Vec<Segment>,
     pub(crate) metas: Vec<Arc<Meta>>,
     pub(crate) type_to_meta: HashMap<TypeId, usize>,
@@ -91,7 +92,7 @@ unsafe impl Inject for &World {
     type Input = ();
     type State = State;
 
-    fn initialize(_: Self::Input, _: InjectContext) -> Option<Self::State> {
+    fn initialize(_: Self::Input, _: Context) -> Option<Self::State> {
         Some(State)
     }
 }
@@ -112,10 +113,9 @@ unsafe impl Depend for State {
 
 impl World {
     pub fn new() -> Self {
-        static COUNTER: AtomicUsize = AtomicUsize::new(0);
-
         let mut world = Self {
-            identifier: COUNTER.fetch_add(1, Ordering::Relaxed),
+            identifier: Self::reserve(),
+            version: 1,
             segments: Vec::new(),
             metas: Vec::new(),
             type_to_meta: HashMap::new(),
@@ -123,6 +123,22 @@ impl World {
         };
         world.get_or_add_meta::<Entity>();
         world
+    }
+
+    #[inline]
+    pub fn reserve() -> usize {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    }
+
+    #[inline]
+    pub const fn identifier(&self) -> usize {
+        self.identifier
+    }
+
+    #[inline]
+    pub const fn version(&self) -> usize {
+        self.version
     }
 
     pub fn get_meta<T: 'static>(&self) -> Option<Arc<Meta>> {
@@ -134,13 +150,7 @@ impl World {
     pub fn get_or_add_meta<T: 'static>(&mut self) -> Arc<Meta> {
         match self.get_meta::<T>() {
             Some(meta) => meta,
-            None => {
-                let index = self.metas.len();
-                let meta = Arc::new(Meta::new::<T>(index));
-                self.metas.push(meta.clone());
-                self.type_to_meta.insert(meta.identifier.clone(), index);
-                meta
-            }
+            None => self.add_meta::<T>(),
         }
     }
 
@@ -190,11 +200,21 @@ impl World {
         self.get_or_add_segment_by_types(&types)
     }
 
+    fn add_meta<T: 'static>(&mut self) -> Arc<Meta> {
+        let index = self.metas.len();
+        let meta = Arc::new(Meta::new::<T>(index));
+        self.metas.push(meta.clone());
+        self.type_to_meta.insert(meta.identifier.clone(), index);
+        self.version += 1;
+        meta
+    }
+
     fn add_segment(&mut self, types: &Bits, metas: &[Arc<Meta>]) -> &mut Segment {
         let index = self.segments.len();
         let segment = Segment::new(index, types.clone(), metas, 0);
         self.segments.push(segment);
         self.bits_to_segment.insert(types.clone(), index);
+        self.version += 1;
         &mut self.segments[index]
     }
 }

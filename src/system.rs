@@ -1,18 +1,17 @@
 use self::runner::*;
 use crate::{
-    depend::{Depend, Dependency, Scope},
-    inject::{Get, Inject, InjectContext},
+    depend::{Conflict, Depend, Dependency, Scope},
+    inject::{Context, Get, Inject},
     world::World,
 };
-use entia_core::{bits::Bits, Call, Change};
+use entia_core::{utility::short_type_name, Call};
 use std::{
-    any::{type_name, TypeId},
+    any::type_name,
     cell::UnsafeCell,
-    collections::{HashMap, HashSet},
-    fmt,
+    error,
+    fmt::{self, Display},
     mem::replace,
     mem::swap,
-    sync::atomic::{AtomicUsize, Ordering},
     sync::Arc,
 };
 
@@ -30,13 +29,13 @@ pub enum Error {
     WrongWorld,
     MissingSystem,
     FailedToInject,
-    SystemInnerConflict(String, Box<Error>),
-    SystemOuterConflict(String, Box<Error>),
+    InnerConflict(String, Box<Error>),
+    OuterConflict(String, Box<Error>),
     UnknownConflict,
-    ReadWriteConflict(&'static str, Option<usize>),
-    WriteWriteConflict(&'static str, Option<usize>),
-    ReadDeferConflict(&'static str, Option<usize>),
-    WriteDeferConflict(&'static str, Option<usize>),
+    ReadWriteConflict(String, Option<usize>),
+    WriteWriteConflict(String, Option<usize>),
+    ReadDeferConflict(String, Option<usize>),
+    WriteDeferConflict(String, Option<usize>),
     All(Vec<Error>),
 }
 
@@ -77,25 +76,23 @@ impl<I, M, S: IntoSystem<I, M>, E: Into<Error>> IntoSystem<I, (I, M, S)> for Res
     }
 }
 
-impl<'a, I: Inject, C: Call<I> + Call<<I::State as Get<'a>>::Item> + 'static>
-    IntoSystem<I::Input, (I, C)> for C
+impl<'a, I: Inject, O, C: Call<I, O> + Call<<I::State as Get<'a>>::Item, O> + 'static>
+    IntoSystem<I::Input, (I, O, C)> for C
 {
     fn into_system(self, input: I::Input, world: &mut World) -> Result<System, Error> {
-        let identifier = System::reserve();
-        let state = I::initialize(input, InjectContext::new(identifier, world))
-            .ok_or(Error::FailedToInject)?;
+        let identifier = World::reserve();
+        let state =
+            I::initialize(input, Context::new(identifier, world)).ok_or(Error::FailedToInject)?;
         let system = unsafe {
             System::new(
                 Some(identifier),
                 I::name(),
                 (self, state, identifier),
-                |(run, state, _), world| run.call(state.get(world)),
-                |(_, state, identifier), world| {
-                    I::update(state, InjectContext::new(*identifier, world))
+                |(run, state, _), world| {
+                    run.call(state.get(world));
                 },
-                |(_, state, identifier), world| {
-                    I::resolve(state, InjectContext::new(*identifier, world))
-                },
+                |(_, state, identifier), world| I::update(state, Context::new(*identifier, world)),
+                |(_, state, identifier), world| I::resolve(state, Context::new(*identifier, world)),
                 |(_, state, _), world| state.depend(world),
             )
         };
@@ -151,12 +148,15 @@ impl Error {
     }
 }
 
-impl System {
-    pub fn reserve() -> usize {
-        static COUNTER: AtomicUsize = AtomicUsize::new(0);
-        COUNTER.fetch_add(1, Ordering::Relaxed)
-    }
+impl error::Error for Error {}
 
+impl Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        <Self as fmt::Debug>::fmt(self, f)
+    }
+}
+
+impl System {
     #[inline]
     pub unsafe fn new<'a, T: 'static>(
         identifier: Option<usize>,
@@ -165,7 +165,7 @@ impl System {
         run: fn(&'a mut T, &'a World),
         update: fn(&'a mut T, &'a mut World),
         resolve: fn(&'a mut T, &'a mut World),
-        depend: fn(&'a mut T, &'a World) -> Vec<Dependency>,
+        depend: fn(&'a T, &'a World) -> Vec<Dependency>,
     ) -> Self {
         // SAFETY: Since this crate controls the execution of the system's functions, it can guarantee
         // that they are not run in parallel which would allow for races.
@@ -175,7 +175,7 @@ impl System {
         // there seem to be a limitation in the expressivity of the type system to be able to express the desired
         // intention.
 
-        let identifier = identifier.unwrap_or_else(Self::reserve);
+        let identifier = identifier.unwrap_or_else(World::reserve);
         let state = Arc::new(UnsafeCell::new(state));
         Self {
             name,
@@ -196,7 +196,7 @@ impl System {
             },
             depend: {
                 let state = state.clone();
-                Box::new(move |world| unsafe { depend(&mut *state.get(), &*(world as *const _)) })
+                Box::new(move |world| unsafe { depend(&*state.get(), &*(world as *const _)) })
             },
         }
     }
@@ -214,23 +214,158 @@ impl System {
 
 impl fmt::Debug for System {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple(type_name::<Self>())
+        f.debug_tuple(&short_type_name::<Self>())
             .field(&self.name())
             .finish()
     }
 }
 
+// pub mod run {
+//     use super::*;
+
+//     pub struct Run<I, O> {
+//         identifier: usize,
+//         name: String,
+//         world: usize,
+//         version: usize,
+//         dependencies: Vec<Dependency>,
+//         run: Box<dyn FnMut(I, &mut World) -> O>,
+//         update: Box<dyn FnMut(&mut World) -> Vec<Dependency>>,
+//     }
+
+//     pub trait IntoRun<I, O, M = ()> {
+//         type Input;
+//         fn into_run(self, input: Self::Input, world: &mut World) -> Result<Run<I, O>, Error>;
+//     }
+
+//     impl<I: 'static, O: 'static> Run<I, O> {
+//         pub unsafe fn new<'a, T: 'static>(
+//             identifier: Option<usize>,
+//             name: String,
+//             world: usize,
+//             state: T,
+//             run: fn(I, &'a mut T, &'a mut World) -> O,
+//             update: fn(&'a mut T, &'a mut World) -> Vec<Dependency>,
+//         ) -> Self {
+//             let identifier = identifier.unwrap_or_else(World::reserve);
+//             let state = Arc::new(UnsafeCell::new(state));
+//             Self {
+//                 identifier,
+//                 name,
+//                 world,
+//                 version: 0,
+//                 dependencies: Vec::new(),
+//                 run: {
+//                     let state = state.clone();
+//                     Box::new(move |input, world| {
+//                         run(input, &mut *state.get(), &mut *(world as *mut _))
+//                     })
+//                 },
+//                 update: {
+//                     let state = state.clone();
+//                     Box::new(move |world| update(&mut *state.get(), &mut *(world as *mut _)))
+//                 },
+//             }
+//         }
+
+//         #[inline]
+//         pub const fn identifier(&self) -> usize {
+//             self.identifier
+//         }
+
+//         #[inline]
+//         pub fn name(&self) -> &str {
+//             &self.name
+//         }
+
+//         pub fn run(&mut self, input: I, world: &mut World) -> Result<O, Error> {
+//             if self.world != world.identifier() {
+//                 return Err(Error::WrongWorld);
+//             }
+
+//             if self.version != world.version() {
+//                 self.dependencies = (self.update)(world);
+//                 self.validate()?;
+//                 self.version = world.version();
+//             }
+
+//             Ok((self.run)(input, world))
+//         }
+
+//         fn validate(&mut self) -> Result<(), Error> {
+//             let mut conflict = Conflict::default();
+//             match conflict.detect(Scope::Inner, &self.dependencies) {
+//                 Ok(_) => Ok(()),
+//                 Err(error) => Err(Error::InnerConflict(self.name().into(), error.into())),
+//             }
+//         }
+//     }
+
+//     impl<
+//             'a,
+//             I: Inject + 'static,
+//             O: 'static,
+//             C: Call<I, O> + Call<<I::State as Get<'a>>::Item, O> + 'static,
+//         > IntoRun<I, O, (I, C)> for C
+//     {
+//         type Input = I::Input;
+
+//         fn into_run(self, input: Self::Input, world: &mut World) -> Result<Run<I, O>, Error> {
+//             let identifier = World::reserve();
+//             let state = I::initialize(input, Context::new(identifier, world))
+//                 .ok_or(Error::FailedToInject)?;
+//             let run = unsafe {
+//                 Run::new(
+//                     Some(identifier),
+//                     I::name(),
+//                     world.identifier(),
+//                     (self, state, identifier),
+//                     |input, (run, state, identifier), world| {
+//                         I::update(state, Context::new(*identifier, world));
+//                         let output = run.call(input);
+//                         I::resolve(state, Context::new(*identifier, world));
+//                         output
+//                     },
+//                     |(_, state, identifier), world| {
+//                         I::update(state, Context::new(*identifier, world));
+//                         state.depend(world)
+//                     },
+//                 )
+//             };
+//             Ok(run)
+//         }
+//     }
+
+//     impl World {
+//         pub fn run<I: Default, O, M, R: IntoRun<I, O, M>>(&mut self, run: R) -> Result<O, Error>
+//         where
+//             R::Input: Default,
+//         {
+//             self.run_with(R::Input::default(), run)
+//         }
+
+//         pub fn run_with<I: Default, O, M, R: IntoRun<I, O, M>>(
+//             &mut self,
+//             input: R::Input,
+//             run: R,
+//         ) -> Result<O, Error> {
+//             let mut run = run.into_run(input, self)?;
+//             Ok((run.run)(I::default(), self))
+//         }
+//     }
+// }
+
 pub mod runner {
     use super::*;
 
     pub struct Runner {
-        pub(crate) identifier: usize,
-        pub(crate) blocks: Vec<Block>,
-        pub(crate) segments: usize,
+        identifier: usize,
+        version: usize,
+        blocks: Vec<Block>,
     }
 
     #[derive(Default)]
-    pub struct Block {
+    struct Block {
         systems: Vec<System>,
         dependencies: Vec<Dependency>,
         error: Option<Error>,
@@ -239,40 +374,49 @@ pub mod runner {
     unsafe impl Send for System {}
 
     impl Runner {
-        pub fn new(
-            systems: impl IntoIterator<Item = System>,
-            world: &mut World,
-        ) -> Result<Self, Error> {
-            Ok(Self {
-                identifier: world.identifier,
-                blocks: Self::schedule(systems.into_iter(), world)?,
-                segments: world.segments.len(),
-            })
+        pub fn new(identifier: usize, systems: impl IntoIterator<Item = System>) -> Self {
+            Self {
+                identifier,
+                version: 0,
+                blocks: systems.into_iter().map(Into::into).collect(),
+            }
         }
 
-        pub fn run(mut self, world: &mut World) -> Result<Runner, Error> {
-            if self.identifier != world.identifier {
+        pub fn update(&mut self, world: &mut World) -> Result<(), Error> {
+            if self.identifier != world.identifier() {
                 return Err(Error::WrongWorld);
             }
 
-            if self.segments.change(world.segments.len()) {
-                self.blocks = Self::schedule(
-                    self.blocks.into_iter().map(|block| block.systems).flatten(),
-                    world,
-                )?;
+            if self.version != world.version() {
+                // This will retry scheduling on each call as long as there are dependency errors.
+                self.schedule(world)?;
+                self.version = world.version();
             }
+
+            Ok(())
+        }
+
+        pub fn run(&mut self, world: &mut World) -> Result<(), Error> {
+            self.update(world)?;
 
             for block in self.blocks.iter_mut() {
                 // If segments have been added to the world, this may mean that the dependencies used to schedule the systems
                 // are not up to date, therefore it is not safe to run the systems in parallel.
-                if self.segments == world.segments.len() && block.systems.len() > 1 {
-                    use rayon::prelude::*;
-                    block
-                        .systems
-                        .par_iter_mut()
-                        .for_each(|system| (system.run)(world));
+                if self.version == world.version() {
+                    if block.systems.len() > 1 {
+                        use rayon::prelude::*;
+                        block
+                            .systems
+                            .par_iter_mut()
+                            .for_each(|system| (system.run)(world));
+                    } else {
+                        for system in block.systems.iter_mut() {
+                            (system.run)(world);
+                        }
+                    }
                 } else {
                     for system in block.systems.iter_mut() {
+                        (system.update)(world);
                         (system.run)(world);
                     }
                 }
@@ -282,223 +426,36 @@ pub mod runner {
                 }
             }
 
-            Ok(self)
+            Ok(())
         }
 
-        pub(crate) fn schedule(
-            systems: impl Iterator<Item = System>,
-            world: &mut World,
-        ) -> Result<Vec<Block>, Error> {
-            use Scope::*;
-
-            #[derive(Debug)]
-            enum Has {
-                All,
-                None,
-                Indices(Bits),
-            }
-
-            #[derive(Debug, Default)]
-            struct State {
-                unknown: bool,
-                reads: HashMap<TypeId, Has>,
-                writes: HashMap<TypeId, Has>,
-                defers: HashMap<TypeId, Has>,
-            }
-
-            impl Has {
-                pub fn add(&mut self, index: usize) -> bool {
-                    match self {
-                        Self::All => false,
-                        Self::None => {
-                            *self = Has::Indices(Bits::new());
-                            self.add(index)
-                        }
-                        Self::Indices(bits) => {
-                            if bits.has(index) {
-                                false
-                            } else {
-                                bits.set(index, true);
-                                true
-                            }
-                        }
-                    }
-                }
-
-                pub fn has(&self, index: usize) -> bool {
-                    match self {
-                        Self::All => true,
-                        Self::None => false,
-                        Self::Indices(bits) => bits.has(index),
-                    }
-                }
-            }
-
-            impl Default for Has {
-                fn default() -> Self {
-                    Self::None
-                }
-            }
-
-            impl State {
-                pub fn conflicts(
-                    &mut self,
-                    scope: Scope,
-                    dependencies: &Vec<Dependency>,
-                ) -> Result<(), Error> {
-                    let mut errors = Vec::new();
-                    if scope == Outer && self.unknown {
-                        errors.push(Error::UnknownConflict);
-                    }
-
-                    for dependency in dependencies {
-                        match self.conflict(scope, None, dependency.clone()) {
-                            Ok(_) => {}
-                            Err(error) => errors.push(error),
-                        }
-                    }
-
-                    let mut set = HashSet::new();
-                    errors.retain(move |error| set.insert(error.clone()));
-                    Error::All(errors).flatten(true).map(Err).unwrap_or(Ok(()))
-                }
-
-                pub fn clear(&mut self) {
-                    self.unknown = false;
-                    self.reads.clear();
-                    self.writes.clear();
-                    self.defers.clear();
-                }
-
-                fn conflict(
-                    &mut self,
-                    scope: Scope,
-                    index: Option<usize>,
-                    dependency: Dependency,
-                ) -> Result<(), Error> {
-                    match (index, dependency) {
-                        (_, Dependency::Unknown) => {
-                            self.unknown = true;
-                            if scope == Outer {
-                                Err(Error::UnknownConflict)
-                            } else {
-                                Ok(())
-                            }
-                        }
-                        (_, Dependency::At(index, dependency)) => {
-                            self.conflict(scope, Some(index), *dependency)
-                        }
-                        (index, Dependency::Ignore(inner, dependency)) => {
-                            if scope == inner || inner == All {
-                                self.conflict(scope, index, *dependency)
-                            } else {
-                                Ok(())
-                            }
-                        }
-                        (Some(index), Dependency::Read(identifier, name)) => {
-                            if has(&self.writes, identifier, index) {
-                                Err(Error::ReadWriteConflict(name, Some(index)))
-                            } else if scope == Outer && has(&self.defers, identifier, index) {
-                                Err(Error::ReadDeferConflict(name, Some(index)))
-                            } else {
-                                add(&mut self.reads, identifier, index);
-                                Ok(())
-                            }
-                        }
-
-                        (Some(index), Dependency::Write(identifier, name)) => {
-                            if has(&self.reads, identifier, index) {
-                                Err(Error::ReadWriteConflict(name, Some(index)))
-                            } else if has(&self.writes, identifier, index) {
-                                Err(Error::WriteWriteConflict(name, Some(index)))
-                            } else if scope == Outer && has(&self.defers, identifier, index) {
-                                Err(Error::WriteDeferConflict(name, Some(index)))
-                            } else {
-                                add(&mut self.writes, identifier, index);
-                                Ok(())
-                            }
-                        }
-                        (Some(index), Dependency::Defer(identifier, _)) => {
-                            add(&mut self.defers, identifier, index);
-                            Ok(())
-                        }
-                        (None, Dependency::Read(identifier, name)) => {
-                            if has_any(&self.writes, identifier) {
-                                Err(Error::ReadWriteConflict(name, None))
-                            } else if scope == Outer && has_any(&self.defers, identifier) {
-                                Err(Error::ReadDeferConflict(name, None))
-                            } else {
-                                add_all(&mut self.reads, identifier);
-                                Ok(())
-                            }
-                        }
-                        (None, Dependency::Write(identifier, name)) => {
-                            if has_any(&self.reads, identifier) {
-                                Err(Error::ReadWriteConflict(name, None))
-                            } else if has_any(&self.writes, identifier) {
-                                Err(Error::WriteWriteConflict(name, None))
-                            } else if scope == Outer && has_any(&self.defers, identifier) {
-                                Err(Error::WriteDeferConflict(name, None))
-                            } else {
-                                add_all(&mut self.writes, identifier);
-                                Ok(())
-                            }
-                        }
-                        (None, Dependency::Defer(identifier, _)) => {
-                            add_all(&mut self.defers, identifier);
-                            Ok(())
-                        }
-                    }
-                }
-            }
-
-            fn add(map: &mut HashMap<TypeId, Has>, identifier: TypeId, index: usize) -> bool {
-                map.entry(identifier).or_default().add(index)
-            }
-
-            fn add_all(map: &mut HashMap<TypeId, Has>, identifier: TypeId) {
-                *map.entry(identifier).or_default() = Has::All;
-            }
-
-            fn has(map: &HashMap<TypeId, Has>, identifier: TypeId, index: usize) -> bool {
-                map.get(&identifier)
-                    .map(|has| has.has(index))
-                    .unwrap_or(false)
-            }
-
-            fn has_any(map: &HashMap<TypeId, Has>, identifier: TypeId) -> bool {
-                has(map, identifier, usize::MAX)
-            }
-
+        fn schedule(&mut self, world: &mut World) -> Result<(), Error> {
             let mut blocks = Vec::new();
             let mut block = Block::default();
-            let mut inner = State::default();
-            let mut outer = State::default();
+            let mut inner = Conflict::default();
+            let mut outer = Conflict::default();
             let mut errors = Vec::new();
 
-            for mut system in systems {
+            for mut system in self.blocks.drain(..).flat_map(|block| block.systems) {
                 (system.update)(world);
 
                 let mut dependencies = (system.depend)(world);
-                match inner.conflicts(Inner, &dependencies) {
+                match inner.detect(Scope::Inner, &dependencies) {
                     Ok(()) => {}
-                    Err(error) => errors.push(Error::SystemInnerConflict(
-                        system.name().into(),
-                        error.into(),
-                    )),
+                    Err(error) => {
+                        errors.push(Error::InnerConflict(system.name().into(), error.into()))
+                    }
                 }
 
-                match outer.conflicts(Outer, &dependencies) {
+                match outer.detect(Scope::Outer, &dependencies) {
                     Ok(_) => {}
                     Err(error) => {
                         // TODO: When 'outer_conflicts' are detected, can later systems be still included in the block if they do not
                         // have 'outer_conflicts'? Dependencies would need to be accumulated even for conflicting systems and a system
                         // that has a 'Dependency::Unknown' should never be crossed.
                         if block.systems.len() > 0 {
-                            block.error = Some(Error::SystemOuterConflict(
-                                system.name().into(),
-                                error.into(),
-                            ));
+                            block.error =
+                                Some(Error::OuterConflict(system.name().into(), error.into()));
                             blocks.push(replace(&mut block, Block::default()));
                         }
                         swap(&mut inner, &mut outer);
@@ -514,10 +471,16 @@ pub mod runner {
                 blocks.push(block);
             }
 
-            Error::All(errors)
-                .flatten(true)
-                .map(Err)
-                .unwrap_or(Ok(blocks))
+            self.blocks = blocks;
+            Error::All(errors).flatten(true).map(Err).unwrap_or(Ok(()))
+        }
+    }
+
+    impl Into<Block> for System {
+        fn into(self) -> Block {
+            let mut block = Block::default();
+            block.systems.push(self);
+            block
         }
     }
 }
@@ -526,6 +489,7 @@ pub mod schedule {
     use super::*;
 
     pub struct Scheduler<'a> {
+        pub(crate) prefix: String,
         pub(crate) systems: Vec<Result<System, Error>>,
         pub(crate) world: &'a mut World,
     }
@@ -533,46 +497,40 @@ pub mod schedule {
     impl World {
         pub fn scheduler(&mut self) -> Scheduler {
             Scheduler {
+                prefix: String::new(),
                 systems: Vec::new(),
                 world: self,
             }
         }
-
-        pub fn run<I: Default, M, S: IntoSystem<I, M>>(&mut self, system: S) -> Result<(), Error> {
-            self.run_with(I::default(), system)
-        }
-
-        pub fn run_with<I, M, S: IntoSystem<I, M>>(
-            &mut self,
-            input: I,
-            system: S,
-        ) -> Result<(), Error> {
-            let runner = self.scheduler().schedule_with(input, system).runner()?;
-            runner.run(self)?;
-            Ok(())
-        }
     }
 
     impl<'a> Scheduler<'a> {
-        pub fn pipe(self, schedule: impl FnOnce(Self) -> Self) -> Self {
-            schedule(self)
+        pub fn pipe<F: FnOnce(Self) -> Self>(self, schedule: F) -> Self {
+            self.with_prefix::<F, _>(schedule)
         }
 
-        pub fn schedule<I: Default, M, S: IntoSystem<I, M>>(self, system: S) -> Self {
-            self.schedule_with(I::default(), system)
+        pub fn add<I: Default, M, S: IntoSystem<I, M>>(self, system: S) -> Self {
+            self.add_with(I::default(), system)
         }
 
-        pub fn schedule_with<I, M, S: IntoSystem<I, M>>(mut self, input: I, system: S) -> Self {
-            let system = system.into_system(input, self.world);
-            self.systems.push(system);
-            self
+        pub fn add_with<I, M, S: IntoSystem<I, M>>(self, input: I, system: S) -> Self {
+            self.with_prefix::<S, _>(|mut scheduler| {
+                let system = system
+                    .into_system(input, scheduler.world)
+                    .map(|mut system| {
+                        system.name.insert_str(0, &scheduler.prefix);
+                        system
+                    });
+                scheduler.systems.push(system);
+                scheduler
+            })
         }
 
-        pub fn synchronize(self) -> Self {
-            self.schedule(unsafe {
+        pub fn barrier(self) -> Self {
+            self.add(unsafe {
                 System::new(
                     None,
-                    "Synchronize".into(),
+                    "barrier".into(),
                     (),
                     |_, _| {},
                     |_, _| {},
@@ -582,7 +540,7 @@ pub mod schedule {
             })
         }
 
-        pub fn runner(self) -> Result<Runner, Error> {
+        pub fn schedule(self) -> Result<Runner, Error> {
             let mut systems = Vec::new();
             let mut errors = Vec::new();
 
@@ -595,8 +553,21 @@ pub mod schedule {
 
             match Error::All(errors).flatten(true) {
                 Some(error) => Err(error),
-                None => Runner::new(systems, self.world),
+                None => Ok(Runner::new(self.world.identifier(), systems)),
             }
+        }
+
+        fn with_prefix<T, F: FnOnce(Self) -> Self>(mut self, with: F) -> Self {
+            let count = self.prefix.len();
+            let prefix = if count == 0 {
+                format!("{}::", type_name::<T>())
+            } else {
+                format!("{}::", short_type_name::<T>())
+            };
+            self.prefix.push_str(&prefix);
+            self = with(self);
+            self.prefix.truncate(count);
+            self
         }
     }
 }

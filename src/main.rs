@@ -137,42 +137,42 @@ fn main() {
     let mut world = World::new();
     world
         .scheduler()
-        .schedule(|mut create: Create<_>| {
+        .add(|mut create: Create<_>| {
             let families = create.all((3..=4).map(dynamic));
             println!("CREATE: {:?}", families);
         })
-        .runner()
+        .schedule()
         .unwrap()
         .run(&mut world)
         .unwrap();
 
     let mut runner = world
         .scheduler()
-        .schedule(create())
-        .schedule(create())
-        .schedule(create())
-        .schedule(create())
-        .schedule(create())
-        .schedule(create())
-        .schedule(create())
-        .schedule(create())
-        .schedule(|mut create: Create<_>| {
+        .add(create())
+        .add(create())
+        .add(create())
+        .add(create())
+        .add(create())
+        .add(create())
+        .add(create())
+        .add(create())
+        .add(|mut create: Create<_>| {
             create.one(());
         })
-        .schedule(|mut create: Create<_>| {
+        .add(|mut create: Create<_>| {
             create.one((Frozen, Frozen, Frozen, Frozen, Frozen, Frozen));
         })
-        .schedule(|mut create: Create<_>| {
+        .add(|mut create: Create<_>| {
             create.one(complex());
         })
-        .schedule(|mut create: Create<_>| {
+        .add(|mut create: Create<_>| {
             create.one((
                 vec![with(|family| spawn(Target(family.entity())))],
                 spawn(vec![with(|family| Target(family.entity()))]),
                 spawn(with(|family| vec![Target(family.entity())])),
             ));
         })
-        .schedule(|query: Query<(Entity, Child<Entity>, Parent<Entity>)>| {
+        .add(|query: Query<(Entity, Child<Entity>, Parent<Entity>)>| {
             for (_entity, child, parent) in &query {
                 let _child = child.get(0);
                 let _parent = parent.get(0);
@@ -181,13 +181,11 @@ fn main() {
             }
             println!("C: {:?}", query.len())
         })
-        .schedule(|query: Query<Entity>, mut destroy: Destroy| {
-            query.each(|entity| destroy.one(entity))
-        })
-        .runner()
+        .add(|query: Query<Entity>, mut destroy: Destroy| query.each(|entity| destroy.one(entity)))
+        .schedule()
         .unwrap();
 
     for _ in 0..10_000_000 {
-        runner = runner.run(&mut world).unwrap();
+        runner.run(&mut world).unwrap();
     }
 }

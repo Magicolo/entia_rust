@@ -74,7 +74,7 @@ mod test {
     #[test]
     fn test() {
         fn physics(scheduler: Scheduler) -> Scheduler {
-            scheduler.schedule(|_: ((), ())| {})
+            scheduler.add(|_: ((), ())| {})
         }
 
         fn motion(group: Query<(&mut Position, &Velocity)>) {
@@ -89,22 +89,22 @@ mod test {
         let mut runner = world
             .scheduler()
             .pipe(physics)
-            .synchronize()
-            .schedule(|_: ()| {})
-            .schedule(|_: &World| {})
-            .schedule(|_: &Time| {})
-            .schedule(|_: (&Time,)| {})
-            .schedule(|_: &Time, _: &Physics, _: &mut Time, _: &mut Physics| {})
-            .schedule(|_: &Time, _: &Physics, _: &mut Time, _: &mut Physics| {})
-            .schedule(|_: (&Time, &Physics, &mut Time, &mut Physics)| {})
-            .schedule(|_: (&Time, &Physics)| {})
-            .schedule(|group: Query<Entity>| for _ in &group {})
-            .schedule(
+            .barrier()
+            .add(|_: ()| {})
+            .add(|_: &World| {})
+            .add(|_: &Time| {})
+            .add(|_: (&Time,)| {})
+            .add(|_: &Time, _: &Physics, _: &mut Time, _: &mut Physics| {})
+            .add(|_: &Time, _: &Physics, _: &mut Time, _: &mut Physics| {})
+            .add(|_: (&Time, &Physics, &mut Time, &mut Physics)| {})
+            .add(|_: (&Time, &Physics)| {})
+            .add(|group: Query<Entity>| for _ in &group {})
+            .add(
                 |(group,): (Query<(Entity, &mut Position)>,)| {
                     for _ in &group {}
                 },
             )
-            .schedule(
+            .add(
                 |_: Query<
                     (Entity,),
                     (
@@ -113,8 +113,8 @@ mod test {
                     ),
                 >| {},
             )
-            .schedule(|_: Query<(Entity, (&Position, &Velocity))>| {})
-            .schedule(|query: Query<(&mut Position, &mut Position)>| {
+            .add(|_: Query<(Entity, (&Position, &Velocity))>| {})
+            .add(|query: Query<(&mut Position, &mut Position)>| {
                 query
                     .into_iter()
                     .filter(|(position, _)| position.0 < 1.)
@@ -130,7 +130,7 @@ mod test {
             //         counter += time.0 * counter;
             //     }
             // })
-            .schedule_with(
+            .add_with(
                 (Some(Time(12.0)), None, (), 8, ()),
                 |_a: &Time,
                  _b: &mut Physics,
@@ -138,14 +138,14 @@ mod test {
                  _d: Receive<OnKill>,
                  _e: Query<(Entity, &mut Position, &Velocity)>| {},
             )
-            .schedule(|_: (&Time, &Physics)| {})
-            .schedule(|_: (&Time, &Physics)| {})
-            .schedule(|_: (&Time, Query<Option<&Position>>)| {})
-            .synchronize()
-            .schedule(|(_, query): (&Physics, Query<&mut Velocity>)| {
+            .add(|_: (&Time, &Physics)| {})
+            .add(|_: (&Time, &Physics)| {})
+            .add(|_: (&Time, Query<Option<&Position>>)| {})
+            .barrier()
+            .add(|(_, query): (&Physics, Query<&mut Velocity>)| {
                 query.each(|velocity| velocity.0 += 1.)
             })
-            .schedule(
+            .add(
                 |(time, queries): (
                     &Time,
                     (Query<&mut Position, Not<Frozen>>, Query<&mut Velocity>),
@@ -172,7 +172,7 @@ mod test {
                     }
                 },
             )
-            .schedule({
+            .add({
                 #[derive(Default)]
                 struct Private(usize);
                 impl Resource for Private {}
@@ -183,16 +183,17 @@ mod test {
                     counter += counter;
                 }
             })
-            .schedule(motion)
-            .schedule(|mut on_kill: Emit<_>| on_kill.emit(OnKill(Entity::default())))
-            .schedule_with((8,), |on_kill: Receive<OnKill>| {
+            .add(motion)
+            .add(|mut on_kill: Emit<_>| on_kill.emit(OnKill(Entity::default())))
+            .add_with((8,), |on_kill: Receive<OnKill>| {
                 for message in on_kill {
                     println!("{:?}", message.0);
                 }
+                ""
             })
-            .schedule(|on_kill: Receive<OnKill>| for _ in on_kill {})
-            .schedule(|mut on_kill: Receive<OnKill>| while let Some(_) = on_kill.next() {})
-            .schedule(
+            .add(|on_kill: Receive<OnKill>| for _ in on_kill {})
+            .add(|mut on_kill: Receive<OnKill>| while let Some(_) = on_kill.next() {})
+            .add(
                 |query: Query<Entity, (Position, Velocity)>, mut destroy: Destroy| {
                     for entity in &query {
                         destroy.one(entity);
@@ -201,16 +202,16 @@ mod test {
                     query.each(|entity| destroy.one(entity));
                 },
             )
-            .schedule(|query: Query<Entity>, mut destroy: Destroy| {
+            .add(|query: Query<Entity>, mut destroy: Destroy| {
                 for entity in &query {
                     destroy.one(entity);
                 }
             })
-            .runner()
+            .schedule()
             .unwrap();
 
         loop {
-            runner = runner.run(&mut world).unwrap();
+            runner.run(&mut world).unwrap();
         }
     }
 }

@@ -3,7 +3,7 @@ use crate::{
     entities::Entities,
     entity::Entity,
     family::Family,
-    inject::{Get, Inject, InjectContext},
+    inject::{Context, Get, Inject},
     world::World,
     write::{self, Write},
 };
@@ -93,14 +93,14 @@ unsafe impl Inject for Families<'_> {
     type Input = ();
     type State = State;
 
-    fn initialize(_: Self::Input, context: InjectContext) -> Option<Self::State> {
+    fn initialize(_: Self::Input, context: Context) -> Option<Self::State> {
         Some(State(
             Vec::new(),
             <Write<Entities> as Inject>::initialize(None, context)?,
         ))
     }
 
-    fn resolve(state: &mut Self::State, _: InjectContext) {
+    fn resolve(state: &mut Self::State, _: Context) {
         let entities = state.1.as_mut();
         for defer in state.0.drain(..) {
             match defer {

@@ -1,8 +1,7 @@
-use std::time::{Duration, Instant};
-
 use entia::*;
-use winput::message_loop::Event;
-use winput::{message_loop, Action, Vk};
+use piston::WindowSettings;
+use piston_window::*;
+use std::{error, time::Duration};
 
 #[derive(Clone, Debug)]
 enum Input {
@@ -29,80 +28,77 @@ struct Time {
 }
 impl Resource for Time {}
 
+// TODO: Allow input-output systems...
 // TODO: More aggressive parallelization of systems.
 // - Try to bundle systems after a conflict?
 
 fn main() {
-    fn run() -> Result<(), Error> {
-        let mut world = World::new();
-
-        world.run(|mut create: Create<_>| {
-            create.clones(spawn(spawn(spawn((Position(0, 0), Controller)))), 5);
-        })?;
-
-        let mut runner = world.scheduler().pipe(time).pipe(input).runner()?;
-        loop {
-            runner = runner.run(&mut world)?;
-        }
-    }
-
     run().unwrap();
 }
 
-fn time(scheduler: Scheduler) -> Scheduler {
-    let start = Instant::now();
-    scheduler.schedule(move |time: &mut Time| {
-        let total = Instant::now().duration_since(start);
-        *time = Time {
-            frames: time.frames + 1,
-            delta: total - time.total,
-            total,
-        };
-    })
-}
+fn run() -> Result<(), Box<dyn error::Error>> {
+    let mut world = World::new();
+    let mut window: PistonWindow = WindowSettings::new("Example_01", [640, 480])
+        .exit_on_esc(true)
+        .build()?;
 
-fn input(scheduler: Scheduler) -> Scheduler {
-    let events = message_loop::start().unwrap();
-    scheduler
-        .schedule(move |mut inputs: Emit<Input>| {
-            while let Some(event) = events.try_next_event() {
-                match event {
-                    Event::Keyboard {
-                        vk: Vk::LeftArrow,
-                        action,
-                        ..
-                    } => inputs.emit(Input::Left(action == Action::Press)),
-                    Event::Keyboard {
-                        vk: Vk::RightArrow,
-                        action,
-                        ..
-                    } => inputs.emit(Input::Right(action == Action::Press)),
-                    Event::Keyboard {
-                        vk: Vk::UpArrow,
-                        action,
-                        ..
-                    } => inputs.emit(Input::Up(action == Action::Press)),
-                    Event::Keyboard {
-                        vk: Vk::DownArrow,
-                        action,
-                        ..
-                    } => inputs.emit(Input::Down(action == Action::Press)),
+    let mut initialize = world
+        .scheduler()
+        .add(|mut create: Create<_>| {
+            create.clones(spawn(spawn(spawn((Position(0, 0), Controller)))), 5);
+        })
+        .schedule()?;
+
+    let mut inputs = world.injector::<Emit<Input>>()?;
+    let mut time = world.injector::<&mut Time>()?;
+    let mut update = world.scheduler().add(apply_input_to_position).schedule()?;
+
+    initialize.run(&mut world)?;
+    while let Some(event) = window.next() {
+        // window
+        //     .draw_2d(&event, |a, b, c| render.run(&mut world))
+        //     .unwrap_or(Ok(()))?;
+        match event {
+            Event::Input(piston::Input::Button(ButtonArgs { state, button, .. }), _) => {
+                let mut guard = inputs.guard(&mut world)?;
+                let mut inputs = guard.inject();
+                let press = state == ButtonState::Press;
+                match button {
+                    Button::Keyboard(Key::Left) => inputs.emit(Input::Left(press)),
+                    Button::Keyboard(Key::Right) => inputs.emit(Input::Right(press)),
+                    Button::Keyboard(Key::Down) => inputs.emit(Input::Down(press)),
+                    Button::Keyboard(Key::Up) => inputs.emit(Input::Up(press)),
                     _ => {}
                 }
             }
-        })
-        .schedule(
-            |inputs: Receive<Input>,
-            query: Query<(&mut Position, Family, Entity, Parent<Entity>), Controller>| {
-                for input in inputs {
-                    match input {
-                        Input::Left(true) => query.each(|(position, ..)| position.0 -= 1),
-                        Input::Right(true) => query.each(|(position, ..)| position.0 += 1),
-                        Input::Down(true) => query.each(|(position, ..)| position.1 -= 1),
-                        Input::Up(true) => query.each(|(position, ..)| position.1 += 1),
-                        _ => {}
-                    }
+            Event::Loop(Loop::Update(UpdateArgs { dt })) => {
+                {
+                    let mut guard = time.guard(&mut world)?;
+                    let time = guard.inject();
+                    time.frames += 1;
+                    time.delta = Duration::from_secs_f64(dt);
+                    time.total += time.delta;
                 }
-            },
-        )
+                update.run(&mut world)?
+            }
+            Event::Loop(Loop::Render(_)) => {}
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
+fn apply_input_to_position(inputs: Receive<Input>, query: Query<&mut Position, Controller>) {
+    for input in inputs {
+        match input {
+            Input::Left(true) => query.each(|position| position.0 -= 1),
+            Input::Right(true) => query.each(|position| position.0 += 1),
+            Input::Down(true) => query.each(|position| position.1 -= 1),
+            Input::Up(true) => query.each(|position| position.1 += 1),
+            _ => {}
+        }
+
+        println!("{:?}", input);
+    }
 }

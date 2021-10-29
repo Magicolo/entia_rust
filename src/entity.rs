@@ -4,7 +4,7 @@ use crate::{
     depend::{Depend, Dependency},
     query::{
         filter::Filter,
-        item::{At, Item, ItemContext},
+        item::{At, Context, Item},
     },
     world::{segment::Segment, store::Store, World},
 };
@@ -67,7 +67,7 @@ impl Filter for Entity {
 unsafe impl Item for Entity {
     type State = State;
 
-    fn initialize(mut context: ItemContext) -> Option<Self::State> {
+    fn initialize(mut context: Context) -> Option<Self::State> {
         let meta = context.world().get_meta::<Entity>()?;
         let segment = context.segment();
         let store = segment.store(&meta)?;

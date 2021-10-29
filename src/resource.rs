@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    inject::{Inject, InjectContext},
+    inject::{Context, Inject},
     read::Read,
     world::{store::Store, World},
     write::Write,
@@ -13,7 +13,7 @@ unsafe impl<R: Resource> Inject for &R {
     type Input = <Read<R> as Inject>::Input;
     type State = <Read<R> as Inject>::State;
 
-    fn initialize(input: Self::Input, context: InjectContext) -> Option<Self::State> {
+    fn initialize(input: Self::Input, context: Context) -> Option<Self::State> {
         <Read<R> as Inject>::initialize(input, context)
     }
 }
@@ -22,7 +22,7 @@ unsafe impl<R: Resource> Inject for &mut R {
     type Input = <Write<R> as Inject>::Input;
     type State = <Write<R> as Inject>::State;
 
-    fn initialize(input: Self::Input, context: InjectContext) -> Option<Self::State> {
+    fn initialize(input: Self::Input, context: Context) -> Option<Self::State> {
         <Write<R> as Inject>::initialize(input, context)
     }
 }

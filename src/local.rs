@@ -6,7 +6,7 @@ use std::{
 
 use crate::{
     depend::Depend,
-    inject::{Get, Inject, InjectContext},
+    inject::{Context, Get, Inject},
     resource::Resource,
     world::World,
     write::{self, Write},
@@ -26,7 +26,7 @@ unsafe impl<T: Default + Send + 'static> Inject for Local<'_, T> {
     type Input = ();
     type State = State<T>;
 
-    fn initialize(_: Self::Input, mut context: InjectContext) -> Option<Self::State> {
+    fn initialize(_: Self::Input, mut context: Context) -> Option<Self::State> {
         let mut inner = <Write<Inner> as Inject>::initialize(None, context.owned())?;
         let index = {
             let key = (context.identifier(), TypeId::of::<T>());

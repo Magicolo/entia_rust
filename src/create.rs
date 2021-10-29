@@ -8,7 +8,7 @@ use crate::{
     initial::{
         spawn, ApplyContext, CountContext, DeclareContext, Initial, InitializeContext, Spawn,
     },
-    inject::{Get, Inject, InjectContext},
+    inject::{Context, Get, Inject},
     world::World,
     write::{self, Write},
 };
@@ -226,7 +226,7 @@ unsafe impl<I: Initial> Inject for Create<'_, I> {
     type Input = I::Input;
     type State = State<I>;
 
-    fn initialize(input: Self::Input, mut context: InjectContext) -> Option<Self::State> {
+    fn initialize(input: Self::Input, mut context: Context) -> Option<Self::State> {
         let entities = <Write<Entities> as Inject>::initialize(None, context.owned())?;
         let world = context.world();
         let mut segment_metas = Vec::new();
@@ -290,7 +290,7 @@ unsafe impl<I: Initial> Inject for Create<'_, I> {
         })
     }
 
-    fn resolve(state: &mut Self::State, mut context: InjectContext) {
+    fn resolve(state: &mut Self::State, mut context: Context) {
         let inner = &mut state.inner;
         let world = context.world();
         let entities = state.entities.as_mut();
@@ -371,10 +371,9 @@ impl<'a, I: Initial> Get<'a> for State<I> {
 
 unsafe impl<I: Initial> Depend for State<I> {
     fn depend(&self, _: &World) -> Vec<Dependency> {
-        self.inner
-            .segment_indices
-            .iter()
-            .map(|indices| Dependency::defer::<Entity>().at(indices.segment))
-            .collect()
+        vec![
+            Dependency::defer::<Entity>(),
+            Dependency::defer::<Entities>(),
+        ]
     }
 }

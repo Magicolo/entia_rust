@@ -6,7 +6,7 @@ use crate::{
     query::{
         self,
         filter::Filter,
-        item::{At, Item, ItemContext},
+        item::{At, Context, Item},
         Query,
     },
     read::{self, Read},
@@ -123,7 +123,7 @@ impl fmt::Debug for Family<'_> {
 unsafe impl Item for Family<'_> {
     type State = State;
 
-    fn initialize(mut context: ItemContext) -> Option<Self::State> {
+    fn initialize(mut context: Context) -> Option<Self::State> {
         Some(State(
             <Read<Entity> as Item>::initialize(context.owned())?,
             <Read<Entities> as Inject>::initialize(None, context.into())?,
@@ -479,7 +479,7 @@ pub mod item {
     unsafe impl<I: Item + 'static, F: Filter> Item for Child<'_, I, F> {
         type State = ChildState<I, F>;
 
-        fn initialize(mut context: ItemContext) -> Option<Self::State> {
+        fn initialize(mut context: Context) -> Option<Self::State> {
             Some(ChildState {
                 entity: <Read<Entity> as Item>::initialize(context.owned())?,
                 entities: <Read<Entities> as Inject>::initialize(None, context.owned().into())?,
@@ -494,7 +494,7 @@ pub mod item {
                 entities,
                 query,
             }: &mut Self::State,
-            mut context: ItemContext,
+            mut context: Context,
         ) {
             <Read<Entity> as Item>::update(entity, context.owned());
             <Read<Entities> as Inject>::update(entities, context.owned().into());
@@ -571,7 +571,7 @@ pub mod item {
     unsafe impl<I: Item + 'static, F: Filter> Item for Parent<'_, I, F> {
         type State = ParentState<I, F>;
 
-        fn initialize(mut context: ItemContext) -> Option<Self::State> {
+        fn initialize(mut context: Context) -> Option<Self::State> {
             Some(ParentState {
                 entity: <Read<Entity> as Item>::initialize(context.owned())?,
                 entities: <Read<Entities> as Inject>::initialize(None, context.owned().into())?,
@@ -586,7 +586,7 @@ pub mod item {
                 entities,
                 query,
             }: &mut Self::State,
-            mut context: ItemContext,
+            mut context: Context,
         ) {
             <Read<Entity> as Item>::update(entity, context.owned());
             <Read<Entities> as Inject>::update(entities, context.owned().into());

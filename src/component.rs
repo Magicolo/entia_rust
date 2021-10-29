@@ -1,7 +1,7 @@
 use crate::{
     query::{
         filter::Filter,
-        item::{Item, ItemContext},
+        item::{Context, Item},
     },
     read::Read,
     world::{segment::Segment, World},
@@ -20,18 +20,18 @@ impl<C: Component> Filter for C {
     }
 }
 
-unsafe impl<C: Component> Item for &C {
-    type State = <Read<C> as Item>::State;
+unsafe impl<T: Sync + Send + 'static> Item for &T {
+    type State = <Read<T> as Item>::State;
 
-    fn initialize(context: ItemContext) -> Option<Self::State> {
-        <Read<C> as Item>::initialize(context)
+    fn initialize(context: Context) -> Option<Self::State> {
+        <Read<T> as Item>::initialize(context)
     }
 }
 
-unsafe impl<C: Component> Item for &mut C {
-    type State = <Write<C> as Item>::State;
+unsafe impl<T: Sync + Send + 'static> Item for &mut T {
+    type State = <Write<T> as Item>::State;
 
-    fn initialize(context: ItemContext) -> Option<Self::State> {
-        <Write<C> as Item>::initialize(context)
+    fn initialize(context: Context) -> Option<Self::State> {
+        <Write<T> as Item>::initialize(context)
     }
 }

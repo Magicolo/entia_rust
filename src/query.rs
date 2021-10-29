@@ -3,7 +3,7 @@ use crate::{
     depend::{Depend, Dependency},
     entities::Entities,
     entity::Entity,
-    inject::{Get, Inject, InjectContext},
+    inject::{self, Get, Inject},
     read::{self, Read},
     resource::Resource,
     world::{segment::Segment, World},
@@ -124,20 +124,20 @@ unsafe impl<'a, I: Item + 'static, F: Filter> Inject for Query<'a, I, F> {
     type Input = ();
     type State = State<I, F>;
 
-    fn initialize(_: Self::Input, mut context: InjectContext) -> Option<Self::State> {
+    fn initialize(_: Self::Input, mut context: inject::Context) -> Option<Self::State> {
         let inner = <Write<Inner<I, F>> as Inject>::initialize(None, context.owned())?;
         let entities = <Read<Entities> as Inject>::initialize(None, context.owned())?;
         Some(State { inner, entities })
     }
 
-    fn update(state: &mut Self::State, mut context: InjectContext) {
+    fn update(state: &mut Self::State, mut context: inject::Context) {
         let identifier = context.identifier();
         let world = context.world();
         let inner = state.inner.as_mut();
         while let Some(segment) = world.segments.get(inner.segments.len()) {
             if F::filter(segment, world) {
                 let segment = segment.index;
-                if let Some(item) = I::initialize(ItemContext::new(identifier, segment, world)) {
+                if let Some(item) = I::initialize(Context::new(identifier, segment, world)) {
                     inner.segments.push(Some(inner.states.len()));
                     inner.states.push((item, segment));
                     continue;
@@ -147,7 +147,7 @@ unsafe impl<'a, I: Item + 'static, F: Filter> Inject for Query<'a, I, F> {
         }
 
         for (state, segment) in inner.states.iter_mut() {
-            let context = ItemContext::new(context.identifier(), *segment, context.world());
+            let context = Context::new(context.identifier(), *segment, context.world());
             I::update(state, context);
         }
     }
@@ -189,7 +189,7 @@ unsafe impl<I: Item + 'static, F: Filter> Depend for State<I, F> {
 pub mod item {
     use super::*;
 
-    pub struct ItemContext<'a> {
+    pub struct Context<'a> {
         identifier: usize,
         segment: usize,
         world: &'a mut World,
@@ -197,9 +197,9 @@ pub mod item {
 
     pub unsafe trait Item: Send {
         type State: for<'a> At<'a> + Depend + Send + 'static;
-        fn initialize(context: ItemContext) -> Option<Self::State>;
+        fn initialize(context: Context) -> Option<Self::State>;
         #[inline]
-        fn update(_: &mut Self::State, _: ItemContext) {}
+        fn update(_: &mut Self::State, _: Context) {}
     }
 
     pub trait At<'a> {
@@ -207,7 +207,7 @@ pub mod item {
         fn at(&'a self, index: usize, world: &'a World) -> Self::Item;
     }
 
-    impl<'a> ItemContext<'a> {
+    impl<'a> Context<'a> {
         pub fn new(identifier: usize, segment: usize, world: &'a mut World) -> Self {
             Self {
                 identifier,
@@ -228,30 +228,30 @@ pub mod item {
             self.world
         }
 
-        pub fn owned(&mut self) -> ItemContext {
+        pub fn owned(&mut self) -> Context {
             self.with(self.segment)
         }
 
-        pub fn with(&mut self, segment: usize) -> ItemContext {
-            ItemContext::new(self.identifier, segment, self.world)
+        pub fn with(&mut self, segment: usize) -> Context {
+            Context::new(self.identifier, segment, self.world)
         }
     }
 
-    impl<'a> Into<InjectContext<'a>> for ItemContext<'a> {
-        fn into(self) -> InjectContext<'a> {
-            InjectContext::new(self.identifier, self.world)
+    impl<'a> Into<inject::Context<'a>> for Context<'a> {
+        fn into(self) -> inject::Context<'a> {
+            inject::Context::new(self.identifier, self.world)
         }
     }
 
     unsafe impl<I: Item> Item for Option<I> {
         type State = Option<I::State>;
 
-        fn initialize(context: ItemContext) -> Option<Self::State> {
+        fn initialize(context: Context) -> Option<Self::State> {
             Some(I::initialize(context))
         }
 
         #[inline]
-        fn update(state: &mut Self::State, context: ItemContext) {
+        fn update(state: &mut Self::State, context: Context) {
             if let Some(state) = state {
                 I::update(state, context);
             }
@@ -272,11 +272,11 @@ pub mod item {
             unsafe impl<$($t: Item,)*> Item for ($($t,)*) {
                 type State = ($($t::State,)*);
 
-                fn initialize(mut _context: ItemContext) -> Option<Self::State> {
+                fn initialize(mut _context: Context) -> Option<Self::State> {
                     Some(($($t::initialize(_context.owned())?,)*))
                 }
 
-                fn update(($($p,)*): &mut Self::State, mut _context: ItemContext) {
+                fn update(($($p,)*): &mut Self::State, mut _context: Context) {
                     $($t::update($p, _context.owned());)*
                 }
             }

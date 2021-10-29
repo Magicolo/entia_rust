@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 
 use crate::{
     depend::{Depend, Dependency},
-    inject::{Get, Inject, InjectContext},
+    inject::{Context, Get, Inject},
     resource::Resource,
     world::World,
     write,
@@ -60,12 +60,12 @@ pub mod emit {
         type Input = ();
         type State = State<M>;
 
-        fn initialize(_: Self::Input, context: InjectContext) -> Option<Self::State> {
+        fn initialize(_: Self::Input, context: Context) -> Option<Self::State> {
             let inner = <Write<Inner<M>> as Inject>::initialize(None, context)?;
             Some(State(inner, Vec::new()))
         }
 
-        fn resolve(State(inner, messages): &mut Self::State, _: InjectContext) {
+        fn resolve(State(inner, messages): &mut Self::State, _: Context) {
             let inner = inner.as_mut();
             for queue in inner.queues.iter_mut() {
                 queue.enqueue(messages.iter().cloned());
@@ -115,7 +115,7 @@ pub mod receive {
         type Input = usize;
         type State = State<M>;
 
-        fn initialize(input: Self::Input, context: InjectContext) -> Option<Self::State> {
+        fn initialize(input: Self::Input, context: Context) -> Option<Self::State> {
             let mut inner = <Write<Inner<M>> as Inject>::initialize(None, context)?;
             let index = {
                 let inner = inner.as_mut();

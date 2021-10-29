@@ -8,4 +8,7 @@ edition = "2018"
 
 [dependencies]
 entia = { path = "../" }
-winput = "*"
+crossbeam-queue = "*"
+piston = "*"
+piston_window = "*"
+nalgebra = "*"

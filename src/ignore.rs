@@ -2,8 +2,8 @@ use std::marker::PhantomData;
 
 use crate::{
     depend::{self, Depend, Dependency},
-    inject::{Get, Inject, InjectContext},
-    query::item::{At, Item, ItemContext},
+    inject::{self, Get, Inject},
+    query::item::{self, At, Item},
     world::World,
 };
 
@@ -48,7 +48,7 @@ unsafe impl<I: Inject + 'static, S: Scope> Inject for Ignore<I, S> {
     type Input = I::Input;
     type State = State<I::State, S>;
 
-    fn initialize(input: Self::Input, context: InjectContext) -> Option<Self::State> {
+    fn initialize(input: Self::Input, context: inject::Context) -> Option<Self::State> {
         Some(State(I::initialize(input, context)?, PhantomData))
     }
 }
@@ -64,7 +64,7 @@ impl<'a, T: Get<'a>, S: Scope> Get<'a> for State<T, S> {
 unsafe impl<I: Item + 'static, S: Scope> Item for Ignore<I, S> {
     type State = State<I::State, S>;
 
-    fn initialize(context: ItemContext) -> Option<Self::State> {
+    fn initialize(context: item::Context) -> Option<Self::State> {
         Some(State(I::initialize(context)?, PhantomData))
     }
 }

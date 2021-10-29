@@ -2,8 +2,8 @@ use std::{marker::PhantomData, sync::Arc};
 
 use crate::{
     depend::{Depend, Dependency},
-    inject::{Get, Inject, InjectContext},
-    query::item::{At, Item, ItemContext},
+    inject::{self, Get, Inject},
+    query::item::{self, At, Item},
     resource::initialize,
     world::{store::Store, World},
     Resource,
@@ -16,7 +16,7 @@ unsafe impl<T: Default + 'static> Inject for Read<T> {
     type Input = Option<T>;
     type State = State<T>;
 
-    fn initialize(input: Self::Input, mut context: InjectContext) -> Option<Self::State> {
+    fn initialize(input: Self::Input, mut context: inject::Context) -> Option<Self::State> {
         let (store, segment) = initialize(input, context.world())?;
         Some(State(store, segment, PhantomData))
     }
@@ -34,7 +34,7 @@ impl<'a, T: 'static> Get<'a> for State<T> {
 unsafe impl<T: Send + 'static> Item for Read<T> {
     type State = State<T>;
 
-    fn initialize(mut context: ItemContext) -> Option<Self::State> {
+    fn initialize(mut context: item::Context) -> Option<Self::State> {
         let meta = context.world().get_meta::<T>()?;
         let segment = context.segment();
         let store = segment.store(&meta)?;

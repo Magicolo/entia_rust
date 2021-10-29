@@ -2,7 +2,7 @@ use crate::{
     depend::{Depend, Dependency},
     entities::Entities,
     entity::Entity,
-    inject::{Get, Inject, InjectContext},
+    inject::{Context, Get, Inject},
     world::World,
     write::{self, Write},
 };
@@ -46,7 +46,7 @@ unsafe impl Inject for Destroy<'_> {
     type Input = ();
     type State = State;
 
-    fn initialize(_: Self::Input, context: InjectContext) -> Option<Self::State> {
+    fn initialize(_: Self::Input, context: Context) -> Option<Self::State> {
         Some(State {
             defer: Vec::new(),
             set: HashSet::new(),
@@ -54,7 +54,7 @@ unsafe impl Inject for Destroy<'_> {
         })
     }
 
-    fn resolve(state: &mut Self::State, mut context: InjectContext) {
+    fn resolve(state: &mut Self::State, mut context: Context) {
         let entities = state.entities.as_mut();
         let world = context.world();
         let set = &mut state.set;

@@ -3,7 +3,7 @@ use std::{any::Any, collections::VecDeque, marker::PhantomData};
 use crate::{
     depend::{Depend, Dependency},
     entity::Entity,
-    inject::{Get, Inject, InjectContext},
+    inject::{Context, Get, Inject},
     local::{self, Local},
     world::World,
 };
@@ -89,7 +89,7 @@ unsafe impl<R: Resolve> Inject for Defer<'_, R> {
     type Input = R::State;
     type State = State<R>;
 
-    fn initialize(input: Self::Input, context: InjectContext) -> Option<Self::State> {
+    fn initialize(input: Self::Input, context: Context) -> Option<Self::State> {
         let mut inner = <Local<Inner> as Inject>::initialize((), context)?;
         let index = {
             let inner = inner.as_mut();
@@ -105,7 +105,7 @@ unsafe impl<R: Resolve> Inject for Defer<'_, R> {
         })
     }
 
-    fn resolve(state: &mut Self::State, mut context: InjectContext) {
+    fn resolve(state: &mut Self::State, mut context: Context) {
         let inner = state.inner.as_mut();
         for (index, count) in inner.defer.drain(..) {
             inner.resolvers[index].resolve(count, context.world());
