@@ -17,6 +17,13 @@ struct Position(isize, isize);
 impl Component for Position {}
 
 #[derive(Copy, Clone, Debug)]
+struct Render {
+    color: [u8; 4],
+    visible: bool,
+}
+impl Component for Render {}
+
+#[derive(Copy, Clone, Debug)]
 struct Controller;
 impl Component for Controller {}
 
@@ -28,7 +35,6 @@ struct Time {
 }
 impl Resource for Time {}
 
-// TODO: Allow input-output systems...
 // TODO: More aggressive parallelization of systems.
 // - Try to bundle systems after a conflict?
 
@@ -51,23 +57,28 @@ fn run() -> Result<(), Box<dyn error::Error>> {
 
     let mut inputs = world.injector::<Emit<Input>>()?;
     let mut time = world.injector::<&mut Time>()?;
-    let mut update = world.scheduler().add(apply_input_to_position).schedule()?;
+    let mut render = world.injector::<Query<(&Position, &Render)>>()?;
+    let mut runner = world.scheduler().add(apply_input_to_position).schedule()?;
 
     initialize.run(&mut world)?;
     while let Some(event) = window.next() {
-        // window
-        //     .draw_2d(&event, |a, b, c| render.run(&mut world))
-        //     .unwrap_or(Ok(()))?;
         match event {
-            Event::Input(piston::Input::Button(ButtonArgs { state, button, .. }), _) => {
+            Event::Input(
+                piston::Input::Button(ButtonArgs {
+                    state,
+                    button: Button::Keyboard(key),
+                    ..
+                }),
+                _,
+            ) => {
                 let mut guard = inputs.guard(&mut world)?;
                 let mut inputs = guard.inject();
                 let press = state == ButtonState::Press;
-                match button {
-                    Button::Keyboard(Key::Left) => inputs.emit(Input::Left(press)),
-                    Button::Keyboard(Key::Right) => inputs.emit(Input::Right(press)),
-                    Button::Keyboard(Key::Down) => inputs.emit(Input::Down(press)),
-                    Button::Keyboard(Key::Up) => inputs.emit(Input::Up(press)),
+                match key {
+                    Key::Left => inputs.emit(Input::Left(press)),
+                    Key::Right => inputs.emit(Input::Right(press)),
+                    Key::Down => inputs.emit(Input::Down(press)),
+                    Key::Up => inputs.emit(Input::Up(press)),
                     _ => {}
                 }
             }
@@ -79,10 +90,19 @@ fn run() -> Result<(), Box<dyn error::Error>> {
                     time.delta = Duration::from_secs_f64(dt);
                     time.total += time.delta;
                 }
-                update.run(&mut world)?
+                runner.run(&mut world)?
             }
-            Event::Loop(Loop::Render(_)) => {}
-            _ => {}
+            event => {
+                window
+                    .draw_2d(&event, |context, graphics, device| -> Result<(), Error> {
+                        let mut guard = render.guard(&mut world)?;
+                        for (position, render) in &guard.inject() {
+                            if render.visible {}
+                        }
+                        Ok(())
+                    })
+                    .unwrap_or(Ok(()))?;
+            }
         }
     }
 
