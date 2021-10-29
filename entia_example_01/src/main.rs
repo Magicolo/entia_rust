@@ -18,7 +18,7 @@ impl Component for Position {}
 
 #[derive(Copy, Clone, Debug)]
 struct Render {
-    color: [u8; 4],
+    color: [f32; 4],
     visible: bool,
 }
 impl Component for Render {}
@@ -33,25 +33,37 @@ struct Time {
     pub total: Duration,
     pub delta: Duration,
 }
-impl Resource for Time {}
 
 // TODO: More aggressive parallelization of systems.
 // - Try to bundle systems after a conflict?
+// TODO: Derive macros for 'Inject', 'Item', 'Initial', 'Filter'
 
 fn main() {
     run().unwrap();
 }
 
 fn run() -> Result<(), Box<dyn error::Error>> {
+    const SIZE: [f64; 2] = [640., 480.];
+    const CELLS: [f64; 2] = [10., 10.];
+
     let mut world = World::new();
-    let mut window: PistonWindow = WindowSettings::new("Example_01", [640, 480])
+    let mut window: PistonWindow = WindowSettings::new("Example_01", SIZE)
         .exit_on_esc(true)
         .build()?;
 
     let mut initialize = world
         .scheduler()
         .add(|mut create: Create<_>| {
-            create.clones(spawn(spawn(spawn((Position(0, 0), Controller)))), 5);
+            create.all((0..10).map(|i| {
+                (
+                    Position(i, -i),
+                    Render {
+                        color: [0.1, 0.1, 0.8, 1.],
+                        visible: true,
+                    },
+                    Controller,
+                )
+            }));
         })
         .schedule()?;
 
@@ -92,17 +104,30 @@ fn run() -> Result<(), Box<dyn error::Error>> {
                 }
                 runner.run(&mut world)?
             }
-            event => {
-                window
-                    .draw_2d(&event, |context, graphics, device| -> Result<(), Error> {
-                        let mut guard = render.guard(&mut world)?;
-                        for (position, render) in &guard.inject() {
-                            if render.visible {}
+            event => window
+                .draw_2d(&event, |context, graphics, _| -> Result<(), Error> {
+                    graphics.clear_color([0.25, 0.4, 0.1, 1.]);
+
+                    let cell_size = [SIZE[0] / CELLS[0], SIZE[1] / CELLS[1]];
+                    let square = rectangle::square(0., 0., cell_size[1]);
+                    let mut guard = render.guard(&mut world)?;
+                    for (position, render) in &guard.inject() {
+                        if render.visible {
+                            let x = position.0.rem_euclid(CELLS[0] as isize) as f64 * cell_size[0];
+                            let y =
+                                (-position.1).rem_euclid(CELLS[1] as isize) as f64 * cell_size[1];
+                            let transform = context.transform.trans(x, y);
+                            Rectangle::new(render.color).draw(
+                                square,
+                                &context.draw_state,
+                                transform,
+                                graphics,
+                            );
                         }
-                        Ok(())
-                    })
-                    .unwrap_or(Ok(()))?;
-            }
+                    }
+                    Ok(())
+                })
+                .unwrap_or(Ok(()))?,
         }
     }
 

@@ -4,20 +4,27 @@ use crate::{
     depend::{Depend, Dependency},
     inject::{self, Get, Inject},
     query::item::{self, At, Item},
-    resource::initialize,
     world::{store::Store, World},
-    Resource,
 };
 
 pub struct Read<T>(Arc<Store>, PhantomData<T>);
 pub struct State<T>(Arc<Store>, usize, PhantomData<T>);
 
-unsafe impl<T: Default + 'static> Inject for Read<T> {
+impl<T: Default + 'static> Inject for &T {
+    type Input = <Read<T> as Inject>::Input;
+    type State = <Read<T> as Inject>::State;
+
+    fn initialize(input: Self::Input, context: inject::Context) -> Option<Self::State> {
+        <Read<T> as Inject>::initialize(input, context)
+    }
+}
+
+impl<T: Default + 'static> Inject for Read<T> {
     type Input = Option<T>;
     type State = State<T>;
 
     fn initialize(input: Self::Input, mut context: inject::Context) -> Option<Self::State> {
-        let (store, segment) = initialize(input, context.world())?;
+        let (store, segment) = context.world().initialize(input)?;
         Some(State(store, segment, PhantomData))
     }
 }
@@ -31,7 +38,15 @@ impl<'a, T: 'static> Get<'a> for State<T> {
     }
 }
 
-unsafe impl<T: Send + 'static> Item for Read<T> {
+impl<T: Sync + Send + 'static> Item for &T {
+    type State = <Read<T> as Item>::State;
+
+    fn initialize(context: item::Context) -> Option<Self::State> {
+        <Read<T> as Item>::initialize(context)
+    }
+}
+
+impl<T: Send + 'static> Item for Read<T> {
     type State = State<T>;
 
     fn initialize(mut context: item::Context) -> Option<Self::State> {
@@ -90,16 +105,16 @@ impl<'a, T> From<&'a mut State<T>> for Read<T> {
     }
 }
 
-impl<R: Resource> AsRef<R> for Read<R> {
+impl<T: 'static> AsRef<T> for Read<T> {
     #[inline]
-    fn as_ref(&self) -> &R {
+    fn as_ref(&self) -> &T {
         unsafe { self.0.get(0) }
     }
 }
 
-impl<R: Resource> AsRef<R> for State<R> {
+impl<T: 'static> AsRef<T> for State<T> {
     #[inline]
-    fn as_ref(&self) -> &R {
+    fn as_ref(&self) -> &T {
         unsafe { self.0.get(0) }
     }
 }

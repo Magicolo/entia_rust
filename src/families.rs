@@ -89,7 +89,7 @@ impl<'a> Families<'a> {
     }
 }
 
-unsafe impl Inject for Families<'_> {
+impl Inject for Families<'_> {
     type Input = ();
     type State = State;
 

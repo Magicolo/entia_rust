@@ -120,7 +120,7 @@ impl fmt::Debug for Family<'_> {
     }
 }
 
-unsafe impl Item for Family<'_> {
+impl Item for Family<'_> {
     type State = State;
 
     fn initialize(mut context: Context) -> Option<Self::State> {
@@ -476,7 +476,7 @@ pub mod item {
         }
     }
 
-    unsafe impl<I: Item + 'static, F: Filter> Item for Child<'_, I, F> {
+    impl<I: Item + 'static, F: Filter> Item for Child<'_, I, F> {
         type State = ChildState<I, F>;
 
         fn initialize(mut context: Context) -> Option<Self::State> {
@@ -568,7 +568,7 @@ pub mod item {
         }
     }
 
-    unsafe impl<I: Item + 'static, F: Filter> Item for Parent<'_, I, F> {
+    impl<I: Item + 'static, F: Filter> Item for Parent<'_, I, F> {
         type State = ParentState<I, F>;
 
         fn initialize(mut context: Context) -> Option<Self::State> {

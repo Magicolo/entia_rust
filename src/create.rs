@@ -222,7 +222,7 @@ impl<I: Initial> Inner<I> {
     }
 }
 
-unsafe impl<I: Initial> Inject for Create<'_, I> {
+impl<I: Initial> Inject for Create<'_, I> {
     type Input = I::Input;
     type State = State<I>;
 

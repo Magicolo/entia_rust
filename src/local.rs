@@ -7,7 +7,6 @@ use std::{
 use crate::{
     depend::Depend,
     inject::{Context, Get, Inject},
-    resource::Resource,
     world::World,
     write::{self, Write},
 };
@@ -20,9 +19,8 @@ struct Inner {
     states: Vec<Box<dyn Any + Send>>,
     indices: HashMap<(usize, TypeId), usize>,
 }
-impl Resource for Inner {}
 
-unsafe impl<T: Default + Send + 'static> Inject for Local<'_, T> {
+impl<T: Default + Send + 'static> Inject for Local<'_, T> {
     type Input = ();
     type State = State<T>;
 

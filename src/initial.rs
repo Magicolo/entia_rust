@@ -51,7 +51,7 @@ pub struct ApplyContext<'a> {
     segment_indices: &'a [SegmentIndices],
 }
 
-pub unsafe trait Initial: Send + 'static {
+pub trait Initial: Send + 'static {
     type Input;
     type Declare;
     type State;
@@ -363,7 +363,7 @@ impl GetMeta {
     }
 }
 
-unsafe impl<C: Component> Initial for C {
+impl<C: Component> Initial for C {
     type Input = ();
     type Declare = Arc<Meta>;
     type State = Arc<Store>;
@@ -390,7 +390,7 @@ unsafe impl<C: Component> Initial for C {
 unsafe impl<C: Component> StaticInitial for C {}
 unsafe impl<C: Component> LeafInitial for C {}
 
-unsafe impl<I: Initial> Initial for Vec<I> {
+impl<I: Initial> Initial for Vec<I> {
     type Input = I::Input;
     type Declare = I::Declare;
     type State = I::State;
@@ -423,7 +423,7 @@ unsafe impl<I: Initial> Initial for Vec<I> {
 unsafe impl<I: LeafInitial> StaticInitial for Vec<I> {}
 unsafe impl<I: LeafInitial> LeafInitial for Vec<I> {}
 
-unsafe impl<I: Initial, const N: usize> Initial for [I; N] {
+impl<I: Initial, const N: usize> Initial for [I; N] {
     type Input = I::Input;
     type Declare = I::Declare;
     type State = I::State;
@@ -455,7 +455,7 @@ unsafe impl<I: LeafInitial, const N: usize> LeafInitial for [I; N] {}
 
 pub struct With<T, F>(F, PhantomData<T>);
 
-unsafe impl<I: StaticInitial, F: FnOnce(Family) -> I + Send + 'static> Initial for With<I, F> {
+impl<I: StaticInitial, F: FnOnce(Family) -> I + Send + 'static> Initial for With<I, F> {
     type Input = I::Input;
     type Declare = I::Declare;
     type State = I::State;
@@ -506,7 +506,7 @@ pub fn with<I: StaticInitial, F: FnOnce(Family) -> I + Send + 'static>(with: F) 
 
 pub struct Spawn<T>(T);
 
-unsafe impl<I: Initial> Initial for Spawn<I> {
+impl<I: Initial> Initial for Spawn<I> {
     type Input = I::Input;
     type Declare = (usize, I::Declare);
     type State = (usize, I::State);
@@ -574,9 +574,9 @@ pub fn spawn<I: Initial>(initial: I) -> Spawn<I> {
     Spawn(initial)
 }
 
-macro_rules! modify {
+macro_rules! initial {
     ($($p:ident, $t:ident),*) => {
-        unsafe impl<$($t: Initial,)*> Initial for ($($t,)*) {
+        impl<$($t: Initial,)*> Initial for ($($t,)*) {
             type Input = ($($t::Input,)*);
             type Declare = ($($t::Declare,)*);
             type State = ($($t::State,)*);
@@ -609,4 +609,4 @@ macro_rules! modify {
     };
 }
 
-entia_macro::recurse_32!(modify);
+entia_macro::recurse_32!(initial);

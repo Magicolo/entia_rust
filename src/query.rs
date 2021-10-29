@@ -5,7 +5,6 @@ use crate::{
     entity::Entity,
     inject::{self, Get, Inject},
     read::{self, Read},
-    resource::Resource,
     world::{segment::Segment, World},
     write::{self, Write},
 };
@@ -38,8 +37,6 @@ pub(crate) struct Inner<I: Item, F: Filter> {
     pub(crate) states: Vec<(I::State, usize)>,
     _marker: PhantomData<fn(F)>,
 }
-
-impl<I: Item + 'static, F: Filter> Resource for Inner<I, F> {}
 
 impl<I: Item, F: Filter> Default for Inner<I, F> {
     fn default() -> Self {
@@ -120,7 +117,7 @@ where
     }
 }
 
-unsafe impl<'a, I: Item + 'static, F: Filter> Inject for Query<'a, I, F> {
+impl<'a, I: Item + 'static, F: Filter> Inject for Query<'a, I, F> {
     type Input = ();
     type State = State<I, F>;
 
@@ -195,7 +192,7 @@ pub mod item {
         world: &'a mut World,
     }
 
-    pub unsafe trait Item: Send {
+    pub trait Item: Send {
         type State: for<'a> At<'a> + Depend + Send + 'static;
         fn initialize(context: Context) -> Option<Self::State>;
         #[inline]
@@ -243,7 +240,7 @@ pub mod item {
         }
     }
 
-    unsafe impl<I: Item> Item for Option<I> {
+    impl<I: Item> Item for Option<I> {
         type State = Option<I::State>;
 
         fn initialize(context: Context) -> Option<Self::State> {
@@ -269,7 +266,7 @@ pub mod item {
 
     macro_rules! item {
         ($($p:ident, $t:ident),*) => {
-            unsafe impl<$($t: Item,)*> Item for ($($t,)*) {
+            impl<$($t: Item,)*> Item for ($($t,)*) {
                 type State = ($($t::State,)*);
 
                 fn initialize(mut _context: Context) -> Option<Self::State> {

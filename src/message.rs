@@ -3,7 +3,6 @@ use std::collections::VecDeque;
 use crate::{
     depend::{Depend, Dependency},
     inject::{Context, Get, Inject},
-    resource::Resource,
     world::World,
     write,
     write::Write,
@@ -16,7 +15,6 @@ struct Inner<M: Message> {
     pub queues: Vec<Queue<M>>,
 }
 
-impl<M: Message> Resource for Inner<M> {}
 impl<M: Message> Default for Inner<M> {
     fn default() -> Self {
         Self { queues: Vec::new() }
@@ -56,7 +54,7 @@ pub mod emit {
         }
     }
 
-    unsafe impl<'a, M: Message> Inject for Emit<'a, M> {
+    impl<'a, M: Message> Inject for Emit<'a, M> {
         type Input = ();
         type State = State<M>;
 
@@ -111,7 +109,7 @@ pub mod receive {
         }
     }
 
-    unsafe impl<M: Message> Inject for Receive<'_, M> {
+    impl<M: Message> Inject for Receive<'_, M> {
         type Input = usize;
         type State = State<M>;
 

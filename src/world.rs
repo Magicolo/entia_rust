@@ -88,7 +88,7 @@ impl Meta {
     }
 }
 
-unsafe impl Inject for &World {
+impl Inject for &World {
     type Input = ();
     type State = State;
 
@@ -198,6 +198,21 @@ impl World {
         let mut types = Bits::new();
         metas.iter().for_each(|meta| types.set(meta.index, true));
         self.get_or_add_segment_by_types(&types)
+    }
+
+    pub(crate) fn initialize<T: Default + 'static>(
+        &mut self,
+        default: Option<T>,
+    ) -> Option<(Arc<Store>, usize)> {
+        let meta = self.get_or_add_meta::<T>();
+        let segment = self.get_or_add_segment_by_metas(&[meta.clone()]);
+        let store = segment.store(&meta)?;
+        if segment.count == 0 {
+            let (index, _) = segment.reserve(1);
+            segment.resolve();
+            unsafe { store.set(index, default.unwrap_or_default()) };
+        }
+        Some((store, segment.index))
     }
 
     fn add_meta<T: 'static>(&mut self) -> Arc<Meta> {

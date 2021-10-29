@@ -85,7 +85,7 @@ impl<R: Resolve> Defer<'_, R> {
     }
 }
 
-unsafe impl<R: Resolve> Inject for Defer<'_, R> {
+impl<R: Resolve> Inject for Defer<'_, R> {
     type Input = R::State;
     type State = State<R>;
 

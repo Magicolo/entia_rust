@@ -108,7 +108,6 @@ fn main() {
     impl Component for Position {}
     impl Component for Frozen {}
     impl Component for Target {}
-    impl Resource for Time {}
 
     let create = || {
         let mut counter = 0;

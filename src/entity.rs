@@ -64,7 +64,7 @@ impl Filter for Entity {
     }
 }
 
-unsafe impl Item for Entity {
+impl Item for Entity {
     type State = State;
 
     fn initialize(mut context: Context) -> Option<Self::State> {

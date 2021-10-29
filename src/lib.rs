@@ -14,7 +14,6 @@ pub mod local;
 pub mod message;
 pub mod query;
 pub mod read;
-pub mod resource;
 pub mod system;
 pub mod world;
 pub mod write;
@@ -42,7 +41,6 @@ pub use crate::{
     message::Message,
     query::filter::Not,
     query::Query,
-    resource::Resource,
     system::{runner::Runner, schedule::Scheduler, Error, IntoSystem, System},
     world::World,
 };
@@ -62,8 +60,6 @@ mod test {
     struct Velocity(f64, f64, f64);
     #[derive(Clone)]
     struct OnKill(Entity);
-    impl Resource for Time {}
-    impl Resource for Physics {}
     impl Component for Player {}
     impl Component for Enemy {}
     impl Component for Position {}
@@ -175,7 +171,6 @@ mod test {
             .add({
                 #[derive(Default)]
                 struct Private(usize);
-                impl Resource for Private {}
 
                 let mut counter = 0;
                 move |resource: &mut Private| {

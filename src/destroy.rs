@@ -42,7 +42,7 @@ impl Destroy<'_> {
     }
 }
 
-unsafe impl Inject for Destroy<'_> {
+impl Inject for Destroy<'_> {
     type Input = ();
     type State = State;
 

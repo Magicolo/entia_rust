@@ -1,4 +1,4 @@
-use crate::{entity::Entity, resource::Resource};
+use crate::entity::Entity;
 use std::{
     cmp::{max, min},
     mem::replace,
@@ -24,8 +24,6 @@ pub struct Datum {
     pub(crate) previous_sibling: u32,
     pub(crate) next_sibling: u32,
 }
-
-impl Resource for Entities {}
 
 impl Datum {
     pub const DEFAULT: Datum = Datum {
