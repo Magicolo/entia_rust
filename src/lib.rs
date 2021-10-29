@@ -38,7 +38,6 @@ pub use crate::{
     inject::Injector,
     message::emit::Emit,
     message::receive::Receive,
-    message::Message,
     query::filter::Not,
     query::Query,
     system::{runner::Runner, schedule::Scheduler, Error, IntoSystem, System},
@@ -65,7 +64,6 @@ mod test {
     impl Component for Position {}
     impl Component for Velocity {}
     impl Component for Frozen {}
-    impl Message for OnKill {}
 
     #[test]
     fn test() {

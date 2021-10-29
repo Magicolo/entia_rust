@@ -8,27 +8,25 @@ use crate::{
     write::Write,
 };
 
-pub trait Message: Clone + Send + 'static {}
-
-struct Queue<M: Message>(usize, VecDeque<M>);
-struct Inner<M: Message> {
-    pub queues: Vec<Queue<M>>,
+struct Queue<T>(usize, VecDeque<T>);
+struct Inner<T> {
+    pub queues: Vec<Queue<T>>,
 }
 
-impl<M: Message> Default for Inner<M> {
+impl<T> Default for Inner<T> {
     fn default() -> Self {
         Self { queues: Vec::new() }
     }
 }
 
-impl<M: Message> Queue<M> {
+impl<T> Queue<T> {
     #[inline]
     pub fn new(capacity: usize) -> Self {
         Self(capacity, VecDeque::new())
     }
 
     #[inline]
-    pub fn enqueue(&mut self, messages: impl Iterator<Item = M>) {
+    pub fn enqueue(&mut self, messages: impl Iterator<Item = T>) {
         self.1.extend(messages);
         while self.0 > 0 && self.1.len() > self.0 {
             self.dequeue();
@@ -36,7 +34,7 @@ impl<M: Message> Queue<M> {
     }
 
     #[inline]
-    pub fn dequeue(&mut self) -> Option<M> {
+    pub fn dequeue(&mut self) -> Option<T> {
         self.1.pop_front()
     }
 }
@@ -44,22 +42,22 @@ impl<M: Message> Queue<M> {
 pub mod emit {
     use super::*;
 
-    pub struct Emit<'a, M: Message>(&'a mut Vec<M>);
-    pub struct State<M: Message>(write::State<Inner<M>>, Vec<M>);
+    pub struct Emit<'a, T>(&'a mut Vec<T>);
+    pub struct State<T>(write::State<Inner<T>>, Vec<T>);
 
-    impl<M: Message> Emit<'_, M> {
+    impl<T> Emit<'_, T> {
         #[inline]
-        pub fn emit(&mut self, message: M) {
+        pub fn emit(&mut self, message: T) {
             self.0.push(message);
         }
     }
 
-    impl<'a, M: Message> Inject for Emit<'a, M> {
+    impl<'a, T: Clone + 'static> Inject for Emit<'a, T> {
         type Input = ();
-        type State = State<M>;
+        type State = State<T>;
 
         fn initialize(_: Self::Input, context: Context) -> Option<Self::State> {
-            let inner = <Write<Inner<M>> as Inject>::initialize(None, context)?;
+            let inner = <Write<Inner<T>> as Inject>::initialize(None, context)?;
             Some(State(inner, Vec::new()))
         }
 
@@ -72,14 +70,14 @@ pub mod emit {
         }
     }
 
-    impl<M: Message> Clone for State<M> {
+    impl<T: Clone> Clone for State<T> {
         fn clone(&self) -> Self {
             Self(self.0.clone(), self.1.clone())
         }
     }
 
-    impl<'a, M: Message> Get<'a> for State<M> {
-        type Item = Emit<'a, M>;
+    impl<'a, T: 'static> Get<'a> for State<T> {
+        type Item = Emit<'a, T>;
 
         #[inline]
         fn get(&'a mut self, _: &'a World) -> Self::Item {
@@ -87,9 +85,9 @@ pub mod emit {
         }
     }
 
-    unsafe impl<M: Message> Depend for State<M> {
+    unsafe impl<T: 'static> Depend for State<T> {
         fn depend(&self, _: &World) -> Vec<Dependency> {
-            vec![Dependency::defer::<M>().at(self.0.segment())]
+            vec![Dependency::defer::<T>().at(self.0.segment())]
         }
     }
 }
@@ -97,11 +95,11 @@ pub mod emit {
 pub mod receive {
     use super::*;
 
-    pub struct Receive<'a, M: Message>(&'a mut Queue<M>);
-    pub struct State<M: Message>(usize, write::State<Inner<M>>);
+    pub struct Receive<'a, T>(&'a mut Queue<T>);
+    pub struct State<T>(usize, write::State<Inner<T>>);
 
-    impl<M: Message> Iterator for Receive<'_, M> {
-        type Item = M;
+    impl<T> Iterator for Receive<'_, T> {
+        type Item = T;
 
         #[inline]
         fn next(&mut self) -> Option<Self::Item> {
@@ -109,12 +107,12 @@ pub mod receive {
         }
     }
 
-    impl<M: Message> Inject for Receive<'_, M> {
+    impl<T: 'static> Inject for Receive<'_, T> {
         type Input = usize;
-        type State = State<M>;
+        type State = State<T>;
 
         fn initialize(input: Self::Input, context: Context) -> Option<Self::State> {
-            let mut inner = <Write<Inner<M>> as Inject>::initialize(None, context)?;
+            let mut inner = <Write<Inner<T>> as Inject>::initialize(None, context)?;
             let index = {
                 let inner = inner.as_mut();
                 let index = inner.queues.len();
@@ -125,14 +123,14 @@ pub mod receive {
         }
     }
 
-    impl<M: Message> Clone for State<M> {
+    impl<T: Clone> Clone for State<T> {
         fn clone(&self) -> Self {
             Self(self.0, self.1.clone())
         }
     }
 
-    impl<'a, M: Message> Get<'a> for State<M> {
-        type Item = Receive<'a, M>;
+    impl<'a, T: 'static> Get<'a> for State<T> {
+        type Item = Receive<'a, T>;
 
         #[inline]
         fn get(&'a mut self, _: &World) -> Self::Item {
@@ -140,9 +138,9 @@ pub mod receive {
         }
     }
 
-    unsafe impl<M: Message> Depend for State<M> {
+    unsafe impl<T: 'static> Depend for State<T> {
         fn depend(&self, _: &World) -> Vec<Dependency> {
-            vec![Dependency::read::<M>().at(self.1.segment())]
+            vec![Dependency::read::<T>().at(self.1.segment())]
         }
     }
 }

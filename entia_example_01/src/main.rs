@@ -10,7 +10,6 @@ enum Input {
     Down(bool),
     Up(bool),
 }
-impl Message for Input {}
 
 #[derive(Copy, Clone, Debug)]
 struct Position(isize, isize);
