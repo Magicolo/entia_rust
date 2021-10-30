@@ -50,7 +50,7 @@ pub struct ApplyContext<'a> {
     segment_indices: &'a [SegmentIndices],
 }
 
-pub trait Initial: Send + 'static {
+pub trait Initial {
     type Input;
     type Declare;
     type State;
@@ -353,7 +353,7 @@ impl<'a> ApplyContext<'a> {
 }
 
 impl GetMeta {
-    pub fn new<T: 'static>() -> Self {
+    pub fn new<T: Send + Sync + 'static>() -> Self {
         Self(|world| world.get_or_add_meta::<T>())
     }
 
@@ -363,7 +363,7 @@ impl GetMeta {
 }
 
 pub struct Add<T>(T);
-impl<T: Send + 'static> Initial for Add<T> {
+impl<T: Send + Sync + 'static> Initial for Add<T> {
     type Input = ();
     type Declare = Arc<Meta>;
     type State = Arc<Store>;
@@ -387,8 +387,8 @@ impl<T: Send + 'static> Initial for Add<T> {
     }
 }
 
-unsafe impl<T: Send + 'static> StaticInitial for Add<T> {}
-unsafe impl<T: Send + 'static> LeafInitial for Add<T> {}
+unsafe impl<T: Send + Sync + 'static> StaticInitial for Add<T> {}
+unsafe impl<T: Send + Sync + 'static> LeafInitial for Add<T> {}
 
 impl<T: Copy> Copy for Add<T> {}
 
@@ -430,7 +430,7 @@ impl<T> AsMut<T> for Add<T> {
 }
 
 #[inline]
-pub fn add<T: Sync + Send + 'static>(component: T) -> Add<T> {
+pub fn add<T>(component: T) -> Add<T> {
     Add(component)
 }
 
@@ -499,7 +499,7 @@ unsafe impl<I: LeafInitial, const N: usize> LeafInitial for [I; N] {}
 
 pub struct With<T, F>(F, PhantomData<T>);
 
-impl<I: StaticInitial, F: FnOnce(Family) -> I + Send + 'static> Initial for With<I, F> {
+impl<I: StaticInitial, F: FnOnce(Family) -> I> Initial for With<I, F> {
     type Input = I::Input;
     type Declare = I::Declare;
     type State = I::State;
@@ -525,15 +525,8 @@ impl<I: StaticInitial, F: FnOnce(Family) -> I + Send + 'static> Initial for With
     }
 }
 
-unsafe impl<I: StaticInitial, F: FnOnce(Family) -> I + Send + 'static> StaticInitial
-    for With<I, F>
-{
-}
-
-unsafe impl<I: StaticInitial + LeafInitial, F: FnOnce(Family) -> I + Send + 'static> LeafInitial
-    for With<I, F>
-{
-}
+unsafe impl<I: StaticInitial, F: FnOnce(Family) -> I> StaticInitial for With<I, F> {}
+unsafe impl<I: StaticInitial + LeafInitial, F: FnOnce(Family) -> I> LeafInitial for With<I, F> {}
 
 impl<I, F: Copy> Copy for With<I, F> {}
 
@@ -544,7 +537,7 @@ impl<I, F: Clone> Clone for With<I, F> {
 }
 
 #[inline]
-pub fn with<I: StaticInitial, F: FnOnce(Family) -> I + Send + 'static>(with: F) -> With<I, F> {
+pub fn with<I: StaticInitial, F: FnOnce(Family) -> I>(with: F) -> With<I, F> {
     With(with, PhantomData)
 }
 

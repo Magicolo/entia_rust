@@ -16,11 +16,11 @@ pub struct State<T>(usize, write::State<Inner>, PhantomData<T>);
 
 #[derive(Default)]
 struct Inner {
-    states: Vec<Box<dyn Any + Send>>,
+    states: Vec<Box<dyn Any + Send + Sync>>,
     indices: HashMap<(usize, TypeId), usize>,
 }
 
-impl<T: Default + Send + 'static> Inject for Local<'_, T> {
+impl<T: Default + Send + Sync + 'static> Inject for Local<'_, T> {
     type Input = ();
     type State = State<T>;
 
@@ -48,7 +48,7 @@ impl<T> Clone for State<T> {
     }
 }
 
-impl<'a, T: Default + Send + 'static> Get<'a> for State<T> {
+impl<'a, T: Default + 'static> Get<'a> for State<T> {
     type Item = Local<'a, T>;
 
     fn get(&'a mut self, world: &'a World) -> Self::Item {
@@ -76,14 +76,14 @@ impl<T: 'static> AsMut<T> for State<T> {
     }
 }
 
-impl<'a, T: 'static> AsRef<T> for Local<'a, T> {
+impl<'a, T> AsRef<T> for Local<'a, T> {
     #[inline]
     fn as_ref(&self) -> &T {
         self.0
     }
 }
 
-impl<'a, T: 'static> AsMut<T> for Local<'a, T> {
+impl<'a, T> AsMut<T> for Local<'a, T> {
     #[inline]
     fn as_mut(&mut self) -> &mut T {
         self.0

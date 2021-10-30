@@ -21,13 +21,13 @@ pub struct State<R: Resolve> {
     _marker: PhantomData<R>,
 }
 
-pub trait Resolve: Send + 'static {
-    type State: Send;
+pub trait Resolve {
+    type State;
     fn resolve(items: impl Iterator<Item = Self>, state: &mut Self::State, world: &mut World);
 }
 
 struct Resolver {
-    state: Box<dyn Any + Send>,
+    state: Box<dyn Any + Send + Sync>,
     resolve: fn(usize, &mut dyn Any, &mut World),
 }
 
@@ -41,7 +41,10 @@ struct Inner {
 type Pair<R: Resolve> = (VecDeque<R>, R::State);
 
 impl Resolver {
-    pub fn new<R: Resolve>(state: R::State) -> Self {
+    pub fn new<R: Resolve + Send + Sync + 'static>(state: R::State) -> Self
+    where
+        R::State: Send + Sync,
+    {
         Resolver {
             state: Box::new((VecDeque::<R>::new(), state)),
             resolve: |count, state, world| {
@@ -58,12 +61,12 @@ impl Resolver {
     }
 
     #[inline]
-    pub fn state_ref<R: Resolve>(&self) -> Option<&Pair<R>> {
+    pub fn state_ref<R: Resolve + 'static>(&self) -> Option<&Pair<R>> {
         self.state.downcast_ref()
     }
 
     #[inline]
-    pub fn state_mut<R: Resolve>(&mut self) -> Option<&mut Pair<R>> {
+    pub fn state_mut<R: Resolve + 'static>(&mut self) -> Option<&mut Pair<R>> {
         self.state.downcast_mut()
     }
 }
@@ -85,7 +88,10 @@ impl<R: Resolve> Defer<'_, R> {
     }
 }
 
-impl<R: Resolve> Inject for Defer<'_, R> {
+impl<R: Resolve + Send + Sync + 'static> Inject for Defer<'_, R>
+where
+    R::State: Send + Sync,
+{
     type Input = R::State;
     type State = State<R>;
 
@@ -124,7 +130,7 @@ impl<R: Resolve> Clone for State<R> {
     }
 }
 
-impl<'a, R: Resolve> Get<'a> for State<R> {
+impl<'a, R: Resolve + 'static> Get<'a> for State<R> {
     type Item = Defer<'a, R>;
 
     fn get(&'a mut self, _: &'a World) -> Self::Item {
@@ -146,7 +152,7 @@ unsafe impl<R: Resolve> Depend for State<R> {
     }
 }
 
-impl<R: Resolve> AsRef<R::State> for State<R> {
+impl<R: Resolve + 'static> AsRef<R::State> for State<R> {
     fn as_ref(&self) -> &R::State {
         self.inner.as_ref().resolvers[self.index]
             .state_ref::<R>()
@@ -155,7 +161,7 @@ impl<R: Resolve> AsRef<R::State> for State<R> {
     }
 }
 
-impl<R: Resolve> AsMut<R::State> for State<R> {
+impl<R: Resolve + 'static> AsMut<R::State> for State<R> {
     fn as_mut(&mut self) -> &mut R::State {
         self.inner.as_mut().resolvers[self.index]
             .state_mut::<R>()

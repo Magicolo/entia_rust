@@ -118,7 +118,7 @@ fn main() {
         }
     };
 
-    fn simple() -> impl StaticInitial<Input = impl Default> {
+    fn simple() -> impl StaticInitial<Input = impl Default, State = impl Send> {
         (
             add(Frozen),
             add(Position(Vec::new())),
@@ -126,11 +126,11 @@ fn main() {
         )
     }
 
-    fn complex() -> impl StaticInitial<Input = impl Default> {
+    fn complex() -> impl StaticInitial<Input = impl Default, State = impl Send> {
         (spawn(simple()), [simple()], with(|_| simple()))
     }
 
-    fn dynamic(count: usize) -> impl Initial<Input = impl Default> {
+    fn dynamic(count: usize) -> impl Initial<Input = impl Default, State = impl Send> {
         vec![spawn(add(Frozen)); count]
     }
 

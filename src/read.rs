@@ -10,7 +10,7 @@ use crate::{
 pub struct Read<T>(Arc<Store>, PhantomData<T>);
 pub struct State<T>(Arc<Store>, usize, PhantomData<T>);
 
-impl<T: Default + 'static> Inject for &T {
+impl<T: Default + Send + Sync + 'static> Inject for &T {
     type Input = <Read<T> as Inject>::Input;
     type State = <Read<T> as Inject>::State;
 
@@ -19,7 +19,7 @@ impl<T: Default + 'static> Inject for &T {
     }
 }
 
-impl<T: Default + 'static> Inject for Read<T> {
+impl<T: Default + Send + Sync + 'static> Inject for Read<T> {
     type Input = Option<T>;
     type State = State<T>;
 
@@ -38,7 +38,7 @@ impl<'a, T: 'static> Get<'a> for State<T> {
     }
 }
 
-impl<T: Sync + Send + 'static> Item for &T {
+impl<T: Send + Sync + 'static> Item for &T {
     type State = <Read<T> as Item>::State;
 
     fn initialize(context: item::Context) -> Option<Self::State> {
@@ -46,7 +46,7 @@ impl<T: Sync + Send + 'static> Item for &T {
     }
 }
 
-impl<T: Send + 'static> Item for Read<T> {
+impl<T: Send + Sync + 'static> Item for Read<T> {
     type State = State<T>;
 
     fn initialize(mut context: item::Context) -> Option<Self::State> {

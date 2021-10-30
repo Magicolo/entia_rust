@@ -411,13 +411,13 @@ pub mod item {
         world: &'a World,
     }
 
-    pub struct ChildState<I: Item + 'static, F: Filter> {
+    pub struct ChildState<I: Item, F: Filter> {
         entity: <Read<Entity> as Item>::State,
         entities: <Read<Entities> as Inject>::State,
         query: query::State<I, F>,
     }
 
-    pub struct ParentState<I: Item + 'static, F: Filter> {
+    pub struct ParentState<I: Item, F: Filter> {
         entity: <Read<Entity> as Item>::State,
         entities: <Read<Entities> as Inject>::State,
         query: query::State<I, F>,
@@ -449,7 +449,7 @@ pub mod item {
         }
     }
 
-    impl<I: Item + 'static, F: Filter> Child<'_, I, F> {
+    impl<I: Item + 'static, F: Filter + 'static> Child<'_, I, F> {
         pub fn get<'a>(&'a self, index: usize) -> Option<<I::State as At<'a>>::Item>
         where
             I::State: At<'a>,
@@ -466,7 +466,7 @@ pub mod item {
         }
     }
 
-    impl<I: Item + 'static, F: Filter> fmt::Debug for Child<'_, I, F>
+    impl<I: Item + 'static, F: Filter + 'static> fmt::Debug for Child<'_, I, F>
     where
         for<'a> <I::State as At<'a>>::Item: fmt::Debug,
     {
@@ -476,7 +476,10 @@ pub mod item {
         }
     }
 
-    impl<I: Item + 'static, F: Filter> Item for Child<'_, I, F> {
+    impl<I: Item + 'static, F: Filter + 'static> Item for Child<'_, I, F>
+    where
+        I::State: Send + Sync,
+    {
         type State = ChildState<I, F>;
 
         fn initialize(mut context: Context) -> Option<Self::State> {
@@ -502,7 +505,7 @@ pub mod item {
         }
     }
 
-    impl<'a, I: Item<State = impl At<'a> + 'static>, F: Filter> At<'a> for ChildState<I, F> {
+    impl<'a, I: Item<State = impl At<'a>>, F: Filter> At<'a> for ChildState<I, F> {
         type Item = Child<'a, I, F>;
 
         #[inline]
@@ -516,7 +519,7 @@ pub mod item {
         }
     }
 
-    unsafe impl<I: Item, F: Filter> Depend for ChildState<I, F> {
+    unsafe impl<I: Item + 'static, F: Filter + 'static> Depend for ChildState<I, F> {
         fn depend(&self, world: &World) -> Vec<Dependency> {
             let mut dependencies = self.entity.depend(world);
             dependencies.append(&mut self.entities.depend(world));
@@ -525,9 +528,7 @@ pub mod item {
         }
     }
 
-    impl<'a, I: Item<State = impl At<'a> + 'a> + 'static, F: Filter> IntoIterator
-        for &'a Child<'a, I, F>
-    {
+    impl<'a, I: Item + 'static, F: Filter + 'static> IntoIterator for &'a Child<'a, I, F> {
         type Item = <I::State as At<'a>>::Item;
         type IntoIter = LinkIterator<'a, I, F, Self>;
         fn into_iter(self) -> Self::IntoIter {
@@ -541,7 +542,7 @@ pub mod item {
         }
     }
 
-    impl<I: Item + 'static, F: Filter> Parent<'_, I, F> {
+    impl<I: Item + 'static, F: Filter + 'static> Parent<'_, I, F> {
         pub fn get<'a>(&'a self, index: usize) -> Option<<I::State as At<'a>>::Item>
         where
             I::State: At<'a>,
@@ -558,7 +559,7 @@ pub mod item {
         }
     }
 
-    impl<I: Item + 'static, F: Filter> fmt::Debug for Parent<'_, I, F>
+    impl<I: Item + 'static, F: Filter + 'static> fmt::Debug for Parent<'_, I, F>
     where
         for<'a> <I::State as At<'a>>::Item: fmt::Debug,
     {
@@ -568,7 +569,10 @@ pub mod item {
         }
     }
 
-    impl<I: Item + 'static, F: Filter> Item for Parent<'_, I, F> {
+    impl<I: Item + 'static, F: Filter + 'static> Item for Parent<'_, I, F>
+    where
+        I::State: Send + Sync,
+    {
         type State = ParentState<I, F>;
 
         fn initialize(mut context: Context) -> Option<Self::State> {
@@ -608,7 +612,7 @@ pub mod item {
         }
     }
 
-    unsafe impl<I: Item, F: Filter> Depend for ParentState<I, F> {
+    unsafe impl<I: Item + 'static, F: Filter + 'static> Depend for ParentState<I, F> {
         fn depend(&self, world: &World) -> Vec<Dependency> {
             let mut dependencies = self.entity.depend(world);
             dependencies.append(&mut self.entities.depend(world));
@@ -617,7 +621,7 @@ pub mod item {
         }
     }
 
-    impl<'a, I: Item + 'static, F: Filter> IntoIterator for &'a Parent<'a, I, F> {
+    impl<'a, I: Item + 'static, F: Filter + 'static> IntoIterator for &'a Parent<'a, I, F> {
         type Item = <I::State as At<'a>>::Item;
         type IntoIter = LinkIterator<'a, I, F, Self>;
         fn into_iter(self) -> Self::IntoIter {

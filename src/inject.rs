@@ -45,7 +45,7 @@ pub trait Inject {
 /// because it would violate this crate's lifetime requirements. In principle, this is prevented by the fact that the
 /// trait is 'static and as such, it is not marked as unsafe. This note serves to prevent any unseen sneaky way to
 /// retain a reference to the 'World' that lives outside of 'Item'.
-pub trait Get<'a>: 'static {
+pub trait Get<'a> {
     type Item;
     fn get(&'a mut self, world: &'a World) -> Self::Item;
 }

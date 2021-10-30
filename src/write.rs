@@ -10,7 +10,7 @@ use crate::{
 pub struct Write<T>(Arc<Store>, PhantomData<T>);
 pub struct State<T>(Arc<Store>, usize, PhantomData<T>);
 
-impl<T: Default + 'static> Inject for &mut T {
+impl<T: Default + Send + Sync + 'static> Inject for &mut T {
     type Input = <Write<T> as Inject>::Input;
     type State = <Write<T> as Inject>::State;
 
@@ -19,7 +19,7 @@ impl<T: Default + 'static> Inject for &mut T {
     }
 }
 
-impl<T: Default + 'static> Inject for Write<T> {
+impl<T: Default + Send + Sync + 'static> Inject for Write<T> {
     type Input = Option<T>;
     type State = State<T>;
 
@@ -38,7 +38,7 @@ impl<'a, T: 'static> Get<'a> for State<T> {
     }
 }
 
-impl<T: Sync + Send + 'static> Item for &mut T {
+impl<T: Send + Sync + 'static> Item for &mut T {
     type State = <Write<T> as Item>::State;
 
     fn initialize(context: item::Context) -> Option<Self::State> {
@@ -46,7 +46,7 @@ impl<T: Sync + Send + 'static> Item for &mut T {
     }
 }
 
-impl<T: Send + 'static> Item for Write<T> {
+impl<T: Send + Sync + 'static> Item for Write<T> {
     type State = State<T>;
 
     fn initialize(mut context: item::Context) -> Option<Self::State> {

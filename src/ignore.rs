@@ -13,7 +13,7 @@ pub struct State<T, S: Scope>(T, PhantomData<S>);
 pub struct All;
 pub struct Inner;
 pub struct Outer;
-pub trait Scope: Send + 'static {
+pub trait Scope {
     fn scope() -> depend::Scope;
 }
 
@@ -44,7 +44,7 @@ impl<I, S: Scope> Ignore<I, S> {
     }
 }
 
-impl<I: Inject + 'static, S: Scope> Inject for Ignore<I, S> {
+impl<I: Inject, S: Scope> Inject for Ignore<I, S> {
     type Input = I::Input;
     type State = State<I::State, S>;
 
@@ -61,7 +61,7 @@ impl<'a, T: Get<'a>, S: Scope> Get<'a> for State<T, S> {
     }
 }
 
-impl<I: Item + 'static, S: Scope> Item for Ignore<I, S> {
+impl<I: Item, S: Scope> Item for Ignore<I, S> {
     type State = State<I::State, S>;
 
     fn initialize(context: item::Context) -> Option<Self::State> {

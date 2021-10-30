@@ -52,7 +52,7 @@ pub mod emit {
         }
     }
 
-    impl<'a, T: Clone + 'static> Inject for Emit<'a, T> {
+    impl<'a, T: Clone + Send + Sync + 'static> Inject for Emit<'a, T> {
         type Input = ();
         type State = State<T>;
 
@@ -76,7 +76,7 @@ pub mod emit {
         }
     }
 
-    impl<'a, T: 'static> Get<'a> for State<T> {
+    impl<'a, T: 'a> Get<'a> for State<T> {
         type Item = Emit<'a, T>;
 
         #[inline]
@@ -107,7 +107,7 @@ pub mod receive {
         }
     }
 
-    impl<T: 'static> Inject for Receive<'_, T> {
+    impl<T: Send + Sync + 'static> Inject for Receive<'_, T> {
         type Input = usize;
         type State = State<T>;
 

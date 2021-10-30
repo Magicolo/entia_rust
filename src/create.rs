@@ -222,7 +222,7 @@ impl<I: Initial> Inner<I> {
     }
 }
 
-impl<I: Initial> Inject for Create<'_, I> {
+impl<I: Initial + 'static> Inject for Create<'_, I> {
     type Input = I::Input;
     type State = State<I>;
 
@@ -357,7 +357,7 @@ fn apply<I: Initial>(
     }
 }
 
-impl<'a, I: Initial> Get<'a> for State<I> {
+impl<'a, I: Initial + 'a> Get<'a> for State<I> {
     type Item = Create<'a, I>;
 
     fn get(&'a mut self, world: &'a World) -> Self::Item {

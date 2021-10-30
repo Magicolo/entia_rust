@@ -141,13 +141,13 @@ impl World {
         self.version
     }
 
-    pub fn get_meta<T: 'static>(&self) -> Option<Arc<Meta>> {
+    pub fn get_meta<T: Send + Sync + 'static>(&self) -> Option<Arc<Meta>> {
         let key = TypeId::of::<T>();
         let index = *self.type_to_meta.get(&key)?;
         Some(self.metas[index].clone())
     }
 
-    pub fn get_or_add_meta<T: 'static>(&mut self) -> Arc<Meta> {
+    pub fn get_or_add_meta<T: Send + Sync + 'static>(&mut self) -> Arc<Meta> {
         match self.get_meta::<T>() {
             Some(meta) => meta,
             None => self.add_meta::<T>(),
@@ -200,7 +200,7 @@ impl World {
         self.get_or_add_segment_by_types(&types)
     }
 
-    pub(crate) fn initialize<T: Default + 'static>(
+    pub(crate) fn initialize<T: Default + Send + Sync + 'static>(
         &mut self,
         default: Option<T>,
     ) -> Option<(Arc<Store>, usize)> {
@@ -215,7 +215,7 @@ impl World {
         Some((store, segment.index))
     }
 
-    fn add_meta<T: 'static>(&mut self) -> Arc<Meta> {
+    fn add_meta<T: Send + Sync + 'static>(&mut self) -> Arc<Meta> {
         let index = self.metas.len();
         let meta = Arc::new(Meta::new::<T>(index));
         self.metas.push(meta.clone());
@@ -343,6 +343,8 @@ pub mod store {
 
     pub struct Store(pub(crate) Arc<Meta>, pub(crate) UnsafeCell<*mut ()>);
 
+    // SAFETY: 'Sync' and 'Send' can be implemented for 'Store' because the only way to get a 'Meta' for some type is through a
+    // 'World' which ensures that the type is 'Send' and 'Sync'.
     unsafe impl Sync for Store {}
     unsafe impl Send for Store {}
 

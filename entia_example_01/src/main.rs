@@ -33,6 +33,9 @@ struct Time {
 // TODO: More aggressive parallelization of systems.
 // - Try to bundle systems after a conflict?
 // TODO: Derive macros for 'Inject', 'Item', 'Initial', 'Filter'
+// - If all fields of a struct implement the trait, the struct can implement it (same as tuples).
+// TODO: Better API for entity creation.
+// - Currently, free standing functions are used, which sucks.
 
 fn main() {
     run().unwrap();

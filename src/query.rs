@@ -107,7 +107,7 @@ impl<'a, 'b: 'a, I: Item, F: Filter> iter::Iterator for Iterator<'a, 'b, I, F> {
         None
     }
 }
-impl<I: Item + 'static, F: Filter> fmt::Debug for Query<'_, I, F>
+impl<I: Item, F: Filter> fmt::Debug for Query<'_, I, F>
 where
     for<'a> <I::State as At<'a>>::Item: fmt::Debug,
 {
@@ -117,7 +117,10 @@ where
     }
 }
 
-impl<'a, I: Item + 'static, F: Filter> Inject for Query<'a, I, F> {
+impl<'a, I: Item + 'static, F: Filter + 'static> Inject for Query<'a, I, F>
+where
+    I::State: Send + Sync,
+{
     type Input = ();
     type State = State<I, F>;
 
@@ -159,7 +162,7 @@ impl<I: Item, F: Filter> Clone for State<I, F> {
     }
 }
 
-impl<'a, I: Item + 'static, F: Filter> Get<'a> for State<I, F> {
+impl<'a, I: Item + 'static, F: Filter + 'static> Get<'a> for State<I, F> {
     type Item = Query<'a, I, F>;
 
     fn get(&'a mut self, world: &'a World) -> Self::Item {
@@ -171,7 +174,7 @@ impl<'a, I: Item + 'static, F: Filter> Get<'a> for State<I, F> {
     }
 }
 
-unsafe impl<I: Item + 'static, F: Filter> Depend for State<I, F> {
+unsafe impl<I: Item + 'static, F: Filter + 'static> Depend for State<I, F> {
     fn depend(&self, world: &World) -> Vec<Dependency> {
         let mut dependencies = self.entities.depend(world);
         let inner = self.inner.as_ref();
@@ -192,8 +195,8 @@ pub mod item {
         world: &'a mut World,
     }
 
-    pub trait Item: Send {
-        type State: for<'a> At<'a> + Depend + Send + 'static;
+    pub trait Item {
+        type State: for<'a> At<'a> + Depend;
         fn initialize(context: Context) -> Option<Self::State>;
         #[inline]
         fn update(_: &mut Self::State, _: Context) {}
@@ -296,14 +299,14 @@ pub mod item {
 pub mod filter {
     use super::*;
 
-    pub trait Filter: Send + 'static {
+    pub trait Filter {
         fn filter(segment: &Segment, world: &World) -> bool;
     }
 
     pub struct Has<T>(PhantomData<T>);
     pub struct Not<F: Filter>(PhantomData<F>);
 
-    impl<T: Send + 'static> Filter for Has<T> {
+    impl<T: Send + Sync + 'static> Filter for Has<T> {
         fn filter(segment: &Segment, world: &World) -> bool {
             if let Some(meta) = world.get_meta::<T>() {
                 segment.has(&meta)

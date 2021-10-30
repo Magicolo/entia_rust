@@ -18,10 +18,10 @@ use std::{
 pub struct System {
     identifier: usize,
     name: String, // TODO: Replace with 'Lazy<String>'
-    pub(crate) run: Box<dyn FnMut(&World)>,
-    pub(crate) update: Box<dyn FnMut(&mut World)>,
-    pub(crate) resolve: Box<dyn FnMut(&mut World)>,
-    pub(crate) depend: Box<dyn Fn(&World) -> Vec<Dependency>>,
+    pub(crate) run: Box<dyn FnMut(&World) + Send>,
+    pub(crate) update: Box<dyn FnMut(&mut World) + Send>,
+    pub(crate) resolve: Box<dyn FnMut(&mut World) + Send>,
+    pub(crate) depend: Box<dyn Fn(&World) -> Vec<Dependency> + Send>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -76,8 +76,10 @@ impl<I, M, S: IntoSystem<I, M>, E: Into<Error>> IntoSystem<I, (I, M, S)> for Res
     }
 }
 
-impl<'a, I: Inject, O, C: Call<I, O> + Call<<I::State as Get<'a>>::Item, O> + 'static>
+impl<'a, I: Inject, O, C: Call<I, O> + Call<<I::State as Get<'a>>::Item, O> + Send + 'static>
     IntoSystem<I::Input, (I, O, C)> for C
+where
+    I::State: Send + 'static,
 {
     fn into_system(self, input: I::Input, world: &mut World) -> Result<System, Error> {
         let identifier = World::reserve();
@@ -158,7 +160,7 @@ impl Display for Error {
 
 impl System {
     #[inline]
-    pub unsafe fn new<'a, T: 'static>(
+    pub unsafe fn new<'a, T: Send + 'static>(
         identifier: Option<usize>,
         name: String,
         state: T,
@@ -167,6 +169,9 @@ impl System {
         resolve: fn(&'a mut T, &'a mut World),
         depend: fn(&'a T, &'a World) -> Vec<Dependency>,
     ) -> Self {
+        struct State<T>(Arc<UnsafeCell<T>>);
+        unsafe impl<T> Send for State<T> {}
+
         // SAFETY: Since this crate controls the execution of the system's functions, it can guarantee
         // that they are not run in parallel which would allow for races.
 
@@ -176,27 +181,29 @@ impl System {
         // intention.
 
         let identifier = identifier.unwrap_or_else(World::reserve);
-        let state = Arc::new(UnsafeCell::new(state));
+        let state = State(Arc::new(UnsafeCell::new(state)));
         Self {
             name,
             identifier,
             run: {
-                let state = state.clone();
-                Box::new(move |world| unsafe { run(&mut *state.get(), &*(world as *const _)) })
+                let state = State(state.0.clone());
+                Box::new(move |world| unsafe { run(&mut *state.0.get(), &*(world as *const _)) })
             },
             update: {
-                let state = state.clone();
-                Box::new(move |world| unsafe { update(&mut *state.get(), &mut *(world as *mut _)) })
+                let state = State(state.0.clone());
+                Box::new(move |world| unsafe {
+                    update(&mut *state.0.get(), &mut *(world as *mut _))
+                })
             },
             resolve: {
-                let state = state.clone();
+                let state = State(state.0.clone());
                 Box::new(move |world| unsafe {
-                    resolve(&mut *state.get(), &mut *(world as *mut _))
+                    resolve(&mut *state.0.get(), &mut *(world as *mut _))
                 })
             },
             depend: {
-                let state = state.clone();
-                Box::new(move |world| unsafe { depend(&*state.get(), &*(world as *const _)) })
+                let state = State(state.0.clone());
+                Box::new(move |world| unsafe { depend(&*state.0.get(), &*(world as *const _)) })
             },
         }
     }
@@ -235,8 +242,6 @@ pub mod runner {
         dependencies: Vec<Dependency>,
         error: Option<Error>,
     }
-
-    unsafe impl Send for System {}
 
     impl Runner {
         pub fn new(identifier: usize, systems: impl IntoIterator<Item = System>) -> Self {
