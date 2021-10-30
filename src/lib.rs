@@ -28,7 +28,7 @@ pub use crate::{
     entity::Entity,
     families::Families,
     family::{
-        item::{Child, Parent},
+        item::{child::Child, parent::Parent},
         Family,
     },
     ignore::{Ignore, Scope},
@@ -108,7 +108,7 @@ mod test {
                 for _12 in &query {}
                 for (_1, _2) in &query {}
             })
-            // .schedule(|_: &'static Time| {})
+            // .add(|_: &'static Time| {})
             // .schedule(|_: &mut World| {
             //     let mut counter = 1.;
             //     move |time: &Time, _: &World| {

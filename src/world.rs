@@ -1,5 +1,5 @@
 use std::{
-    any::{type_name, Any, TypeId},
+    any::{type_name, TypeId},
     cell::UnsafeCell,
     cmp::min,
     collections::HashMap,
@@ -31,7 +31,6 @@ pub struct Meta {
     pub(crate) free: unsafe fn(*mut (), usize, usize),
     pub(crate) copy: unsafe fn((*const (), usize), (*mut (), usize), usize),
     pub(crate) drop: unsafe fn(*mut (), usize, usize),
-    pub(crate) set: unsafe fn(*mut (), Box<dyn Any>, usize),
 }
 
 pub struct World {
@@ -73,13 +72,6 @@ impl Meta {
                 |pointer, index, count| unsafe {
                     let pointer = pointer.cast::<T>().add(index);
                     drop_in_place(slice_from_raw_parts_mut(pointer, count));
-                }
-            } else {
-                |_, _, _| {}
-            },
-            set: if size_of::<T>() > 0 {
-                |pointer, item, index| unsafe {
-                    *pointer.cast::<T>().add(index) = *item.downcast().unwrap();
                 }
             } else {
                 |_, _, _| {}
@@ -393,12 +385,6 @@ pub mod store {
         pub unsafe fn set<T: 'static>(&self, index: usize, item: T) {
             debug_assert_eq!(TypeId::of::<T>(), self.meta().identifier);
             self.data().cast::<T>().add(index).write(item);
-        }
-
-        #[inline]
-        pub unsafe fn set_any(&self, index: usize, item: Box<dyn Any>) {
-            debug_assert_eq!(item.type_id(), self.meta().identifier);
-            (self.meta().set)(self.data(), item, index);
         }
 
         #[inline]
