@@ -79,7 +79,7 @@ macro_rules! depend {
     };
 }
 
-entia_macro::recurse_32!(depend);
+entia_macro::recurse_64!(depend);
 
 use Scope::*;
 

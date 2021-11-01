@@ -13,4 +13,4 @@ macro_rules! call {
     };
 }
 
-entia_macro::recurse_32!(call);
+entia_macro::recurse_64!(call);

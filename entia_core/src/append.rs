@@ -31,4 +31,4 @@ macro_rules! append {
     };
 }
 
-entia_macro::recurse_32!(append);
+entia_macro::recurse_64!(append);

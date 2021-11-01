@@ -105,7 +105,7 @@ macro_rules! inject {
     };
 }
 
-entia_macro::recurse_32!(inject);
+entia_macro::recurse_64!(inject);
 
 impl World {
     pub fn injector<I: Inject>(&mut self) -> Result<Injector<I>, Error>

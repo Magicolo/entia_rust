@@ -1,17 +1,10 @@
-use std::{
-    array::IntoIter,
-    collections::HashMap,
-    marker::PhantomData,
-    ops::{Deref, DerefMut},
-    sync::Arc,
-};
-
 use crate::{
     entities::Entities,
     entity::Entity,
     family::template::{EntityIndices, Family, SegmentIndices},
     world::{segment::Segment, store::Store, Meta, World},
 };
+use std::{array::IntoIter, collections::HashMap, marker::PhantomData, sync::Arc};
 
 pub struct GetMeta(fn(&mut World) -> Arc<Meta>);
 
@@ -362,6 +355,7 @@ impl GetMeta {
     }
 }
 
+#[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Add<T>(T);
 
 #[inline]
@@ -406,45 +400,6 @@ impl<T: Send + Sync + 'static> Template for Add<T> {
 unsafe impl<T: Send + Sync + 'static> StaticTemplate for Add<T> {}
 unsafe impl<T: Send + Sync + 'static> LeafTemplate for Add<T> {}
 
-impl<T: Copy> Copy for Add<T> {}
-
-impl<T: Clone> Clone for Add<T> {
-    fn clone(&self) -> Self {
-        Self(self.0.clone())
-    }
-}
-
-impl<T: Default> Default for Add<T> {
-    fn default() -> Self {
-        Self(T::default())
-    }
-}
-
-impl<T> Deref for Add<T> {
-    type Target = T;
-    fn deref(&self) -> &Self::Target {
-        self.as_ref()
-    }
-}
-
-impl<T> DerefMut for Add<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.as_mut()
-    }
-}
-
-impl<T> AsRef<T> for Add<T> {
-    fn as_ref(&self) -> &T {
-        &self.0
-    }
-}
-
-impl<T> AsMut<T> for Add<T> {
-    fn as_mut(&mut self) -> &mut T {
-        &mut self.0
-    }
-}
-
 impl<T: Template> Template for Vec<T> {
     type Input = T::Input;
     type Declare = T::Declare;
@@ -480,8 +435,8 @@ impl<T: Template> Template for Vec<T> {
     }
 }
 
-unsafe impl<I: LeafTemplate> StaticTemplate for Vec<I> {}
-unsafe impl<I: LeafTemplate> LeafTemplate for Vec<I> {}
+unsafe impl<T: LeafTemplate> StaticTemplate for Vec<T> {}
+unsafe impl<T: LeafTemplate> LeafTemplate for Vec<T> {}
 
 impl<T: Template, const N: usize> Template for [T; N] {
     type Input = T::Input;
@@ -515,34 +470,35 @@ impl<T: Template, const N: usize> Template for [T; N] {
     }
 }
 
-unsafe impl<I: StaticTemplate, const N: usize> StaticTemplate for [I; N] {}
-unsafe impl<I: LeafTemplate, const N: usize> LeafTemplate for [I; N] {}
+unsafe impl<T: StaticTemplate, const N: usize> StaticTemplate for [T; N] {}
+unsafe impl<T: LeafTemplate, const N: usize> LeafTemplate for [T; N] {}
 
-pub struct With<I, F>(F, PhantomData<I>);
+#[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct With<F, T>(F, PhantomData<T>);
 
 #[inline]
-pub fn with<U: StaticTemplate, F: FnOnce(Family) -> U>(with: F) -> With<U, F> {
+pub fn with<F: FnOnce(Family) -> T, T: StaticTemplate>(with: F) -> With<F, T> {
     With(with, PhantomData)
 }
 
-impl<I: StaticTemplate, F: FnOnce(Family) -> I> Template for With<I, F> {
-    type Input = I::Input;
-    type Declare = I::Declare;
-    type State = I::State;
+impl<F: FnOnce(Family) -> T, T: StaticTemplate> Template for With<F, T> {
+    type Input = T::Input;
+    type Declare = T::Declare;
+    type State = T::State;
 
     #[inline]
     fn declare(input: Self::Input, context: DeclareContext) -> Self::Declare {
-        I::declare(input, context)
+        T::declare(input, context)
     }
 
     #[inline]
     fn initialize(state: Self::Declare, context: InitializeContext) -> Self::State {
-        I::initialize(state, context)
+        T::initialize(state, context)
     }
 
     #[inline]
     fn static_count(state: &Self::State, context: CountContext) -> bool {
-        I::static_count(state, context)
+        T::static_count(state, context)
     }
 
     #[inline]
@@ -556,21 +512,14 @@ impl<I: StaticTemplate, F: FnOnce(Family) -> I> Template for With<I, F> {
     }
 }
 
-unsafe impl<I: StaticTemplate, F: FnOnce(Family) -> I> StaticTemplate for With<I, F> {}
-unsafe impl<I: StaticTemplate + LeafTemplate, F: FnOnce(Family) -> I> LeafTemplate for With<I, F> {}
+unsafe impl<F: FnOnce(Family) -> T, T: StaticTemplate> StaticTemplate for With<F, T> {}
+unsafe impl<F: FnOnce(Family) -> T, T: StaticTemplate + LeafTemplate> LeafTemplate for With<F, T> {}
 
-impl<I, F: Copy> Copy for With<I, F> {}
-
-impl<I, F: Clone> Clone for With<I, F> {
-    fn clone(&self) -> Self {
-        Self(self.0.clone(), PhantomData)
-    }
-}
-
-pub struct Spawn<I>(I);
+#[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Spawn<T>(T);
 
 #[inline]
-pub fn spawn<U: Template>(child: U) -> Spawn<U> {
+pub fn spawn<T: Template>(child: T) -> Spawn<T> {
     Spawn(child)
 }
 
@@ -602,46 +551,7 @@ impl<T: Template> Template for Spawn<T> {
     }
 }
 
-unsafe impl<I: StaticTemplate> StaticTemplate for Spawn<I> {}
-
-impl<T: Copy> Copy for Spawn<T> {}
-
-impl<T: Clone> Clone for Spawn<T> {
-    fn clone(&self) -> Self {
-        Self(self.0.clone())
-    }
-}
-
-impl<T: Default> Default for Spawn<T> {
-    fn default() -> Self {
-        Self(T::default())
-    }
-}
-
-impl<T> Deref for Spawn<T> {
-    type Target = T;
-    fn deref(&self) -> &Self::Target {
-        self.as_ref()
-    }
-}
-
-impl<T> DerefMut for Spawn<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.as_mut()
-    }
-}
-
-impl<T> AsRef<T> for Spawn<T> {
-    fn as_ref(&self) -> &T {
-        &self.0
-    }
-}
-
-impl<T> AsMut<T> for Spawn<T> {
-    fn as_mut(&mut self) -> &mut T {
-        &mut self.0
-    }
-}
+unsafe impl<T: StaticTemplate> StaticTemplate for Spawn<T> {}
 
 macro_rules! template {
     ($($p:ident, $t:ident),*) => {
@@ -683,4 +593,4 @@ macro_rules! template {
     };
 }
 
-entia_macro::recurse_32!(template);
+entia_macro::recurse_64!(template);

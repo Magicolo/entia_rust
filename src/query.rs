@@ -293,7 +293,7 @@ pub mod item {
         };
     }
 
-    entia_macro::recurse_32!(item);
+    entia_macro::recurse_64!(item);
 }
 
 pub mod filter {
@@ -332,5 +332,5 @@ pub mod filter {
         };
     }
 
-    entia_macro::recurse_32!(filter);
+    entia_macro::recurse_64!(filter);
 }
