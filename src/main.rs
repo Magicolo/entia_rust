@@ -1,3 +1,4 @@
+use entia::template::*;
 use entia::*;
 
 /*
@@ -114,11 +115,11 @@ fn main() {
             create.one((add(position.clone()), add(Frozen)));
             create.all((0..counter).map(|_| (add(position.clone()), add(Frozen))));
             create.defaults(counter);
-            create.clones((add(position), add(Frozen)), counter);
+            create.clones(counter, (add(position), add(Frozen)));
         }
     };
 
-    fn simple() -> impl StaticInitial<Input = impl Default, State = impl Send> {
+    fn simple() -> impl StaticTemplate<Input = impl Default, State = impl Send> {
         (
             add(Frozen),
             add(Position(Vec::new())),
@@ -126,11 +127,11 @@ fn main() {
         )
     }
 
-    fn complex() -> impl StaticInitial<Input = impl Default, State = impl Send> {
+    fn complex() -> impl StaticTemplate<Input = impl Default, State = impl Send> {
         (spawn(simple()), [simple()], with(|_| simple()))
     }
 
-    fn dynamic(count: usize) -> impl Initial<Input = impl Default, State = impl Send> {
+    fn dynamic(count: usize) -> impl Template<Input = impl Default, State = impl Send> {
         vec![spawn(add(Frozen)); count]
     }
 

@@ -1,3 +1,4 @@
+use entia::template::*;
 use entia::*;
 use piston::WindowSettings;
 use piston_window::*;
@@ -43,7 +44,7 @@ fn main() {
 
 fn run() -> Result<(), Box<dyn error::Error>> {
     const SIZE: [f64; 2] = [640., 480.];
-    const CELLS: [f64; 2] = [10., 10.];
+    const CELLS: [f64; 2] = [100., 100.];
 
     let mut world = World::new();
     let mut window: PistonWindow = WindowSettings::new("Example_01", SIZE)

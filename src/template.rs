@@ -9,7 +9,7 @@ use std::{
 use crate::{
     entities::Entities,
     entity::Entity,
-    family::initial::{EntityIndices, Family, SegmentIndices},
+    family::template::{EntityIndices, Family, SegmentIndices},
     world::{segment::Segment, store::Store, Meta, World},
 };
 
@@ -50,7 +50,7 @@ pub struct ApplyContext<'a> {
     segment_indices: &'a [SegmentIndices],
 }
 
-pub trait Initial {
+pub trait Template {
     type Input;
     type Declare;
     type State;
@@ -63,9 +63,9 @@ pub trait Initial {
 }
 
 /// Implementors of this trait must guarantee that the 'static_count' function always succeeds.
-pub unsafe trait StaticInitial: Initial {}
+pub unsafe trait StaticTemplate: Template {}
 /// Implementors of this trait must guarantee that they will not declare any child.
-pub unsafe trait LeafInitial: Initial {}
+pub unsafe trait LeafTemplate: Template {}
 
 impl<'a> DeclareContext<'a> {
     pub(crate) fn new(
@@ -363,32 +363,48 @@ impl GetMeta {
 }
 
 pub struct Add<T>(T);
-impl<T: Send + Sync + 'static> Initial for Add<T> {
+
+#[inline]
+pub fn add<C: Send + Sync + 'static>(component: C) -> Add<C> {
+    Add(component)
+}
+
+#[inline]
+pub fn add_default<C: Default + Send + Sync + 'static>() -> Add<C> {
+    add(C::default())
+}
+
+impl<T: Send + Sync + 'static> Template for Add<T> {
     type Input = ();
     type Declare = Arc<Meta>;
     type State = Arc<Store>;
 
+    #[inline]
     fn declare(_: Self::Input, mut context: DeclareContext) -> Self::Declare {
         context.meta(GetMeta::new::<T>())
     }
 
+    #[inline]
     fn initialize(state: Self::Declare, context: InitializeContext) -> Self::State {
         context.segment().store(&state).unwrap()
     }
 
+    #[inline]
     fn static_count(_: &Self::State, _: CountContext) -> bool {
         true
     }
 
+    #[inline]
     fn dynamic_count(&self, _: &Self::State, _: CountContext) {}
 
+    #[inline]
     fn apply(self, state: &Self::State, context: ApplyContext) {
         unsafe { state.set(context.store_index(), self.0) }
     }
 }
 
-unsafe impl<T: Send + Sync + 'static> StaticInitial for Add<T> {}
-unsafe impl<T: Send + Sync + 'static> LeafInitial for Add<T> {}
+unsafe impl<T: Send + Sync + 'static> StaticTemplate for Add<T> {}
+unsafe impl<T: Send + Sync + 'static> LeafTemplate for Add<T> {}
 
 impl<T: Copy> Copy for Add<T> {}
 
@@ -429,34 +445,34 @@ impl<T> AsMut<T> for Add<T> {
     }
 }
 
-#[inline]
-pub fn add<T>(component: T) -> Add<T> {
-    Add(component)
-}
+impl<T: Template> Template for Vec<T> {
+    type Input = T::Input;
+    type Declare = T::Declare;
+    type State = T::State;
 
-impl<I: Initial> Initial for Vec<I> {
-    type Input = I::Input;
-    type Declare = I::Declare;
-    type State = I::State;
-
+    #[inline]
     fn declare(input: Self::Input, context: DeclareContext) -> Self::Declare {
-        I::declare(input, context)
+        T::declare(input, context)
     }
 
+    #[inline]
     fn initialize(state: Self::Declare, context: InitializeContext) -> Self::State {
-        I::initialize(state, context)
+        T::initialize(state, context)
     }
 
+    #[inline]
     fn static_count(_: &Self::State, _: CountContext) -> bool {
         false
     }
 
+    #[inline]
     fn dynamic_count(&self, state: &Self::State, mut context: CountContext) {
         for value in self {
             value.dynamic_count(state, context.owned());
         }
     }
 
+    #[inline]
     fn apply(self, state: &Self::State, mut context: ApplyContext) {
         for value in self {
             value.apply(state, context.owned());
@@ -464,69 +480,84 @@ impl<I: Initial> Initial for Vec<I> {
     }
 }
 
-unsafe impl<I: LeafInitial> StaticInitial for Vec<I> {}
-unsafe impl<I: LeafInitial> LeafInitial for Vec<I> {}
+unsafe impl<I: LeafTemplate> StaticTemplate for Vec<I> {}
+unsafe impl<I: LeafTemplate> LeafTemplate for Vec<I> {}
 
-impl<I: Initial, const N: usize> Initial for [I; N] {
-    type Input = I::Input;
-    type Declare = I::Declare;
-    type State = I::State;
+impl<T: Template, const N: usize> Template for [T; N] {
+    type Input = T::Input;
+    type Declare = T::Declare;
+    type State = T::State;
 
+    #[inline]
     fn declare(input: Self::Input, context: DeclareContext) -> Self::Declare {
-        I::declare(input, context)
+        T::declare(input, context)
     }
 
+    #[inline]
     fn initialize(state: Self::Declare, context: InitializeContext) -> Self::State {
-        I::initialize(state, context)
+        T::initialize(state, context)
     }
 
+    #[inline]
     fn static_count(state: &Self::State, mut context: CountContext) -> bool {
-        (0..N).all(|_| I::static_count(state, context.owned()))
+        (0..N).all(|_| T::static_count(state, context.owned()))
     }
 
+    #[inline]
     fn dynamic_count(&self, state: &Self::State, mut context: CountContext) {
         self.iter()
             .for_each(|value| value.dynamic_count(state, context.owned()));
     }
 
+    #[inline]
     fn apply(self, state: &Self::State, mut context: ApplyContext) {
         IntoIter::new(self).for_each(|value| value.apply(state, context.owned()))
     }
 }
 
-unsafe impl<I: StaticInitial, const N: usize> StaticInitial for [I; N] {}
-unsafe impl<I: LeafInitial, const N: usize> LeafInitial for [I; N] {}
+unsafe impl<I: StaticTemplate, const N: usize> StaticTemplate for [I; N] {}
+unsafe impl<I: LeafTemplate, const N: usize> LeafTemplate for [I; N] {}
 
-pub struct With<T, F>(F, PhantomData<T>);
+pub struct With<I, F>(F, PhantomData<I>);
 
-impl<I: StaticInitial, F: FnOnce(Family) -> I> Initial for With<I, F> {
+#[inline]
+pub fn with<U: StaticTemplate, F: FnOnce(Family) -> U>(with: F) -> With<U, F> {
+    With(with, PhantomData)
+}
+
+impl<I: StaticTemplate, F: FnOnce(Family) -> I> Template for With<I, F> {
     type Input = I::Input;
     type Declare = I::Declare;
     type State = I::State;
 
+    #[inline]
     fn declare(input: Self::Input, context: DeclareContext) -> Self::Declare {
         I::declare(input, context)
     }
 
+    #[inline]
     fn initialize(state: Self::Declare, context: InitializeContext) -> Self::State {
         I::initialize(state, context)
     }
 
+    #[inline]
     fn static_count(state: &Self::State, context: CountContext) -> bool {
         I::static_count(state, context)
     }
 
+    #[inline]
     fn dynamic_count(&self, state: &Self::State, context: CountContext) {
         Self::static_count(state, context);
     }
 
+    #[inline]
     fn apply(self, store: &Self::State, context: ApplyContext) {
         self.0(context.family()).apply(store, context)
     }
 }
 
-unsafe impl<I: StaticInitial, F: FnOnce(Family) -> I> StaticInitial for With<I, F> {}
-unsafe impl<I: StaticInitial + LeafInitial, F: FnOnce(Family) -> I> LeafInitial for With<I, F> {}
+unsafe impl<I: StaticTemplate, F: FnOnce(Family) -> I> StaticTemplate for With<I, F> {}
+unsafe impl<I: StaticTemplate + LeafTemplate, F: FnOnce(Family) -> I> LeafTemplate for With<I, F> {}
 
 impl<I, F: Copy> Copy for With<I, F> {}
 
@@ -536,30 +567,30 @@ impl<I, F: Clone> Clone for With<I, F> {
     }
 }
 
+pub struct Spawn<I>(I);
+
 #[inline]
-pub fn with<I: StaticInitial, F: FnOnce(Family) -> I>(with: F) -> With<I, F> {
-    With(with, PhantomData)
+pub fn spawn<U: Template>(child: U) -> Spawn<U> {
+    Spawn(child)
 }
 
-pub struct Spawn<T>(T);
-
-impl<I: Initial> Initial for Spawn<I> {
-    type Input = I::Input;
-    type Declare = (usize, I::Declare);
-    type State = (usize, I::State);
+impl<T: Template> Template for Spawn<T> {
+    type Input = T::Input;
+    type Declare = (usize, T::Declare);
+    type State = (usize, T::State);
 
     fn declare(input: Self::Input, mut context: DeclareContext) -> Self::Declare {
-        context.child(|index, context| (index, I::declare(input, context)))
+        context.child(|index, context| (index, T::declare(input, context)))
     }
 
     fn initialize((index, state): Self::Declare, mut context: InitializeContext) -> Self::State {
         context.child(index, |index, context| {
-            (index, I::initialize(state, context))
+            (index, T::initialize(state, context))
         })
     }
 
     fn static_count((index, state): &Self::State, mut context: CountContext) -> bool {
-        context.child(*index, |context| I::static_count(state, context))
+        context.child(*index, |context| T::static_count(state, context))
     }
 
     fn dynamic_count(&self, (index, state): &Self::State, mut context: CountContext) {
@@ -571,7 +602,7 @@ impl<I: Initial> Initial for Spawn<I> {
     }
 }
 
-unsafe impl<I: StaticInitial> StaticInitial for Spawn<I> {}
+unsafe impl<I: StaticTemplate> StaticTemplate for Spawn<I> {}
 
 impl<T: Copy> Copy for Spawn<T> {}
 
@@ -612,44 +643,44 @@ impl<T> AsMut<T> for Spawn<T> {
     }
 }
 
-#[inline]
-pub fn spawn<I: Initial>(initial: I) -> Spawn<I> {
-    Spawn(initial)
-}
-
-macro_rules! initial {
+macro_rules! template {
     ($($p:ident, $t:ident),*) => {
-        impl<$($t: Initial,)*> Initial for ($($t,)*) {
+        impl<$($t: Template,)*> Template for ($($t,)*) {
             type Input = ($($t::Input,)*);
             type Declare = ($($t::Declare,)*);
             type State = ($($t::State,)*);
 
+            #[inline]
             fn declare(($($p,)*): Self::Input, mut _context: DeclareContext) -> Self::Declare {
                 ($($t::declare($p, _context.owned()),)*)
             }
 
+            #[inline]
             fn initialize(($($p,)*): Self::Declare, mut _context: InitializeContext) -> Self::State {
                 ($($t::initialize($p, _context.owned()),)*)
             }
 
+            #[inline]
             fn static_count(($($t,)*): &Self::State, mut _context: CountContext) -> bool {
                 $($t::static_count($t, _context.owned()) &&)* true
             }
 
+            #[inline]
             fn dynamic_count(&self, ($($t,)*): &Self::State, mut _context: CountContext) {
                 let ($($p,)*) = self;
                 $($p.dynamic_count($t, _context.owned());)*
             }
 
+            #[inline]
             fn apply(self, ($($t,)*): &Self::State, mut _context: ApplyContext) {
                 let ($($p,)*) = self;
                 $($p.apply($t, _context.owned());)*
             }
         }
 
-        unsafe impl<$($t: StaticInitial,)*> StaticInitial for ($($t,)*) {}
-        unsafe impl<$($t: LeafInitial,)*> LeafInitial for ($($t,)*) {}
+        unsafe impl<$($t: StaticTemplate,)*> StaticTemplate for ($($t,)*) {}
+        unsafe impl<$($t: LeafTemplate,)*> LeafTemplate for ($($t,)*) {}
     };
 }
 
-entia_macro::recurse_32!(initial);
+entia_macro::recurse_32!(template);

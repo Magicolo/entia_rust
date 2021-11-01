@@ -148,7 +148,7 @@ unsafe impl Depend for State {
     }
 }
 
-pub mod initial {
+pub mod template {
     use super::*;
 
     #[derive(Clone)]

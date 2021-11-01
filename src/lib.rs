@@ -7,13 +7,13 @@ pub mod entity;
 pub mod families;
 pub mod family;
 pub mod ignore;
-pub mod initial;
 pub mod inject;
 pub mod local;
 pub mod message;
 pub mod query;
 pub mod read;
 pub mod system;
+pub mod template;
 pub mod world;
 pub mod write;
 
@@ -32,13 +32,13 @@ pub use crate::{
         Family,
     },
     ignore::{Ignore, Scope},
-    initial::{add, spawn, with, Initial, StaticInitial},
     inject::Injector,
     message::emit::Emit,
     message::receive::Receive,
     query::filter::{Has, Not},
     query::Query,
     system::{runner::Runner, schedule::Scheduler, Error, IntoSystem, System},
+    template::{LeafTemplate, StaticTemplate, Template},
     world::World,
 };
 

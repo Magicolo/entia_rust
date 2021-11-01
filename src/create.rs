@@ -4,89 +4,89 @@ use crate::{
     depend::{Depend, Dependency},
     entities::Entities,
     entity::Entity,
-    family::initial::{EntityIndices, Families, Family, SegmentIndices},
-    initial::{
-        spawn, ApplyContext, CountContext, DeclareContext, Initial, InitializeContext, Spawn,
-    },
+    family::template::{EntityIndices, Families, Family, SegmentIndices},
     inject::{Context, Get, Inject},
+    template::{
+        spawn, ApplyContext, CountContext, DeclareContext, InitializeContext, Spawn, Template,
+    },
     world::World,
     write::{self, Write},
 };
 
-pub struct Create<'a, I: Initial> {
-    inner: &'a mut Inner<I>,
+pub struct Create<'a, T: Template> {
+    inner: &'a mut Inner<T>,
     entities: &'a mut Entities,
     world: &'a World,
 }
 
-pub struct State<I: Initial> {
-    inner: Inner<I>,
+pub struct State<T: Template> {
+    inner: Inner<T>,
     entities: write::State<Entities>,
 }
 
-struct Inner<I: Initial> {
+struct Inner<T: Template> {
     count: Option<usize>,
-    defer: Vec<Defer<I>>,
+    defer: Vec<Defer<T>>,
     segment_indices: Vec<SegmentIndices>,
     entity_indices: Vec<EntityIndices>,
     entity_instances: Vec<Entity>,
     entity_roots: Vec<(usize, usize)>,
-    initial_state: <Spawn<I> as Initial>::State,
-    initial_roots: Vec<Spawn<I>>,
+    initial_state: <Spawn<T> as Template>::State,
+    initial_roots: Vec<Spawn<T>>,
 }
 
-struct Defer<I: Initial> {
+struct Defer<T: Template> {
     index: usize,
-    initial_roots: Vec<Spawn<I>>,
+    initial_roots: Vec<Spawn<T>>,
     entity_roots: Vec<(usize, usize)>,
     entity_instances: Vec<Entity>,
     entity_indices: Vec<EntityIndices>,
     segment_indices: Vec<SegmentIndices>,
 }
 
-impl<I: Initial> Create<'_, I> {
-    pub fn all(&mut self, initials: impl IntoIterator<Item = I>) -> Families {
+impl<T: Template> Create<'_, T> {
+    pub fn all(&mut self, templates: impl IntoIterator<Item = T>) -> Families {
         match self.inner.count {
             Some(count) => self
                 .inner
-                .all_static(count, initials, self.entities, self.world),
-            None => self.inner.all_dynamic(initials, self.entities, self.world),
+                .all_static(count, templates, self.entities, self.world),
+            None => self.inner.all_dynamic(templates, self.entities, self.world),
         }
     }
 
     #[inline]
-    pub fn one(&mut self, initial: I) -> Family {
-        self.all(once(initial)).roots().next().unwrap()
+    pub fn one(&mut self, template: T) -> Family {
+        self.all(once(template)).roots().next().unwrap()
     }
 
     #[inline]
-    pub fn clones(&mut self, initial: I, count: usize) -> Families
+    pub fn clones(&mut self, count: usize, template: T) -> Families
     where
-        I: Clone,
+        T: Clone,
     {
-        self.all((0..count).map(move |_| initial.clone()))
+        self.all((0..count).map(move |_| template.clone()))
     }
 
     #[inline]
     pub fn defaults(&mut self, count: usize) -> Families
     where
-        I: Default,
+        T: Default,
     {
-        self.all((0..count).map(|_| I::default()))
+        self.all((0..count).map(|_| T::default()))
     }
 }
 
-impl<I: Initial> Inner<I> {
+impl<T: Template> Inner<T> {
     fn all_static(
         &mut self,
         count: usize,
-        initials: impl IntoIterator<Item = I>,
+        templates: impl IntoIterator<Item = T>,
         entities: &mut Entities,
         world: &World,
     ) -> Families {
         self.initial_roots.clear();
-        for initial in initials {
-            self.initial_roots.push(spawn(initial));
+        for template in templates {
+            self.initial_roots.push(spawn(template));
         }
 
         if self.initial_roots.len() == 0 {
@@ -118,7 +118,7 @@ impl<I: Initial> Inner<I> {
 
     fn all_dynamic(
         &mut self,
-        initials: impl IntoIterator<Item = I>,
+        templates: impl IntoIterator<Item = T>,
         entities: &mut Entities,
         world: &World,
     ) -> Families {
@@ -128,9 +128,9 @@ impl<I: Initial> Inner<I> {
             .iter_mut()
             .for_each(|indices| indices.count = 0);
 
-        for initial in initials {
+        for template in templates {
             self.entity_roots.push((0, self.entity_indices.len()));
-            let root = spawn(initial);
+            let root = spawn(template);
             root.dynamic_count(
                 &self.initial_state,
                 CountContext::new(
@@ -222,15 +222,15 @@ impl<I: Initial> Inner<I> {
     }
 }
 
-impl<I: Initial + 'static> Inject for Create<'_, I> {
-    type Input = I::Input;
-    type State = State<I>;
+impl<T: Template + 'static> Inject for Create<'_, T> {
+    type Input = T::Input;
+    type State = State<T>;
 
     fn initialize(input: Self::Input, mut context: Context) -> Option<Self::State> {
         let entities = <Write<Entities> as Inject>::initialize(None, context.owned())?;
         let world = context.world();
         let mut segment_metas = Vec::new();
-        let declare = Spawn::<I>::declare(input, DeclareContext::new(0, &mut segment_metas, world));
+        let declare = Spawn::<T>::declare(input, DeclareContext::new(0, &mut segment_metas, world));
         let mut segment_to_index = HashMap::new();
         let mut metas_to_segment = HashMap::new();
         let mut segment_indices = Vec::with_capacity(segment_metas.len());
@@ -253,13 +253,13 @@ impl<I: Initial + 'static> Inject for Create<'_, I> {
             metas_to_segment.insert(i, index);
         }
 
-        let state = Spawn::<I>::initialize(
+        let state = Spawn::<T>::initialize(
             declare,
             InitializeContext::new(0, &segment_indices, &metas_to_segment, world),
         );
 
         let mut entity_indices = Vec::new();
-        let count = if Spawn::<I>::static_count(
+        let count = if Spawn::<T>::static_count(
             &state,
             CountContext::new(
                 0,
@@ -328,9 +328,9 @@ impl<I: Initial + 'static> Inject for Create<'_, I> {
     }
 }
 
-fn apply<I: Initial>(
-    initial_state: &<Spawn<I> as Initial>::State,
-    initial_roots: impl Iterator<Item = Spawn<I>>,
+fn apply<T: Template>(
+    initial_state: &<Spawn<T> as Template>::State,
+    initial_roots: impl Iterator<Item = Spawn<T>>,
     entity_roots: &[(usize, usize)],
     entity_instances: &[Entity],
     entity_indices: &[EntityIndices],
@@ -357,8 +357,8 @@ fn apply<I: Initial>(
     }
 }
 
-impl<'a, I: Initial + 'a> Get<'a> for State<I> {
-    type Item = Create<'a, I>;
+impl<'a, T: Template + 'a> Get<'a> for State<T> {
+    type Item = Create<'a, T>;
 
     fn get(&'a mut self, world: &'a World) -> Self::Item {
         Create {
@@ -369,7 +369,7 @@ impl<'a, I: Initial + 'a> Get<'a> for State<I> {
     }
 }
 
-unsafe impl<I: Initial> Depend for State<I> {
+unsafe impl<T: Template> Depend for State<T> {
     fn depend(&self, _: &World) -> Vec<Dependency> {
         vec![
             Dependency::defer::<Entity>(),
