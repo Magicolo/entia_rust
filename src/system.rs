@@ -10,8 +10,6 @@ use std::{
     cell::UnsafeCell,
     error,
     fmt::{self, Display},
-    mem::replace,
-    mem::swap,
     sync::Arc,
 };
 
@@ -233,14 +231,16 @@ pub mod runner {
     pub struct Runner {
         identifier: usize,
         version: usize,
+        systems: Vec<System>,
         blocks: Vec<Block>,
+        conflict: Conflict,
     }
 
     #[derive(Default)]
     struct Block {
-        systems: Vec<System>,
+        runs: Vec<usize>,
+        resolves: Vec<usize>,
         dependencies: Vec<Dependency>,
-        error: Option<Error>,
     }
 
     impl Runner {
@@ -248,7 +248,9 @@ pub mod runner {
             Self {
                 identifier,
                 version: 0,
-                blocks: systems.into_iter().map(Into::into).collect(),
+                systems: systems.into_iter().collect(),
+                blocks: Vec::new(),
+                conflict: Conflict::default(),
             }
         }
 
@@ -270,87 +272,86 @@ pub mod runner {
             self.update(world)?;
 
             for block in self.blocks.iter_mut() {
-                // If segments have been added to the world, this may mean that the dependencies used to schedule the systems
+                // If world's version has changed, this may mean that the dependencies used to schedule the systems
                 // are not up to date, therefore it is not safe to run the systems in parallel.
                 if self.version == world.version() {
-                    if block.systems.len() > 1 {
+                    if block.runs.len() > 1 {
                         use rayon::prelude::*;
-                        block
-                            .systems
-                            .par_iter_mut()
-                            .for_each(|system| (system.run)(world));
+                        let systems = self.systems.as_mut_ptr() as usize;
+                        // SAFETY: The indices stored in 'runs' are guaranteed to be unique and ordered. See 'Runner::schedule'.
+                        block.runs.par_iter().for_each(|&index| unsafe {
+                            ((&mut *(systems as *mut System).add(index)).run)(world)
+                        });
                     } else {
-                        for system in block.systems.iter_mut() {
-                            (system.run)(world);
+                        for &index in block.runs.iter() {
+                            (self.systems[index].run)(world);
                         }
                     }
                 } else {
-                    for system in block.systems.iter_mut() {
+                    for &index in block.runs.iter() {
+                        let system = &mut self.systems[index];
                         (system.update)(world);
                         (system.run)(world);
                     }
                 }
 
-                for system in block.systems.iter_mut() {
-                    (system.resolve)(world);
+                for &index in block.resolves.iter() {
+                    (self.systems[index].resolve)(world);
                 }
             }
 
             Ok(())
         }
 
+        /// Batches the systems in blocks that can be executed in parallel using the dependencies produces by each system
+        /// to ensure safety. The indices stored in the blocks are guaranteed to be unique and ordered within each block.
+        /// Note that systems may be reordered if their dependencies allow it.
         fn schedule(&mut self, world: &mut World) -> Result<(), Error> {
-            let mut blocks = Vec::new();
-            let mut block = Block::default();
-            let mut inner = Conflict::default();
-            let mut outer = Conflict::default();
-            let mut errors = Vec::new();
+            self.blocks.clear();
+            self.conflict.clear();
 
-            for mut system in self.blocks.drain(..).flat_map(|block| block.systems) {
+            for (index, system) in self.systems.iter_mut().enumerate() {
                 (system.update)(world);
+                self.blocks.push(Block {
+                    runs: vec![index],
+                    resolves: vec![index],
+                    dependencies: (system.depend)(world),
+                });
+            }
 
-                let mut dependencies = (system.depend)(world);
-                match inner.detect(Scope::Inner, &dependencies) {
-                    Ok(()) => {}
-                    Err(error) => {
-                        errors.push(Error::InnerConflict(system.name().into(), error.into()))
-                    }
-                }
+            fn next(blocks: &mut [Block], conflict: &mut Conflict) -> Result<(), Error> {
+                if let Some((head, rest)) = blocks.split_first_mut() {
+                    conflict.detect(Scope::Inner, &head.dependencies)?;
 
-                match outer.detect(Scope::Outer, &dependencies) {
-                    Ok(_) => {}
-                    Err(error) => {
-                        // TODO: When 'outer_conflicts' are detected, can later systems be still included in the block if they do not
-                        // have 'outer_conflicts'? Dependencies would need to be accumulated even for conflicting systems and a system
-                        // that has a 'Dependency::Unknown' should never be crossed.
-                        if block.systems.len() > 0 {
-                            block.error =
-                                Some(Error::OuterConflict(system.name().into(), error.into()));
-                            blocks.push(replace(&mut block, Block::default()));
+                    for tail in rest.iter_mut() {
+                        match conflict.detect(Scope::Outer, &tail.dependencies) {
+                            Ok(_) => {
+                                head.runs.append(&mut tail.runs);
+                                head.dependencies.append(&mut tail.dependencies);
+                            }
+                            _ => {}
                         }
-                        swap(&mut inner, &mut outer);
+                    }
+
+                    conflict.clear();
+                    next(rest, conflict)?;
+
+                    match rest {
+                        [tail, ..] if tail.runs.len() == 0 && tail.dependencies.len() == 0 => {
+                            head.resolves.append(&mut tail.resolves)
+                        }
+                        _ => {}
                     }
                 }
 
-                block.systems.push(system);
-                block.dependencies.append(&mut dependencies);
-                inner.clear();
+                Ok(())
             }
 
-            if block.systems.len() > 0 {
-                blocks.push(block);
-            }
-
-            self.blocks = blocks;
-            Error::All(errors).flatten(true).map(Err).unwrap_or(Ok(()))
-        }
-    }
-
-    impl Into<Block> for System {
-        fn into(self) -> Block {
-            let mut block = Block::default();
-            block.systems.push(self);
-            block
+            next(&mut self.blocks, &mut self.conflict)?;
+            self.blocks.retain(|block| {
+                block.runs.len() > 0 || block.resolves.len() > 0 || block.dependencies.len() > 0
+            });
+            Ok(())
         }
     }
 }

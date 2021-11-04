@@ -9,7 +9,8 @@ edition = "2018"
 [dependencies]
 entia_core = { path = "./entia_core" }
 entia_macro = { path = "./entia_macro" }
+entia_derive = { path = "./entia_derive" }
 rayon = "*"
 
 [workspace]
-members = ["entia_core", "entia_macro", "entia_example_01"]
+members = ["entia_core", "entia_macro", "entia_derive", "entia_example_01"]

@@ -74,7 +74,7 @@ impl<'a> Context<'a> {
 
 macro_rules! inject {
     ($($p:ident, $t:ident),*) => {
-        impl<'a, $($t: Inject,)*> Inject for ($($t,)*) {
+        impl<$($t: Inject,)*> Inject for ($($t,)*) {
             type Input = ($($t::Input,)*);
             type State = ($($t::State,)*);
 

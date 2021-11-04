@@ -1,8 +1,7 @@
-use entia::template::*;
 use entia::*;
 use piston::WindowSettings;
 use piston_window::*;
-use std::{error, time::Duration};
+use std::{collections::VecDeque, error, time::Duration};
 
 #[derive(Clone, Debug)]
 enum Input {
@@ -31,12 +30,8 @@ struct Time {
     pub delta: Duration,
 }
 
-// TODO: More aggressive parallelization of systems.
-// - Try to bundle systems after a conflict?
-// TODO: Derive macros for 'Inject', 'Item', 'Initial', 'Filter'
+// TODO: Derive macros for 'Inject', 'Item'
 // - If all fields of a struct implement the trait, the struct can implement it (same as tuples).
-// TODO: Better API for entity creation.
-// - Currently, free standing functions are used, which sucks.
 
 fn main() {
     run().unwrap();
@@ -44,7 +39,7 @@ fn main() {
 
 fn run() -> Result<(), Box<dyn error::Error>> {
     const SIZE: [f64; 2] = [640., 480.];
-    const CELLS: [f64; 2] = [100., 100.];
+    const CELLS: [f64; 2] = [25., 25.];
 
     let mut world = World::new();
     let mut window: PistonWindow = WindowSettings::new("Example_01", SIZE)
@@ -56,12 +51,12 @@ fn run() -> Result<(), Box<dyn error::Error>> {
         .add(|mut create: Create<_>| {
             create.all((0..10).map(|i| {
                 (
-                    add(Position(i, -i)),
-                    add(Render {
-                        color: [0.1, 0.1, 0.8, 1.],
+                    template::add(Position(i, -i)),
+                    template::add(Render {
+                        color: [0.1 * i as f32, 0.1, 0.8, 1.],
                         visible: true,
                     }),
-                    add(Controller),
+                    template::add(Controller),
                 )
             }));
         })
@@ -70,7 +65,11 @@ fn run() -> Result<(), Box<dyn error::Error>> {
     let mut inputs = world.injector::<Emit<Input>>()?;
     let mut time = world.injector::<&mut Time>()?;
     let mut render = world.injector::<Query<(&Position, &Render)>>()?;
-    let mut runner = world.scheduler().add(apply_input_to_position).schedule()?;
+    let mut runner = world
+        .scheduler()
+        .pipe(print_fps)
+        .add(apply_input_to_position)
+        .schedule()?;
 
     initialize.run(&mut world)?;
     while let Some(event) = window.next() {
@@ -146,4 +145,21 @@ fn apply_input_to_position(inputs: Receive<Input>, query: Query<&mut Position, H
 
         println!("{:?}", input);
     }
+}
+
+fn print_fps(scheduler: Scheduler) -> Scheduler {
+    const SIZE: usize = 100;
+    let mut history = VecDeque::new();
+    scheduler.add(move |time: &Time| {
+        history.push_back(time.delta);
+
+        if history.len() > SIZE {
+            history.pop_front();
+            let mut sum = Duration::from_secs(0);
+            for &duration in history.iter() {
+                sum += duration;
+            }
+            println!("{:?}", sum / SIZE as u32);
+        }
+    })
 }

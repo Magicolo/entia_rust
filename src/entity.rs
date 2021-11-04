@@ -14,7 +14,7 @@ pub struct Entity {
     index: u32,
     generation: u32,
 }
-pub struct State(pub(crate) Arc<Store>, usize);
+pub struct State(Arc<Store>, usize);
 
 impl Entity {
     pub const NULL: Self = Self {
@@ -35,6 +35,11 @@ impl Entity {
     #[inline]
     pub const fn generation(&self) -> u32 {
         self.generation
+    }
+
+    #[inline]
+    pub const fn identifier(&self) -> u64 {
+        self.index as u64 | (self.generation as u64 >> 32)
     }
 }
 

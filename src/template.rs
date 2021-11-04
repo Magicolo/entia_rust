@@ -474,14 +474,14 @@ unsafe impl<T: StaticTemplate, const N: usize> StaticTemplate for [T; N] {}
 unsafe impl<T: LeafTemplate, const N: usize> LeafTemplate for [T; N] {}
 
 #[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct With<F, T>(F, PhantomData<T>);
+pub struct With<T, F = fn(Family) -> T>(F, PhantomData<T>);
 
 #[inline]
-pub fn with<F: FnOnce(Family) -> T, T: StaticTemplate>(with: F) -> With<F, T> {
+pub fn with<T: StaticTemplate, F: FnOnce(Family) -> T>(with: F) -> With<T, F> {
     With(with, PhantomData)
 }
 
-impl<F: FnOnce(Family) -> T, T: StaticTemplate> Template for With<F, T> {
+impl<T: StaticTemplate, F: FnOnce(Family) -> T> Template for With<T, F> {
     type Input = T::Input;
     type Declare = T::Declare;
     type State = T::State;
@@ -512,8 +512,8 @@ impl<F: FnOnce(Family) -> T, T: StaticTemplate> Template for With<F, T> {
     }
 }
 
-unsafe impl<F: FnOnce(Family) -> T, T: StaticTemplate> StaticTemplate for With<F, T> {}
-unsafe impl<F: FnOnce(Family) -> T, T: StaticTemplate + LeafTemplate> LeafTemplate for With<F, T> {}
+unsafe impl<T: StaticTemplate, F: FnOnce(Family) -> T> StaticTemplate for With<T, F> {}
+unsafe impl<T: StaticTemplate + LeafTemplate, F: FnOnce(Family) -> T> LeafTemplate for With<T, F> {}
 
 #[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Spawn<T>(T);
@@ -571,8 +571,8 @@ macro_rules! template {
             }
 
             #[inline]
-            fn static_count(($($t,)*): &Self::State, mut _context: CountContext) -> bool {
-                $($t::static_count($t, _context.owned()) &&)* true
+            fn static_count(($($p,)*): &Self::State, mut _context: CountContext) -> bool {
+                $($t::static_count($p, _context.owned()) &&)* true
             }
 
             #[inline]

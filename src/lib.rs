@@ -32,15 +32,16 @@ pub use crate::{
         Family,
     },
     ignore::{Ignore, Scope},
-    inject::Injector,
+    inject::{Inject, Injector},
     message::emit::Emit,
     message::receive::Receive,
-    query::filter::{Has, Not},
+    query::filter::{Filter, Has, Not},
     query::Query,
     system::{runner::Runner, schedule::Scheduler, Error, IntoSystem, System},
-    template::{LeafTemplate, StaticTemplate, Template},
+    template::{Add, Spawn, Template, With},
     world::World,
 };
+pub use entia_derive::*;
 
 #[cfg(test)]
 mod test {
