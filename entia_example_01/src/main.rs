@@ -30,6 +30,14 @@ struct Time {
     pub delta: Duration,
 }
 
+#[derive(Template)]
+struct Player(Spawn<Add<Position>>, Add<Render>, Add<Controller>);
+impl Player {
+    pub fn new(position: Position, render: Render) -> Self {
+        Self(position.into(), render.into(), Controller.into())
+    }
+}
+
 fn main() {
     run().unwrap();
 }
@@ -47,13 +55,12 @@ fn run() -> Result<(), Box<dyn error::Error>> {
         .scheduler()
         .add(|mut create: Create<_>| {
             create.all((0..10).map(|i| {
-                (
-                    template::add(Position(i, -i)),
-                    template::add(Render {
+                Player::new(
+                    Position(i, -i),
+                    Render {
                         color: [0.1 * i as f32, 0.1, 0.8, 1.],
                         visible: true,
-                    }),
-                    template::add(Controller),
+                    },
                 )
             }));
         })

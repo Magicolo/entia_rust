@@ -59,7 +59,7 @@ Injector::new()
     .factory(Template::new()
         .add(Position(Vec::new()))              -> Template<()>
         .add_default::<Frozen>()                -> Template<()>
-        .add_with(|x: f64| Position(vec![x]))   -> Template<(f64,)>
+        .add_With::new(|x: f64| Position(vec![x]))   -> Template<(f64,)>
         .remove::<Frozen>()                     -> Template<(f64,)>
         .child(Template::new().add(Frozen)))    -> Template<(f64,)>
 
@@ -108,27 +108,27 @@ fn main() {
         move |mut create: Create<_>| {
             let position = Position(Vec::with_capacity(counter));
             counter += counter / 100 + 1;
-            create.one((add(position.clone()), add(Frozen)));
-            create.all((0..counter).map(|_| (add(position.clone()), add(Frozen))));
+            create.one((Add::new(position.clone()), Add::new(Frozen)));
+            create.all((0..counter).map(|_| (Add::new(position.clone()), Add::new(Frozen))));
             create.defaults(counter);
-            create.clones(counter, (add(position), add(Frozen)));
+            create.clones(counter, (Add::new(position), Add::new(Frozen)));
         }
     };
 
     fn simple() -> impl StaticTemplate<Input = impl Default, State = impl Send> {
         (
-            add(Frozen),
-            add(Position(Vec::new())),
-            with(|_| add(Frozen)),
+            Add::new(Frozen),
+            Add::new(Position(Vec::new())),
+            With::new(|_| Add::new(Frozen)),
         )
     }
 
     fn complex() -> impl StaticTemplate<Input = impl Default, State = impl Send> {
-        (spawn(simple()), [simple()], with(|_| simple()))
+        (Spawn::new(simple()), [simple()], With::new(|_| simple()))
     }
 
     fn dynamic(count: usize) -> impl Template<Input = impl Default, State = impl Send> {
-        vec![spawn(add(Frozen)); count]
+        vec![Spawn::new(Add::new(Frozen)); count]
     }
 
     let mut world = World::new();
@@ -158,12 +158,12 @@ fn main() {
         })
         .add(|mut create: Create<_>| {
             create.one((
-                add(Frozen),
-                add(Frozen),
-                add(Frozen),
-                add(Frozen),
-                add(Frozen),
-                add(Frozen),
+                Add::new(Frozen),
+                Add::new(Frozen),
+                Add::new(Frozen),
+                Add::new(Frozen),
+                Add::new(Frozen),
+                Add::new(Frozen),
             ));
         })
         .add(|mut create: Create<_>| {
@@ -171,9 +171,11 @@ fn main() {
         })
         .add(|mut create: Create<_>| {
             create.one((
-                vec![with(|family| spawn(add(Target(family.entity()))))],
-                spawn(vec![with(|family| add(Target(family.entity())))]),
-                spawn(with(|family| vec![add(Target(family.entity()))])),
+                vec![With::new(|family| {
+                    Spawn::new(Add::new(Target(family.entity())))
+                })],
+                Spawn::new(vec![With::new(|family| Add::new(Target(family.entity())))]),
+                Spawn::new(With::new(|family| vec![Add::new(Target(family.entity()))])),
             ));
         })
         .add(|query: Query<(Entity, Child<Entity>, Parent<Entity>)>| {

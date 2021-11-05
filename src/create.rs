@@ -6,9 +6,7 @@ use crate::{
     entity::Entity,
     family::template::{EntityIndices, Families, Family, SegmentIndices},
     inject::{Context, Get, Inject},
-    template::{
-        spawn, ApplyContext, CountContext, DeclareContext, InitializeContext, Spawn, Template,
-    },
+    template::{ApplyContext, CountContext, DeclareContext, InitializeContext, Spawn, Template},
     world::World,
     write::{self, Write},
 };
@@ -86,7 +84,7 @@ impl<T: Template> Inner<T> {
     ) -> Families {
         self.initial_roots.clear();
         for template in templates {
-            self.initial_roots.push(spawn(template));
+            self.initial_roots.push(Spawn::new(template));
         }
 
         if self.initial_roots.len() == 0 {
@@ -130,7 +128,7 @@ impl<T: Template> Inner<T> {
 
         for template in templates {
             self.entity_roots.push((0, self.entity_indices.len()));
-            let root = spawn(template);
+            let root = Spawn::new(template);
             root.dynamic_count(
                 &self.initial_state,
                 CountContext::new(

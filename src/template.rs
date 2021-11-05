@@ -355,51 +355,6 @@ impl GetMeta {
     }
 }
 
-#[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Add<T>(T);
-
-#[inline]
-pub fn add<C: Send + Sync + 'static>(component: C) -> Add<C> {
-    Add(component)
-}
-
-#[inline]
-pub fn add_default<C: Default + Send + Sync + 'static>() -> Add<C> {
-    add(C::default())
-}
-
-impl<T: Send + Sync + 'static> Template for Add<T> {
-    type Input = ();
-    type Declare = Arc<Meta>;
-    type State = Arc<Store>;
-
-    #[inline]
-    fn declare(_: Self::Input, mut context: DeclareContext) -> Self::Declare {
-        context.meta(GetMeta::new::<T>())
-    }
-
-    #[inline]
-    fn initialize(state: Self::Declare, context: InitializeContext) -> Self::State {
-        context.segment().store(&state).unwrap()
-    }
-
-    #[inline]
-    fn static_count(_: &Self::State, _: CountContext) -> bool {
-        true
-    }
-
-    #[inline]
-    fn dynamic_count(&self, _: &Self::State, _: CountContext) {}
-
-    #[inline]
-    fn apply(self, state: &Self::State, context: ApplyContext) {
-        unsafe { state.set(context.store_index(), self.0) }
-    }
-}
-
-unsafe impl<T: Send + Sync + 'static> StaticTemplate for Add<T> {}
-unsafe impl<T: Send + Sync + 'static> LeafTemplate for Add<T> {}
-
 impl<T: Template> Template for Vec<T> {
     type Input = T::Input;
     type Declare = T::Declare;
@@ -474,11 +429,69 @@ unsafe impl<T: StaticTemplate, const N: usize> StaticTemplate for [T; N] {}
 unsafe impl<T: LeafTemplate, const N: usize> LeafTemplate for [T; N] {}
 
 #[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Add<T>(T);
+
+impl<T: Send + Sync + 'static> Add<T> {
+    #[inline]
+    pub fn new(component: T) -> Self {
+        Self(component)
+    }
+}
+
+impl<T: Send + Sync + 'static> From<T> for Add<T> {
+    #[inline]
+    fn from(component: T) -> Self {
+        Add::new(component)
+    }
+}
+
+impl<T: Send + Sync + 'static> Template for Add<T> {
+    type Input = ();
+    type Declare = Arc<Meta>;
+    type State = Arc<Store>;
+
+    #[inline]
+    fn declare(_: Self::Input, mut context: DeclareContext) -> Self::Declare {
+        context.meta(GetMeta::new::<T>())
+    }
+
+    #[inline]
+    fn initialize(state: Self::Declare, context: InitializeContext) -> Self::State {
+        context.segment().store(&state).unwrap()
+    }
+
+    #[inline]
+    fn static_count(_: &Self::State, _: CountContext) -> bool {
+        true
+    }
+
+    #[inline]
+    fn dynamic_count(&self, _: &Self::State, _: CountContext) {}
+
+    #[inline]
+    fn apply(self, state: &Self::State, context: ApplyContext) {
+        unsafe { state.set(context.store_index(), self.0) }
+    }
+}
+
+unsafe impl<T: Send + Sync + 'static> StaticTemplate for Add<T> {}
+unsafe impl<T: Send + Sync + 'static> LeafTemplate for Add<T> {}
+
+#[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct With<T, F = fn(Family) -> T>(F, PhantomData<T>);
 
-#[inline]
-pub fn with<T: StaticTemplate, F: FnOnce(Family) -> T>(with: F) -> With<T, F> {
-    With(with, PhantomData)
+impl<T: StaticTemplate, F: FnOnce(Family) -> T> With<T, F> {
+    #[inline]
+    pub fn new(with: F) -> Self {
+        Self(with, PhantomData)
+    }
+}
+
+impl<T: StaticTemplate, F: FnOnce(Family) -> T> From<F> for With<T, F> {
+    #[inline]
+    fn from(with: F) -> Self {
+        With::new(with)
+    }
 }
 
 impl<T: StaticTemplate, F: FnOnce(Family) -> T> Template for With<T, F> {
@@ -518,9 +531,18 @@ unsafe impl<T: StaticTemplate + LeafTemplate, F: FnOnce(Family) -> T> LeafTempla
 #[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Spawn<T>(T);
 
-#[inline]
-pub fn spawn<T: Template>(child: T) -> Spawn<T> {
-    Spawn(child)
+impl<T: Template> Spawn<T> {
+    #[inline]
+    pub fn new(child: T) -> Self {
+        Self(child)
+    }
+}
+
+impl<T: Template> From<T> for Spawn<T> {
+    #[inline]
+    fn from(child: T) -> Self {
+        Spawn::new(child)
+    }
 }
 
 impl<T: Template> Template for Spawn<T> {
@@ -576,15 +598,15 @@ macro_rules! template {
             }
 
             #[inline]
-            fn dynamic_count(&self, ($($t,)*): &Self::State, mut _context: CountContext) {
-                let ($($p,)*) = self;
-                $($p.dynamic_count($t, _context.owned());)*
+            fn dynamic_count(&self, ($($p,)*): &Self::State, mut _context: CountContext) {
+                let ($($t,)*) = self;
+                $($t.dynamic_count($p, _context.owned());)*
             }
 
             #[inline]
-            fn apply(self, ($($t,)*): &Self::State, mut _context: ApplyContext) {
-                let ($($p,)*) = self;
-                $($p.apply($t, _context.owned());)*
+            fn apply(self, ($($p,)*): &Self::State, mut _context: ApplyContext) {
+                let ($($t,)*) = self;
+                $($t.apply($p, _context.owned());)*
             }
         }
 

@@ -309,6 +309,8 @@ pub fn template(input: TokenStream) -> TokenStream {
                     #(#apply_body)*
                 }
             }
+
+            // TODO: Implement 'StaticTemplate' and 'LeafTemplate' similarly to tuples when 'trivial_bounds' lands.
         };
         code.into()
     } else {
