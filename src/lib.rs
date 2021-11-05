@@ -41,7 +41,7 @@ pub use crate::{
     template::{Add, Spawn, Template, With},
     world::World,
 };
-pub use entia_derive::*;
+pub use entia_derive::{Depend, Filter, Template};
 
 #[cfg(test)]
 mod test {

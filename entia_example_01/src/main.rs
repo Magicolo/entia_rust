@@ -30,9 +30,6 @@ struct Time {
     pub delta: Duration,
 }
 
-// TODO: Derive macros for 'Inject', 'Item'
-// - If all fields of a struct implement the trait, the struct can implement it (same as tuples).
-
 fn main() {
     run().unwrap();
 }

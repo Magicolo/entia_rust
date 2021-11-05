@@ -63,10 +63,6 @@ Injector::new()
         .remove::<Frozen>()                     -> Template<(f64,)>
         .child(Template::new().add(Frozen)))    -> Template<(f64,)>
 
-- Review 'Schedule' API.
-
-- Implement 'Drop' for segment to free the stores.
-
 - Fix coherence when 'Create' and 'Destroy' appear in the same system or disallow those systems.
 A 'Destroy::all' operation could destroy entities that have not been created yet since a later 'Create' might not need to
 defer its operation. A possible solution would be for the 'Destroy::all' operation to store 'segment.reserved'.
