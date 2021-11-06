@@ -9,6 +9,7 @@ use syn::{
 };
 use syn::{parse_macro_input, Data, DataStruct};
 
+// TODO: Inject structs don't seem to work very well since their lifetime seem to conflict.
 #[proc_macro_derive(Inject)]
 pub fn inject(input: TokenStream) -> TokenStream {
     if let DeriveInput {
@@ -129,11 +130,15 @@ pub fn inject(input: TokenStream) -> TokenStream {
         };
 
         let code = quote! {
-            #[derive(Debug, Default, Clone)]
+            #[automatically_derived]
+            #[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
             #vis struct #input_struct_name<#(#struct_generics,)*>(#(#struct_generics,)*);
-            #[derive(Debug, Default, Clone, #depend_path)]
+
+            #[automatically_derived]
+            #[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, #depend_path)]
             #vis struct #state_struct_name<#(#struct_generics,)*>(#(#struct_generics,)*);
 
+            #[automatically_derived]
             impl #impl_generics #inject_path for #ident #type_generics #where_clauses {
                 type Input = #input_struct_name<#(#input_types,)*>;
                 type State = #state_struct_name<#(#state_types,)*>;
@@ -153,6 +158,7 @@ pub fn inject(input: TokenStream) -> TokenStream {
                 }
             }
 
+            #[automatically_derived]
             #[allow(non_camel_case_types)]
             impl #get_impl #get_path for #state_struct_name<#(#get_types,)*> #get_where {
                 type Item = #ident #type_generics;
@@ -186,6 +192,7 @@ pub fn filter(input: TokenStream) -> TokenStream {
             quote! { <#field_type as #filter_path>::filter(_segment, _world) && }
         });
         let code = quote! {
+            #[automatically_derived]
             impl #impl_generics #filter_path for #ident #type_generics #where_clauses {
                 #[inline]
                 fn filter(_segment: & #segment_path, _world: & #world_path) -> bool {
@@ -226,6 +233,7 @@ pub fn depend(input: TokenStream) -> TokenStream {
         });
 
         let code = quote! {
+            #[automatically_derived]
             unsafe impl #impl_generics #depend_path for #ident #type_generics #where_clauses {
                 #[inline]
                 fn depend(&self, _world: & #world_path) -> Vec<#dependency_path> {
@@ -279,6 +287,7 @@ pub fn template(input: TokenStream) -> TokenStream {
         });
 
         let code = quote! {
+            #[automatically_derived]
             impl #impl_generics #template_path for #ident #type_generics #where_clauses {
                 type Input = (#(#input_type)*);
                 type Declare = (#(#declare_type)*);
@@ -310,7 +319,7 @@ pub fn template(input: TokenStream) -> TokenStream {
                 }
             }
 
-            // TODO: Implement 'StaticTemplate' and 'LeafTemplate' similarly to tuples when 'trivial_bounds' lands.
+            // TODO: Implement 'StaticTemplate' and 'LeafTemplate' similarly to tuples when/if the 'trivial_bounds' feature stabilizes.
         };
         code.into()
     } else {

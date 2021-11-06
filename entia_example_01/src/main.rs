@@ -31,7 +31,7 @@ struct Time {
 }
 
 #[derive(Template)]
-struct Player(Spawn<Add<Position>>, Add<Render>, Add<Controller>);
+struct Player(Add<Position>, Add<Render>, Add<Controller>);
 impl Player {
     pub fn new(position: Position, render: Render) -> Self {
         Self(position.into(), render.into(), Controller.into())
@@ -156,14 +156,18 @@ fn print_fps(scheduler: Scheduler) -> Scheduler {
     let mut history = VecDeque::new();
     scheduler.add(move |time: &Time| {
         history.push_back(time.delta);
-
-        if history.len() > SIZE {
-            history.pop_front();
-            let mut sum = Duration::from_secs(0);
-            for &duration in history.iter() {
-                sum += duration;
-            }
-            println!("{:?}", sum / SIZE as u32);
+        if history.len() < SIZE {
+            return;
         }
+
+        while history.len() > SIZE {
+            history.pop_front();
+        }
+
+        let mut sum = Duration::from_secs(0);
+        for &duration in history.iter() {
+            sum += duration;
+        }
+        println!("{:?}", sum / SIZE as u32);
     })
 }

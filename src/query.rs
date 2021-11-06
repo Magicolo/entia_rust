@@ -303,8 +303,10 @@ pub mod filter {
         fn filter(segment: &Segment, world: &World) -> bool;
     }
 
+    #[derive(Copy, Clone, Debug)]
     pub struct Has<T>(PhantomData<T>);
-    pub struct Not<F: Filter>(PhantomData<F>);
+    #[derive(Copy, Clone, Debug)]
+    pub struct Not<F>(PhantomData<F>);
 
     impl<T: Send + Sync + 'static> Filter for Has<T> {
         fn filter(segment: &Segment, world: &World) -> bool {
