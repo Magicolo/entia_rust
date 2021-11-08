@@ -1,8 +1,15 @@
+use self::{segment::*, store::*};
+use crate::{
+    depend::{Depend, Dependency},
+    entity::Entity,
+    inject::{Context, Get, Inject},
+};
+use entia_core::utility::next_power_of_2;
 use std::{
     any::{type_name, TypeId},
     cell::UnsafeCell,
     cmp::min,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     mem::{needs_drop, replace, size_of, ManuallyDrop},
     ptr::{copy, drop_in_place, slice_from_raw_parts_mut},
     slice::from_raw_parts_mut,
@@ -12,20 +19,10 @@ use std::{
     },
 };
 
-use self::segment::*;
-use self::store::*;
-use crate::{
-    depend::{Depend, Dependency},
-    entity::Entity,
-    inject::{Context, Get, Inject},
-};
-use entia_core::{bits::Bits, utility::next_power_of_2};
-
 #[derive(Clone)]
 pub struct Meta {
     pub(crate) identifier: TypeId,
     pub(crate) name: &'static str,
-    pub(crate) index: usize,
     pub(crate) size: usize,
     pub(crate) allocate: fn(usize) -> *mut (),
     pub(crate) free: unsafe fn(*mut (), usize, usize),
@@ -39,46 +36,10 @@ pub struct World {
     pub(crate) segments: Vec<Segment>,
     pub(crate) metas: Vec<Arc<Meta>>,
     pub(crate) type_to_meta: HashMap<TypeId, usize>,
-    pub(crate) bits_to_segment: HashMap<Bits, usize>,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Default, Copy, Clone)]
 pub struct State;
-
-impl Meta {
-    pub(crate) fn new<T: 'static>(index: usize) -> Self {
-        Self {
-            identifier: TypeId::of::<T>(),
-            name: type_name::<T>(),
-            index,
-            size: size_of::<T>(),
-            allocate: |capacity| {
-                let mut data = ManuallyDrop::new(Vec::<T>::with_capacity(capacity));
-                data.as_mut_ptr().cast()
-            },
-            free: |pointer, count, capacity| unsafe {
-                Vec::from_raw_parts(pointer.cast::<T>(), count, capacity);
-            },
-            copy: if size_of::<T>() > 0 {
-                |source, target, count| unsafe {
-                    let source = source.0.cast::<T>().add(source.1);
-                    let target = target.0.cast::<T>().add(target.1);
-                    copy(source, target, count);
-                }
-            } else {
-                |_, _, _| {}
-            },
-            drop: if needs_drop::<T>() {
-                |pointer, index, count| unsafe {
-                    let pointer = pointer.cast::<T>().add(index);
-                    drop_in_place(slice_from_raw_parts_mut(pointer, count));
-                }
-            } else {
-                |_, _, _| {}
-            },
-        }
-    }
-}
 
 impl Inject for &World {
     type Input = ();
@@ -111,8 +72,10 @@ impl World {
             segments: Vec::new(),
             metas: Vec::new(),
             type_to_meta: HashMap::new(),
-            bits_to_segment: HashMap::new(),
         };
+
+        // Ensures that the 'Entity' meta has the lowest identifier of this world's metas and as such, 'Entity' stores will alway
+        // appear as the first store of a segment if present.
         world.get_or_add_meta::<Entity>();
         world
     }
@@ -133,6 +96,19 @@ impl World {
         self.version
     }
 
+    pub fn set_meta(&mut self, meta: Arc<Meta>) -> Option<Arc<Meta>> {
+        let identifier = meta.identifier;
+        match self.type_to_meta.get(&identifier) {
+            Some(&index) => Some(replace(&mut self.metas[index], meta)),
+            None => {
+                let index = self.metas.len();
+                self.metas.push(meta);
+                self.type_to_meta.insert(identifier, index);
+                None
+            }
+        }
+    }
+
     pub fn get_meta<T: Send + Sync + 'static>(&self) -> Option<Arc<Meta>> {
         let key = TypeId::of::<T>();
         let index = *self.type_to_meta.get(&key)?;
@@ -146,50 +122,17 @@ impl World {
         }
     }
 
-    pub fn get_metas_from_types(&self, types: &Bits) -> Vec<Arc<Meta>> {
-        types
-            .into_iter()
-            .filter_map(|index| self.metas.get(index))
-            .cloned()
-            .collect()
+    pub fn get_segment(&self, metas: &[Arc<Meta>]) -> Option<&Segment> {
+        let types: HashSet<_> = metas.iter().map(|meta| meta.identifier).collect();
+        Some(&self.segments[self.get_segment_index(&types)?])
     }
 
-    pub fn get_segment_by_types(&self, types: &Bits) -> Option<&Segment> {
-        self.bits_to_segment
-            .get(types)
-            .map(|&index| &self.segments[index])
-    }
-
-    pub fn get_segment_by_metas(&self, metas: &[Arc<Meta>]) -> Option<&Segment> {
-        let mut types = Bits::new();
-        metas.iter().for_each(|meta| types.set(meta.index, true));
-        self.get_segment_by_types(&types)
-    }
-
-    pub fn add_segment_from_types(&mut self, types: &Bits) -> &mut Segment {
-        self.add_segment(types, &self.get_metas_from_types(types))
-    }
-
-    pub fn add_segment_from_metas(&mut self, metas: &[Arc<Meta>]) -> &mut Segment {
-        let mut types = Bits::new();
-        metas.iter().for_each(|meta| types.set(meta.index, true));
-        self.add_segment_from_types(&types)
-    }
-
-    pub fn get_or_add_segment_by_types(&mut self, types: &Bits) -> &mut Segment {
-        match self
-            .get_segment_by_types(types)
-            .map(|segment| segment.index)
-        {
+    pub fn get_or_add_segment<'a>(&'a mut self, metas: &[Arc<Meta>]) -> &'a mut Segment {
+        let types: HashSet<_> = metas.iter().map(|meta| meta.identifier).collect();
+        match self.get_segment_index(&types) {
             Some(index) => &mut self.segments[index],
-            None => self.add_segment_from_types(types),
+            None => self.add_segment(types),
         }
-    }
-
-    pub fn get_or_add_segment_by_metas(&mut self, metas: &[Arc<Meta>]) -> &mut Segment {
-        let mut types = Bits::new();
-        metas.iter().for_each(|meta| types.set(meta.index, true));
-        self.get_or_add_segment_by_types(&types)
     }
 
     pub(crate) fn initialize<T: Default + Send + Sync + 'static>(
@@ -197,7 +140,7 @@ impl World {
         default: Option<T>,
     ) -> Option<(Arc<Store>, usize)> {
         let meta = self.get_or_add_meta::<T>();
-        let segment = self.get_or_add_segment_by_metas(&[meta.clone()]);
+        let segment = self.get_or_add_segment(&[meta.clone()]);
         let store = segment.store(&meta)?;
         if segment.count == 0 {
             let (index, _) = segment.reserve(1);
@@ -208,21 +151,69 @@ impl World {
     }
 
     fn add_meta<T: Send + Sync + 'static>(&mut self) -> Arc<Meta> {
+        let identifier = TypeId::of::<T>();
         let index = self.metas.len();
-        let meta = Arc::new(Meta::new::<T>(index));
+        let meta = Arc::new(Meta {
+            identifier,
+            name: type_name::<T>(),
+            size: size_of::<T>(),
+            allocate: |capacity| {
+                let mut data = ManuallyDrop::new(Vec::<T>::with_capacity(capacity));
+                data.as_mut_ptr().cast()
+            },
+            free: |pointer, count, capacity| unsafe {
+                Vec::from_raw_parts(pointer.cast::<T>(), count, capacity);
+            },
+            copy: if size_of::<T>() > 0 {
+                |source, target, count| unsafe {
+                    let source = source.0.cast::<T>().add(source.1);
+                    let target = target.0.cast::<T>().add(target.1);
+                    copy(source, target, count);
+                }
+            } else {
+                |_, _, _| {}
+            },
+            drop: if needs_drop::<T>() {
+                |pointer, index, count| unsafe {
+                    let pointer = pointer.cast::<T>().add(index);
+                    drop_in_place(slice_from_raw_parts_mut(pointer, count));
+                }
+            } else {
+                |_, _, _| {}
+            },
+        });
         self.metas.push(meta.clone());
-        self.type_to_meta.insert(meta.identifier.clone(), index);
+        self.type_to_meta.insert(identifier, index);
         self.version += 1;
         meta
     }
 
-    fn add_segment(&mut self, types: &Bits, metas: &[Arc<Meta>]) -> &mut Segment {
+    fn add_segment(&mut self, types: HashSet<TypeId>) -> &mut Segment {
         let index = self.segments.len();
-        let segment = Segment::new(index, types.clone(), metas, 0);
+        // Iterate over all metas in order to have them consistently ordered.
+        let stores = self
+            .metas
+            .iter()
+            .filter(|meta| types.contains(&meta.identifier))
+            .map(|meta| Store::new(meta.clone(), 0).into())
+            .collect();
+        let segment = Segment {
+            index,
+            count: 0,
+            types,
+            stores,
+            reserved: 0.into(),
+            capacity: 0,
+        };
         self.segments.push(segment);
-        self.bits_to_segment.insert(types.clone(), index);
         self.version += 1;
         &mut self.segments[index]
+    }
+
+    fn get_segment_index(&self, types: &HashSet<TypeId>) -> Option<usize> {
+        self.segments
+            .iter()
+            .position(|segment| &segment.types == types)
     }
 }
 
@@ -233,32 +224,12 @@ pub mod segment {
         pub(crate) index: usize,
         pub(crate) count: usize,
         pub(crate) stores: Box<[Arc<Store>]>,
-        reserved: AtomicUsize,
-        types: Bits,
-        capacity: usize,
+        pub(crate) types: HashSet<TypeId>,
+        pub(super) reserved: AtomicUsize,
+        pub(super) capacity: usize,
     }
 
     impl Segment {
-        pub(crate) fn new(index: usize, types: Bits, metas: &[Arc<Meta>], capacity: usize) -> Self {
-            let stores = metas
-                .into_iter()
-                .map(|meta| Store::new(meta.clone(), capacity).into())
-                .collect();
-            Self {
-                index,
-                count: 0,
-                reserved: 0.into(),
-                capacity,
-                types,
-                stores,
-            }
-        }
-
-        #[inline]
-        pub fn has(&self, meta: &Meta) -> bool {
-            self.types.has(meta.index)
-        }
-
         pub fn remove_at(&mut self, index: usize) -> bool {
             if index < self.count {
                 self.count -= 1;
@@ -286,14 +257,11 @@ pub mod segment {
         }
 
         pub fn store(&self, meta: &Meta) -> Option<Arc<Store>> {
-            if self.types.has(meta.index) {
-                for store in self.stores.iter() {
-                    if store.0.identifier == meta.identifier && store.0.index == meta.index {
-                        return Some(store.clone());
-                    }
-                }
-            }
-            None
+            self.stores
+                .iter()
+                .filter(|store| store.meta().identifier == meta.identifier)
+                .next()
+                .cloned()
         }
 
         pub fn reserve(&self, count: usize) -> (usize, usize) {
@@ -324,7 +292,7 @@ pub mod segment {
     impl Drop for Segment {
         fn drop(&mut self) {
             for store in self.stores.iter() {
-                unsafe { (store.0.free)(store.data(), self.count, self.capacity) };
+                unsafe { (store.meta().free)(store.data(), self.count, self.capacity) };
             }
         }
     }
@@ -333,7 +301,7 @@ pub mod segment {
 pub mod store {
     use super::*;
 
-    pub struct Store(pub(crate) Arc<Meta>, pub(crate) UnsafeCell<*mut ()>);
+    pub struct Store(Arc<Meta>, pub(crate) UnsafeCell<*mut ()>);
 
     // SAFETY: 'Sync' and 'Send' can be implemented for 'Store' because the only way to get a 'Meta' for some type is through a
     // 'World' which ensures that the type is 'Send' and 'Sync'.

@@ -311,7 +311,7 @@ pub mod filter {
     impl<T: Send + Sync + 'static> Filter for Has<T> {
         fn filter(segment: &Segment, world: &World) -> bool {
             if let Some(meta) = world.get_meta::<T>() {
-                segment.has(&meta)
+                segment.store(&meta).is_some()
             } else {
                 false
             }

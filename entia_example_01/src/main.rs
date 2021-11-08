@@ -3,6 +3,11 @@ use piston::WindowSettings;
 use piston_window::*;
 use std::{collections::VecDeque, error, time::Duration};
 
+// TODO: Fix 'World'.
+// TODO: Is it possible to extract a (serializable) template from an entity?
+// TODO: Is it possible to copy an entity's components to another entity?
+// TODO: How to serialize an entity with all its (serializable) components?
+
 #[derive(Clone, Debug)]
 enum Input {
     Left(bool),

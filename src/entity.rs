@@ -62,7 +62,7 @@ impl Default for Entity {
 impl Filter for Entity {
     fn filter(segment: &Segment, world: &World) -> bool {
         if let Some(meta) = world.get_meta::<Entity>() {
-            segment.has(&meta)
+            segment.store(&meta).is_some()
         } else {
             false
         }
