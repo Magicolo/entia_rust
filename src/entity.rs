@@ -7,6 +7,7 @@ use crate::{
         item::{At, Context, Item},
     },
     world::{segment::Segment, store::Store, World},
+    Result,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -61,8 +62,8 @@ impl Default for Entity {
 
 impl Filter for Entity {
     fn filter(segment: &Segment, world: &World) -> bool {
-        if let Some(meta) = world.get_meta::<Entity>() {
-            segment.store(&meta).is_some()
+        if let Ok(meta) = world.get_meta::<Entity>() {
+            segment.store(&meta).is_ok()
         } else {
             false
         }
@@ -72,11 +73,11 @@ impl Filter for Entity {
 impl Item for Entity {
     type State = State;
 
-    fn initialize(mut context: Context) -> Option<Self::State> {
+    fn initialize(mut context: Context) -> Result<Self::State> {
         let meta = context.world().get_meta::<Entity>()?;
         let segment = context.segment();
         let store = segment.store(&meta)?;
-        Some(State(store, segment.index))
+        Ok(State(store, segment.index))
     }
 }
 

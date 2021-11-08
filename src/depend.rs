@@ -1,6 +1,5 @@
+use crate::{error::Error, world::World};
 use entia_core::{utility::short_type_name, Bits};
-
-use crate::{system::Error, world::World};
 use std::{
     any::TypeId,
     collections::{HashMap, HashSet},
@@ -79,9 +78,7 @@ macro_rules! depend {
     };
 }
 
-entia_macro::recurse_64!(depend);
-
-use Scope::*;
+entia_macro::recurse_16!(depend);
 
 #[derive(Debug)]
 pub enum Has {
@@ -135,7 +132,7 @@ impl Default for Has {
 impl Conflict {
     pub fn detect(&mut self, scope: Scope, dependencies: &Vec<Dependency>) -> Result<(), Error> {
         let mut errors = Vec::new();
-        if scope == Outer && self.unknown {
+        if scope == Scope::Outer && self.unknown {
             errors.push(Error::UnknownConflict);
         }
 
@@ -164,6 +161,8 @@ impl Conflict {
         index: Option<usize>,
         dependency: Dependency,
     ) -> Result<(), Error> {
+        use Scope::*;
+
         match (index, dependency) {
             (_, Dependency::Unknown) => {
                 self.unknown = true;

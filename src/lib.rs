@@ -4,6 +4,7 @@ pub mod depend;
 pub mod destroy;
 pub mod entities;
 pub mod entity;
+pub mod error;
 pub mod families;
 pub mod family;
 pub mod ignore;
@@ -26,6 +27,7 @@ pub use crate::{
     defer::Defer,
     destroy::Destroy,
     entity::Entity,
+    error::Error,
     families::Families,
     family::{
         item::{child::Child, parent::Parent},
@@ -37,11 +39,13 @@ pub use crate::{
     message::receive::Receive,
     query::filter::{Filter, Has, Not},
     query::Query,
-    system::{runner::Runner, schedule::Scheduler, Error, IntoSystem, System},
+    system::{runner::Runner, schedule::Scheduler, IntoSystem, System},
     template::{Add, Spawn, Template, With},
     world::World,
 };
 pub use entia_derive::{Depend, Filter, Template};
+
+pub type Result<T = ()> = std::result::Result<T, Error>;
 
 #[cfg(test)]
 mod test {
@@ -77,7 +81,6 @@ mod test {
             .pipe(physics)
             .barrier()
             .add(|_: ()| {})
-            .add(|_: &World| {})
             .add(|_: &Time| {})
             .add(|_: (&Time,)| {})
             .add(|_: &Time, _: &Physics, _: &mut Time, _: &mut Physics| {})
@@ -109,13 +112,7 @@ mod test {
                 for _12 in &query {}
                 for (_1, _2) in &query {}
             })
-            // .add(|_: &'static Time| {})
-            // .schedule(|_: &mut World| {
-            //     let mut counter = 1.;
-            //     move |time: &Time, _: &World| {
-            //         counter += time.0 * counter;
-            //     }
-            // })
+            .add(|_: &'static Time| {})
             .add_with(
                 (Some(Time(12.0)), None, (), 8, ()),
                 |_a: &Time,

@@ -5,6 +5,7 @@ use crate::{
     inject::{self, Get, Inject},
     query::item::{self, At, Item},
     world::{store::Store, World},
+    Result,
 };
 
 pub struct Write<T>(Arc<Store>, PhantomData<T>);
@@ -14,7 +15,7 @@ impl<T: Default + Send + Sync + 'static> Inject for &mut T {
     type Input = <Write<T> as Inject>::Input;
     type State = <Write<T> as Inject>::State;
 
-    fn initialize(input: Self::Input, context: inject::Context) -> Option<Self::State> {
+    fn initialize(input: Self::Input, context: inject::Context) -> Result<Self::State> {
         <Write<T> as Inject>::initialize(input, context)
     }
 }
@@ -23,9 +24,9 @@ impl<T: Default + Send + Sync + 'static> Inject for Write<T> {
     type Input = Option<T>;
     type State = State<T>;
 
-    fn initialize(input: Self::Input, mut context: inject::Context) -> Option<Self::State> {
+    fn initialize(input: Self::Input, mut context: inject::Context) -> Result<Self::State> {
         let (store, segment) = context.world().initialize(input)?;
-        Some(State(store, segment, PhantomData))
+        Ok(State(store, segment, PhantomData))
     }
 }
 
@@ -41,7 +42,7 @@ impl<'a, T: 'static> Get<'a> for State<T> {
 impl<T: Send + Sync + 'static> Item for &mut T {
     type State = <Write<T> as Item>::State;
 
-    fn initialize(context: item::Context) -> Option<Self::State> {
+    fn initialize(context: item::Context) -> Result<Self::State> {
         <Write<T> as Item>::initialize(context)
     }
 }
@@ -49,11 +50,11 @@ impl<T: Send + Sync + 'static> Item for &mut T {
 impl<T: Send + Sync + 'static> Item for Write<T> {
     type State = State<T>;
 
-    fn initialize(mut context: item::Context) -> Option<Self::State> {
+    fn initialize(mut context: item::Context) -> Result<Self::State> {
         let meta = context.world().get_meta::<T>()?;
         let segment = context.segment();
         let store = segment.store(&meta)?;
-        Some(State(store, segment.index, PhantomData))
+        Ok(State(store, segment.index, PhantomData))
     }
 }
 

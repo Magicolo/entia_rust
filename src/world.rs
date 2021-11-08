@@ -1,9 +1,5 @@
 use self::{segment::*, store::*};
-use crate::{
-    depend::{Depend, Dependency},
-    entity::Entity,
-    inject::{Context, Get, Inject},
-};
+use crate::{entity::Entity, error::Error, Result};
 use entia_core::utility::next_power_of_2;
 use std::{
     any::{type_name, TypeId},
@@ -36,32 +32,6 @@ pub struct World {
     pub(crate) segments: Vec<Segment>,
     pub(crate) metas: Vec<Arc<Meta>>,
     pub(crate) type_to_meta: HashMap<TypeId, usize>,
-}
-
-#[derive(Debug, Default, Copy, Clone)]
-pub struct State;
-
-impl Inject for &World {
-    type Input = ();
-    type State = State;
-
-    fn initialize(_: Self::Input, _: Context) -> Option<Self::State> {
-        Some(State)
-    }
-}
-
-impl<'a> Get<'a> for State {
-    type Item = &'a World;
-
-    fn get(&'a mut self, world: &'a World) -> Self::Item {
-        world
-    }
-}
-
-unsafe impl Depend for State {
-    fn depend(&self, _: &World) -> Vec<Dependency> {
-        vec![Dependency::Unknown]
-    }
 }
 
 impl World {
@@ -109,16 +79,19 @@ impl World {
         }
     }
 
-    pub fn get_meta<T: Send + Sync + 'static>(&self) -> Option<Arc<Meta>> {
+    pub fn get_meta<T: Send + Sync + 'static>(&self) -> Result<Arc<Meta>> {
         let key = TypeId::of::<T>();
-        let index = *self.type_to_meta.get(&key)?;
-        Some(self.metas[index].clone())
+        let index = *self
+            .type_to_meta
+            .get(&key)
+            .ok_or(Error::MissingMeta(type_name::<T>()))?;
+        Ok(self.metas[index].clone())
     }
 
     pub fn get_or_add_meta<T: Send + Sync + 'static>(&mut self) -> Arc<Meta> {
         match self.get_meta::<T>() {
-            Some(meta) => meta,
-            None => self.add_meta::<T>(),
+            Ok(meta) => meta,
+            Err(_) => self.add_meta::<T>(),
         }
     }
 
@@ -138,7 +111,7 @@ impl World {
     pub(crate) fn initialize<T: Default + Send + Sync + 'static>(
         &mut self,
         default: Option<T>,
-    ) -> Option<(Arc<Store>, usize)> {
+    ) -> Result<(Arc<Store>, usize)> {
         let meta = self.get_or_add_meta::<T>();
         let segment = self.get_or_add_segment(&[meta.clone()]);
         let store = segment.store(&meta)?;
@@ -147,7 +120,7 @@ impl World {
             segment.resolve();
             unsafe { store.set(index, default.unwrap_or_default()) };
         }
-        Some((store, segment.index))
+        Ok((store, segment.index))
     }
 
     fn add_meta<T: Send + Sync + 'static>(&mut self) -> Arc<Meta> {
@@ -256,12 +229,13 @@ pub mod segment {
             self.count = 0;
         }
 
-        pub fn store(&self, meta: &Meta) -> Option<Arc<Store>> {
+        pub fn store(&self, meta: &Meta) -> Result<Arc<Store>> {
             self.stores
                 .iter()
                 .filter(|store| store.meta().identifier == meta.identifier)
                 .next()
                 .cloned()
+                .ok_or(Error::MissingStore(meta.name, self.index))
         }
 
         pub fn reserve(&self, count: usize) -> (usize, usize) {

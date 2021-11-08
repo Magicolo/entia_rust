@@ -9,6 +9,7 @@ use crate::{
     template::{ApplyContext, CountContext, DeclareContext, InitializeContext, Spawn, Template},
     world::World,
     write::{self, Write},
+    Result,
 };
 
 pub struct Create<'a, T: Template> {
@@ -224,7 +225,7 @@ impl<T: Template + 'static> Inject for Create<'_, T> {
     type Input = T::Input;
     type State = State<T>;
 
-    fn initialize(input: Self::Input, mut context: Context) -> Option<Self::State> {
+    fn initialize(input: Self::Input, mut context: Context) -> Result<Self::State> {
         let entities = <Write<Entities> as Inject>::initialize(None, context.owned())?;
         let world = context.world();
         let mut segment_metas = Vec::new();
@@ -267,13 +268,13 @@ impl<T: Template + 'static> Inject for Create<'_, T> {
                 &mut None,
                 &mut entity_indices,
             ),
-        ) {
+        )? {
             Some(entity_indices.len())
         } else {
             None
         };
 
-        Some(State {
+        Ok(State {
             inner: Inner {
                 count,
                 defer: Vec::new(),

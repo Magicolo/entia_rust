@@ -17,4 +17,4 @@ macro_rules! prepend {
     };
 }
 
-entia_macro::recurse_64!(prepend);
+entia_macro::recurse_16!(prepend);

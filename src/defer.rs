@@ -6,6 +6,7 @@ use crate::{
     inject::{Context, Get, Inject},
     local::{self, Local},
     world::World,
+    Result,
 };
 
 pub struct Defer<'a, R: Resolve> {
@@ -95,7 +96,7 @@ where
     type Input = R::State;
     type State = State<R>;
 
-    fn initialize(input: Self::Input, context: Context) -> Option<Self::State> {
+    fn initialize(input: Self::Input, context: Context) -> Result<Self::State> {
         let mut inner = <Local<Inner> as Inject>::initialize((), context)?;
         let index = {
             let inner = inner.as_mut();
@@ -104,7 +105,7 @@ where
             index
         };
 
-        Some(State {
+        Ok(State {
             inner,
             index,
             _marker: PhantomData,

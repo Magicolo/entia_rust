@@ -7,6 +7,7 @@ use crate::{
     read::{self, Read},
     world::{segment::Segment, World},
     write::{self, Write},
+    Result,
 };
 use std::{
     any::type_name,
@@ -124,10 +125,10 @@ where
     type Input = ();
     type State = State<I, F>;
 
-    fn initialize(_: Self::Input, mut context: inject::Context) -> Option<Self::State> {
+    fn initialize(_: Self::Input, mut context: inject::Context) -> Result<Self::State> {
         let inner = <Write<Inner<I, F>> as Inject>::initialize(None, context.owned())?;
         let entities = <Read<Entities> as Inject>::initialize(None, context.owned())?;
-        Some(State { inner, entities })
+        Ok(State { inner, entities })
     }
 
     fn update(state: &mut Self::State, mut context: inject::Context) {
@@ -137,7 +138,7 @@ where
         while let Some(segment) = world.segments.get(inner.segments.len()) {
             if F::filter(segment, world) {
                 let segment = segment.index;
-                if let Some(item) = I::initialize(Context::new(identifier, segment, world)) {
+                if let Ok(item) = I::initialize(Context::new(identifier, segment, world)) {
                     inner.segments.push(Some(inner.states.len()));
                     inner.states.push((item, segment));
                     continue;
@@ -197,7 +198,7 @@ pub mod item {
 
     pub trait Item {
         type State: for<'a> At<'a> + Depend;
-        fn initialize(context: Context) -> Option<Self::State>;
+        fn initialize(context: Context) -> Result<Self::State>;
         #[inline]
         fn update(_: &mut Self::State, _: Context) {}
     }
@@ -246,8 +247,8 @@ pub mod item {
     impl<I: Item> Item for Option<I> {
         type State = Option<I::State>;
 
-        fn initialize(context: Context) -> Option<Self::State> {
-            Some(I::initialize(context))
+        fn initialize(context: Context) -> Result<Self::State> {
+            Ok(I::initialize(context).ok())
         }
 
         #[inline]
@@ -272,8 +273,8 @@ pub mod item {
             impl<$($t: Item,)*> Item for ($($t,)*) {
                 type State = ($($t::State,)*);
 
-                fn initialize(mut _context: Context) -> Option<Self::State> {
-                    Some(($($t::initialize(_context.owned())?,)*))
+                fn initialize(mut _context: Context) -> Result<Self::State> {
+                    Ok(($($t::initialize(_context.owned())?,)*))
                 }
 
                 fn update(($($p,)*): &mut Self::State, mut _context: Context) {
@@ -293,7 +294,7 @@ pub mod item {
         };
     }
 
-    entia_macro::recurse_64!(item);
+    entia_macro::recurse_16!(item);
 }
 
 pub mod filter {
@@ -310,8 +311,8 @@ pub mod filter {
 
     impl<T: Send + Sync + 'static> Filter for Has<T> {
         fn filter(segment: &Segment, world: &World) -> bool {
-            if let Some(meta) = world.get_meta::<T>() {
-                segment.store(&meta).is_some()
+            if let Ok(meta) = world.get_meta::<T>() {
+                segment.store(&meta).is_ok()
             } else {
                 false
             }
@@ -334,5 +335,5 @@ pub mod filter {
         };
     }
 
-    entia_macro::recurse_64!(filter);
+    entia_macro::recurse_16!(filter);
 }

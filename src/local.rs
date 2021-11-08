@@ -1,14 +1,14 @@
-use std::{
-    any::{Any, TypeId},
-    collections::HashMap,
-    marker::PhantomData,
-};
-
 use crate::{
     depend::Depend,
     inject::{Context, Get, Inject},
     world::World,
     write::{self, Write},
+    Result,
+};
+use std::{
+    any::{Any, TypeId},
+    collections::HashMap,
+    marker::PhantomData,
 };
 
 pub struct Local<'a, T>(&'a mut T);
@@ -24,7 +24,7 @@ impl<T: Default + Send + Sync + 'static> Inject for Local<'_, T> {
     type Input = ();
     type State = State<T>;
 
-    fn initialize(_: Self::Input, mut context: Context) -> Option<Self::State> {
+    fn initialize(_: Self::Input, mut context: Context) -> Result<Self::State> {
         let mut inner = <Write<Inner> as Inject>::initialize(None, context.owned())?;
         let index = {
             let key = (context.identifier(), TypeId::of::<T>());
@@ -38,7 +38,7 @@ impl<T: Default + Send + Sync + 'static> Inject for Local<'_, T> {
                 }
             }
         };
-        Some(State(index, inner, PhantomData))
+        Ok(State(index, inner, PhantomData))
     }
 }
 

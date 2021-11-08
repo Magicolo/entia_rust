@@ -5,6 +5,7 @@ use crate::{
     inject::{self, Get, Inject},
     query::item::{self, At, Item},
     world::World,
+    Result,
 };
 
 pub struct Ignore<I, S: Scope = All>(I, PhantomData<S>);
@@ -48,8 +49,8 @@ impl<I: Inject, S: Scope> Inject for Ignore<I, S> {
     type Input = I::Input;
     type State = State<I::State, S>;
 
-    fn initialize(input: Self::Input, context: inject::Context) -> Option<Self::State> {
-        Some(State(I::initialize(input, context)?, PhantomData))
+    fn initialize(input: Self::Input, context: inject::Context) -> Result<Self::State> {
+        Ok(State(I::initialize(input, context)?, PhantomData))
     }
 }
 
@@ -64,8 +65,8 @@ impl<'a, T: Get<'a>, S: Scope> Get<'a> for State<T, S> {
 impl<I: Item, S: Scope> Item for Ignore<I, S> {
     type State = State<I::State, S>;
 
-    fn initialize(context: item::Context) -> Option<Self::State> {
-        Some(State(I::initialize(context)?, PhantomData))
+    fn initialize(context: item::Context) -> Result<Self::State> {
+        Ok(State(I::initialize(context)?, PhantomData))
     }
 }
 

@@ -1,15 +1,17 @@
-use self::runner::*;
 use crate::{
     depend::{Conflict, Depend, Dependency, Scope},
+    error::Error,
     inject::{Context, Get, Inject},
     world::World,
+    Result,
 };
 use entia_core::{utility::short_type_name, Call};
+use runner::*;
 use std::{
     any::type_name,
     cell::UnsafeCell,
-    error,
-    fmt::{self, Display},
+    fmt::{self},
+    result,
     sync::Arc,
 };
 
@@ -22,27 +24,12 @@ pub struct System {
     pub(crate) depend: Box<dyn Fn(&World) -> Vec<Dependency> + Send>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Error {
-    WrongWorld,
-    MissingSystem,
-    FailedToInject,
-    InnerConflict(String, Box<Error>),
-    OuterConflict(String, Box<Error>),
-    UnknownConflict,
-    ReadWriteConflict(String, Option<usize>),
-    WriteWriteConflict(String, Option<usize>),
-    ReadDeferConflict(String, Option<usize>),
-    WriteDeferConflict(String, Option<usize>),
-    All(Vec<Error>),
-}
-
 pub trait IntoSystem<I, M = ()> {
-    fn into_system(self, input: I, world: &mut World) -> Result<System, Error>;
+    fn into_system(self, input: I, world: &mut World) -> Result<System>;
 }
 
 impl<S: Into<System>> IntoSystem<()> for S {
-    fn into_system(self, _: (), _: &mut World) -> Result<System, Error> {
+    fn into_system(self, _: (), _: &mut World) -> Result<System> {
         Ok(self.into())
     }
 }
@@ -51,13 +38,13 @@ impl<I, S> IntoSystem<(), (I, S)> for (I, S)
 where
     (I, S): Into<System>,
 {
-    fn into_system(self, _: (), _: &mut World) -> Result<System, Error> {
+    fn into_system(self, _: (), _: &mut World) -> Result<System> {
         Ok(self.into())
     }
 }
 
 impl<I, M, S: IntoSystem<I, M>> IntoSystem<I, (I, M, S)> for Option<S> {
-    fn into_system(self, input: I, world: &mut World) -> Result<System, Error> {
+    fn into_system(self, input: I, world: &mut World) -> Result<System> {
         match self {
             Some(system) => system.into_system(input, world),
             None => Err(Error::MissingSystem),
@@ -65,8 +52,8 @@ impl<I, M, S: IntoSystem<I, M>> IntoSystem<I, (I, M, S)> for Option<S> {
     }
 }
 
-impl<I, M, S: IntoSystem<I, M>, E: Into<Error>> IntoSystem<I, (I, M, S)> for Result<S, E> {
-    fn into_system(self, input: I, world: &mut World) -> Result<System, Error> {
+impl<I, M, S: IntoSystem<I, M>, E: Into<Error>> IntoSystem<I, (I, M, S)> for result::Result<S, E> {
+    fn into_system(self, input: I, world: &mut World) -> Result<System> {
         match self {
             Ok(system) => system.into_system(input, world),
             Err(error) => Err(error.into()),
@@ -79,10 +66,9 @@ impl<'a, I: Inject, O, C: Call<I, O> + Call<<I::State as Get<'a>>::Item, O> + Se
 where
     I::State: Send + 'static,
 {
-    fn into_system(self, input: I::Input, world: &mut World) -> Result<System, Error> {
+    fn into_system(self, input: I::Input, world: &mut World) -> Result<System> {
         let identifier = World::reserve();
-        let state =
-            I::initialize(input, Context::new(identifier, world)).ok_or(Error::FailedToInject)?;
+        let state = I::initialize(input, Context::new(identifier, world))?;
         let system = unsafe {
             System::new(
                 Some(identifier),
@@ -97,62 +83,6 @@ where
             )
         };
         Ok(system)
-    }
-}
-
-impl Error {
-    pub fn merge(self, error: Self) -> Self {
-        match (self, error) {
-            (Error::All(mut left), Error::All(mut right)) => {
-                left.append(&mut right);
-                Error::All(left)
-            }
-            (Error::All(mut left), right) => {
-                left.push(right);
-                Error::All(left)
-            }
-            (left, Error::All(mut right)) => {
-                right.insert(0, left);
-                Error::All(right)
-            }
-            (left, right) => Error::All(vec![left, right]),
-        }
-    }
-
-    pub fn flatten(self, recursive: bool) -> Option<Self> {
-        fn descend(error: Error, errors: &mut Vec<Error>, recursive: bool) {
-            match error {
-                Error::All(mut inner) => {
-                    if recursive {
-                        for error in inner {
-                            descend(error, errors, recursive);
-                        }
-                    } else {
-                        errors.append(&mut inner);
-                    }
-                }
-                error => errors.push(error),
-            }
-        }
-
-        let mut errors = Vec::new();
-        descend(self, &mut errors, recursive);
-
-        if errors.len() == 0 {
-            None
-        } else if errors.len() == 1 {
-            Some(errors.into_iter().next().unwrap())
-        } else {
-            Some(Error::All(errors))
-        }
-    }
-}
-
-impl error::Error for Error {}
-
-impl Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Self as fmt::Debug>::fmt(self, f)
     }
 }
 
@@ -254,7 +184,7 @@ pub mod runner {
             }
         }
 
-        pub fn update(&mut self, world: &mut World) -> Result<(), Error> {
+        pub fn update(&mut self, world: &mut World) -> Result {
             if self.identifier != world.identifier() {
                 return Err(Error::WrongWorld);
             }
@@ -268,7 +198,7 @@ pub mod runner {
             Ok(())
         }
 
-        pub fn run(&mut self, world: &mut World) -> Result<(), Error> {
+        pub fn run(&mut self, world: &mut World) -> Result {
             self.update(world)?;
 
             for block in self.blocks.iter_mut() {
@@ -306,7 +236,7 @@ pub mod runner {
         /// Batches the systems in blocks that can be executed in parallel using the dependencies produces by each system
         /// to ensure safety. The indices stored in the blocks are guaranteed to be unique and ordered within each block.
         /// Note that systems may be reordered if their dependencies allow it.
-        fn schedule(&mut self, world: &mut World) -> Result<(), Error> {
+        fn schedule(&mut self, world: &mut World) -> Result {
             self.blocks.clear();
             self.conflict.clear();
 
@@ -319,7 +249,7 @@ pub mod runner {
                 });
             }
 
-            fn next(blocks: &mut [Block], conflict: &mut Conflict) -> Result<(), Error> {
+            fn next(blocks: &mut [Block], conflict: &mut Conflict) -> Result {
                 if let Some((head, rest)) = blocks.split_first_mut() {
                     conflict.detect(Scope::Inner, &head.dependencies)?;
 
@@ -361,7 +291,7 @@ pub mod schedule {
 
     pub struct Scheduler<'a> {
         pub(crate) prefix: String,
-        pub(crate) systems: Vec<Result<System, Error>>,
+        pub(crate) systems: Vec<Result<System>>,
         pub(crate) world: &'a mut World,
     }
 
@@ -411,7 +341,7 @@ pub mod schedule {
             })
         }
 
-        pub fn schedule(self) -> Result<Runner, Error> {
+        pub fn schedule(self) -> Result<Runner> {
             let mut systems = Vec::new();
             let mut errors = Vec::new();
 

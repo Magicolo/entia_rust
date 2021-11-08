@@ -5,6 +5,7 @@ use crate::{
     inject::{Context, Get, Inject},
     world::World,
     write::{self, Write},
+    Result,
 };
 use std::collections::HashSet;
 
@@ -46,8 +47,8 @@ impl Inject for Destroy<'_> {
     type Input = ();
     type State = State;
 
-    fn initialize(_: Self::Input, context: Context) -> Option<Self::State> {
-        Some(State {
+    fn initialize(_: Self::Input, context: Context) -> Result<Self::State> {
+        Ok(State {
             defer: Vec::new(),
             set: HashSet::new(),
             entities: <Write<Entities> as Inject>::initialize(None, context)?,

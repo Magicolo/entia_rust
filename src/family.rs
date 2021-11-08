@@ -11,7 +11,7 @@ use crate::{
     },
     read::{self, Read},
     world::World,
-    write,
+    write, Result,
 };
 use std::{any::type_name, fmt, iter::from_fn, marker::PhantomData};
 
@@ -123,8 +123,8 @@ impl fmt::Debug for Family<'_> {
 impl Item for Family<'_> {
     type State = State;
 
-    fn initialize(mut context: Context) -> Option<Self::State> {
-        Some(State(
+    fn initialize(mut context: Context) -> Result<Self::State> {
+        Ok(State(
             <Read<Entity> as Item>::initialize(context.owned())?,
             <Read<Entities> as Inject>::initialize(None, context.into())?,
         ))
@@ -511,8 +511,8 @@ pub mod item {
         {
             type State = State<I, F>;
 
-            fn initialize(mut context: Context) -> Option<Self::State> {
-                Some(State {
+            fn initialize(mut context: Context) -> Result<Self::State> {
+                Ok(State {
                     entity: <Read<Entity> as Item>::initialize(context.owned())?,
                     entities: <Read<Entities> as Inject>::initialize(None, context.owned().into())?,
                     query: <Query<I, F> as Inject>::initialize((), context.into())?,
@@ -621,8 +621,8 @@ pub mod item {
         {
             type State = State<I, F>;
 
-            fn initialize(mut context: Context) -> Option<Self::State> {
-                Some(State {
+            fn initialize(mut context: Context) -> Result<Self::State> {
+                Ok(State {
                     entity: <Read<Entity> as Item>::initialize(context.owned())?,
                     entities: <Read<Entities> as Inject>::initialize(None, context.owned().into())?,
                     query: <Query<I, F> as Inject>::initialize((), context.into())?,

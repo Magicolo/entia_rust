@@ -6,6 +6,7 @@ use crate::{
     inject::{Context, Get, Inject},
     world::World,
     write::{self, Write},
+    Result,
 };
 use std::vec;
 
@@ -93,8 +94,8 @@ impl Inject for Families<'_> {
     type Input = ();
     type State = State;
 
-    fn initialize(_: Self::Input, context: Context) -> Option<Self::State> {
-        Some(State(
+    fn initialize(_: Self::Input, context: Context) -> Result<Self::State> {
+        Ok(State(
             Vec::new(),
             <Write<Entities> as Inject>::initialize(None, context)?,
         ))

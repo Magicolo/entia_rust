@@ -6,6 +6,7 @@ use crate::{
     world::World,
     write,
     write::Write,
+    Result,
 };
 
 struct Queue<T>(usize, VecDeque<T>);
@@ -56,9 +57,9 @@ pub mod emit {
         type Input = ();
         type State = State<T>;
 
-        fn initialize(_: Self::Input, context: Context) -> Option<Self::State> {
+        fn initialize(_: Self::Input, context: Context) -> Result<Self::State> {
             let inner = <Write<Inner<T>> as Inject>::initialize(None, context)?;
-            Some(State(inner, Vec::new()))
+            Ok(State(inner, Vec::new()))
         }
 
         fn resolve(State(inner, messages): &mut Self::State, _: Context) {
@@ -111,7 +112,7 @@ pub mod receive {
         type Input = usize;
         type State = State<T>;
 
-        fn initialize(input: Self::Input, context: Context) -> Option<Self::State> {
+        fn initialize(input: Self::Input, context: Context) -> Result<Self::State> {
             let mut inner = <Write<Inner<T>> as Inject>::initialize(None, context)?;
             let index = {
                 let inner = inner.as_mut();
@@ -119,7 +120,7 @@ pub mod receive {
                 inner.queues.push(Queue::new(input));
                 index
             };
-            Some(State(index, inner))
+            Ok(State(index, inner))
         }
     }
 

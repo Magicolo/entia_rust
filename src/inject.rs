@@ -1,7 +1,8 @@
 use crate::{
     depend::{Conflict, Depend, Dependency, Scope},
-    system::Error,
+    error::Error,
     world::World,
+    Result,
 };
 use entia_core::utility::short_type_name;
 use std::marker::PhantomData;
@@ -34,7 +35,7 @@ pub trait Inject {
     fn name() -> String {
         short_type_name::<Self>()
     }
-    fn initialize(input: Self::Input, context: Context) -> Option<Self::State>;
+    fn initialize(input: Self::Input, context: Context) -> Result<Self::State>;
     #[inline]
     fn update(_: &mut Self::State, _: Context) {}
     #[inline]
@@ -78,8 +79,8 @@ macro_rules! inject {
             type Input = ($($t::Input,)*);
             type State = ($($t::State,)*);
 
-            fn initialize(($($p,)*): Self::Input, mut _context: Context) -> Option<Self::State> {
-                Some(($($t::initialize($p, _context.owned())?,)*))
+            fn initialize(($($p,)*): Self::Input, mut _context: Context) -> Result<Self::State> {
+                Ok(($($t::initialize($p, _context.owned())?,)*))
             }
 
             #[inline]
@@ -105,20 +106,19 @@ macro_rules! inject {
     };
 }
 
-entia_macro::recurse_64!(inject);
+entia_macro::recurse_16!(inject);
 
 impl World {
-    pub fn injector<I: Inject>(&mut self) -> Result<Injector<I>, Error>
+    pub fn injector<I: Inject>(&mut self) -> Result<Injector<I>>
     where
         I::Input: Default,
     {
         self.injector_with(I::Input::default())
     }
 
-    pub fn injector_with<I: Inject>(&mut self, input: I::Input) -> Result<Injector<I>, Error> {
+    pub fn injector_with<I: Inject>(&mut self, input: I::Input) -> Result<Injector<I>> {
         let identifier = World::reserve();
-        let state =
-            I::initialize(input, Context::new(identifier, self)).ok_or(Error::FailedToInject)?;
+        let state = I::initialize(input, Context::new(identifier, self))?;
         Ok(Injector {
             identifier,
             name: I::name(),
@@ -142,7 +142,7 @@ impl<I: Inject> Injector<I> {
         self.version
     }
 
-    pub fn update<'a>(&mut self, world: &mut World) -> Result<(), Error> {
+    pub fn update<'a>(&mut self, world: &mut World) -> Result {
         if self.world != world.identifier() {
             Err(Error::WrongWorld)
         } else if self.version != world.version() {
@@ -158,7 +158,7 @@ impl<I: Inject> Injector<I> {
         }
     }
 
-    pub fn guard<'a>(&'a mut self, world: &'a mut World) -> Result<Guard<'a, I>, Error> {
+    pub fn guard<'a>(&'a mut self, world: &'a mut World) -> Result<Guard<'a, I>> {
         self.update(world)?;
         Ok(Guard {
             identifier: self.identifier,

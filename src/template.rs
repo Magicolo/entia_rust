@@ -1,8 +1,10 @@
 use crate::{
     entities::Entities,
     entity::Entity,
+    error::Error,
     family::template::{EntityIndices, Family, SegmentIndices},
     world::{segment::Segment, store::Store, Meta, World},
+    Result,
 };
 use std::{array::IntoIter, collections::HashMap, marker::PhantomData, sync::Arc};
 
@@ -50,15 +52,10 @@ pub trait Template {
 
     fn declare(input: Self::Input, context: DeclareContext) -> Self::Declare;
     fn initialize(state: Self::Declare, context: InitializeContext) -> Self::State;
-    fn static_count(state: &Self::State, context: CountContext) -> bool;
+    fn static_count(state: &Self::State, context: CountContext) -> Result<bool>;
     fn dynamic_count(&self, state: &Self::State, context: CountContext);
     fn apply(self, state: &Self::State, context: ApplyContext);
 }
-
-/// Implementors of this trait must guarantee that the 'static_count' function always succeeds.
-pub unsafe trait StaticTemplate: Template {}
-/// Implementors of this trait must guarantee that they will not declare any child.
-pub unsafe trait LeafTemplate: Template {}
 
 impl<'a> DeclareContext<'a> {
     pub(crate) fn new(
@@ -371,8 +368,8 @@ impl<T: Template> Template for Vec<T> {
     }
 
     #[inline]
-    fn static_count(_: &Self::State, _: CountContext) -> bool {
-        false
+    fn static_count(_: &Self::State, _: CountContext) -> Result<bool> {
+        Ok(false)
     }
 
     #[inline]
@@ -390,8 +387,40 @@ impl<T: Template> Template for Vec<T> {
     }
 }
 
-unsafe impl<T: LeafTemplate> StaticTemplate for Vec<T> {}
-unsafe impl<T: LeafTemplate> LeafTemplate for Vec<T> {}
+impl<T: Template> Template for Option<T> {
+    type Input = T::Input;
+    type Declare = T::Declare;
+    type State = T::State;
+
+    #[inline]
+    fn declare(input: Self::Input, context: DeclareContext) -> Self::Declare {
+        T::declare(input, context)
+    }
+
+    #[inline]
+    fn initialize(state: Self::Declare, context: InitializeContext) -> Self::State {
+        T::initialize(state, context)
+    }
+
+    #[inline]
+    fn static_count(_: &Self::State, _: CountContext) -> Result<bool> {
+        Ok(false)
+    }
+
+    #[inline]
+    fn dynamic_count(&self, state: &Self::State, mut context: CountContext) {
+        if let Some(value) = self {
+            value.dynamic_count(state, context.owned());
+        }
+    }
+
+    #[inline]
+    fn apply(self, state: &Self::State, mut context: ApplyContext) {
+        if let Some(value) = self {
+            value.apply(state, context.owned());
+        }
+    }
+}
 
 impl<T: Template, const N: usize> Template for [T; N] {
     type Input = T::Input;
@@ -409,8 +438,13 @@ impl<T: Template, const N: usize> Template for [T; N] {
     }
 
     #[inline]
-    fn static_count(state: &Self::State, mut context: CountContext) -> bool {
-        (0..N).all(|_| T::static_count(state, context.owned()))
+    fn static_count(state: &Self::State, mut context: CountContext) -> Result<bool> {
+        for _ in 0..N {
+            if !T::static_count(state, context.owned())? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     #[inline]
@@ -424,9 +458,6 @@ impl<T: Template, const N: usize> Template for [T; N] {
         IntoIter::new(self).for_each(|value| value.apply(state, context.owned()))
     }
 }
-
-unsafe impl<T: StaticTemplate, const N: usize> StaticTemplate for [T; N] {}
-unsafe impl<T: LeafTemplate, const N: usize> LeafTemplate for [T; N] {}
 
 #[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Add<T>(T);
@@ -461,8 +492,8 @@ impl<T: Send + Sync + 'static> Template for Add<T> {
     }
 
     #[inline]
-    fn static_count(_: &Self::State, _: CountContext) -> bool {
-        true
+    fn static_count(_: &Self::State, _: CountContext) -> Result<bool> {
+        Ok(true)
     }
 
     #[inline]
@@ -474,27 +505,24 @@ impl<T: Send + Sync + 'static> Template for Add<T> {
     }
 }
 
-unsafe impl<T: Send + Sync + 'static> StaticTemplate for Add<T> {}
-unsafe impl<T: Send + Sync + 'static> LeafTemplate for Add<T> {}
-
 #[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct With<T, F = fn(Family) -> T>(F, PhantomData<T>);
 
-impl<T: StaticTemplate, F: FnOnce(Family) -> T> With<T, F> {
+impl<T: Template, F: FnOnce(Family) -> T> With<T, F> {
     #[inline]
     pub fn new(with: F) -> Self {
         Self(with, PhantomData)
     }
 }
 
-impl<T: StaticTemplate, F: FnOnce(Family) -> T> From<F> for With<T, F> {
+impl<T: Template, F: FnOnce(Family) -> T> From<F> for With<T, F> {
     #[inline]
     fn from(with: F) -> Self {
         With::new(with)
     }
 }
 
-impl<T: StaticTemplate, F: FnOnce(Family) -> T> Template for With<T, F> {
+impl<T: Template, F: FnOnce(Family) -> T> Template for With<T, F> {
     type Input = T::Input;
     type Declare = T::Declare;
     type State = T::State;
@@ -510,13 +538,17 @@ impl<T: StaticTemplate, F: FnOnce(Family) -> T> Template for With<T, F> {
     }
 
     #[inline]
-    fn static_count(state: &Self::State, context: CountContext) -> bool {
-        T::static_count(state, context)
+    fn static_count(state: &Self::State, context: CountContext) -> Result<bool> {
+        if T::static_count(state, context)? {
+            Ok(true)
+        } else {
+            Err(Error::StaticCountMustBeTrue)
+        }
     }
 
     #[inline]
-    fn dynamic_count(&self, state: &Self::State, context: CountContext) {
-        Self::static_count(state, context);
+    fn dynamic_count(&self, _: &Self::State, _: CountContext) {
+        unreachable!("A correct usage of this template must only call 'dynamic_count' if 'static_count' returned 'Ok(false)' and the above implementation doesn't allow it.");
     }
 
     #[inline]
@@ -524,9 +556,6 @@ impl<T: StaticTemplate, F: FnOnce(Family) -> T> Template for With<T, F> {
         self.0(context.family()).apply(store, context)
     }
 }
-
-unsafe impl<T: StaticTemplate, F: FnOnce(Family) -> T> StaticTemplate for With<T, F> {}
-unsafe impl<T: StaticTemplate + LeafTemplate, F: FnOnce(Family) -> T> LeafTemplate for With<T, F> {}
 
 #[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Spawn<T>(T);
@@ -560,7 +589,7 @@ impl<T: Template> Template for Spawn<T> {
         })
     }
 
-    fn static_count((index, state): &Self::State, mut context: CountContext) -> bool {
+    fn static_count((index, state): &Self::State, mut context: CountContext) -> Result<bool> {
         context.child(*index, |context| T::static_count(state, context))
     }
 
@@ -572,8 +601,6 @@ impl<T: Template> Template for Spawn<T> {
         context.child(|context| self.0.apply(state, context))
     }
 }
-
-unsafe impl<T: StaticTemplate> StaticTemplate for Spawn<T> {}
 
 macro_rules! template {
     ($($p:ident, $t:ident),*) => {
@@ -593,8 +620,8 @@ macro_rules! template {
             }
 
             #[inline]
-            fn static_count(($($p,)*): &Self::State, mut _context: CountContext) -> bool {
-                $($t::static_count($p, _context.owned()) &&)* true
+            fn static_count(($($p,)*): &Self::State, mut _context: CountContext) -> Result<bool> {
+                Ok($($t::static_count($p, _context.owned())? &&)* true)
             }
 
             #[inline]
@@ -609,10 +636,7 @@ macro_rules! template {
                 $($t.apply($p, _context.owned());)*
             }
         }
-
-        unsafe impl<$($t: StaticTemplate,)*> StaticTemplate for ($($t,)*) {}
-        unsafe impl<$($t: LeafTemplate,)*> LeafTemplate for ($($t,)*) {}
     };
 }
 
-entia_macro::recurse_64!(template);
+entia_macro::recurse_16!(template);

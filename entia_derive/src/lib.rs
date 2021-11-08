@@ -21,6 +21,7 @@ pub fn inject(input: TokenStream) -> TokenStream {
     } = parse_macro_input!(input as DeriveInput)
     {
         let world_path = world_path(ident.span());
+        let result_path = result_path(ident.span());
         let context_path = full_path(ident.span(), vec!["entia", "inject", "Context"]);
         let inject_path = full_path(ident.span(), vec!["entia", "inject", "Inject"]);
         let depend_path = full_path(ident.span(), vec!["entia", "Depend"]);
@@ -143,8 +144,8 @@ pub fn inject(input: TokenStream) -> TokenStream {
                 type Input = #input_struct_name<#(#input_types,)*>;
                 type State = #state_struct_name<#(#state_types,)*>;
 
-                fn initialize(_input: Self::Input, mut _context: #context_path) -> Option<Self::State> {
-                    Some(#state_struct_name(#(#initialize_body,)*))
+                fn initialize(_input: Self::Input, mut _context: #context_path) -> #result_path<Self::State> {
+                    Ok(#state_struct_name(#(#initialize_body,)*))
                 }
 
                 #[inline]
@@ -258,6 +259,7 @@ pub fn template(input: TokenStream) -> TokenStream {
         ..
     } = parse_macro_input!(input as DeriveInput)
     {
+        let result_path = result_path(ident.span());
         let context_path = full_path(ident.span(), vec!["entia", "template"]);
         let template_path = full_path(ident.span(), vec!["entia", "template", "Template"]);
         let (impl_generics, type_generics, where_clauses) = generics.split_for_impl();
@@ -277,7 +279,7 @@ pub fn template(input: TokenStream) -> TokenStream {
             quote! { <#field_type as #template_path>::initialize(_state.#index, _context.owned()), }
         });
         let static_count_body = unpack_fields(&fields).map(|(index, _, field_type)| {
-            quote! { <#field_type as #template_path>::static_count(&_state.#index, _context.owned()) && }
+            quote! { <#field_type as #template_path>::static_count(&_state.#index, _context.owned())? && }
         });
         let dynamic_count_body = unpack_fields(&fields).map(|(index, member, _)| {
             quote! { self.#member.dynamic_count(&_state.#index, _context.owned()); }
@@ -304,8 +306,8 @@ pub fn template(input: TokenStream) -> TokenStream {
                 }
 
                 #[inline]
-                fn static_count(_state: &Self::State, mut _context: #context_path::CountContext) -> bool {
-                    #(#static_count_body)* true
+                fn static_count(_state: &Self::State, mut _context: #context_path::CountContext) -> #result_path<bool> {
+                    Ok(#(#static_count_body)* true)
                 }
 
                 #[inline]
@@ -329,6 +331,10 @@ pub fn template(input: TokenStream) -> TokenStream {
 
 fn world_path(span: Span) -> Path {
     full_path(span, vec!["entia", "world", "World"])
+}
+
+fn result_path(span: Span) -> Path {
+    full_path(span, vec!["entia", "Result"])
 }
 
 fn segment_path(span: Span) -> Path {

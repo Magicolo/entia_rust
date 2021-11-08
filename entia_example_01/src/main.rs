@@ -1,12 +1,35 @@
 use entia::*;
 use piston::WindowSettings;
 use piston_window::*;
-use std::{collections::VecDeque, error, time::Duration};
+use std::{collections::VecDeque, error, result::Result, time::Duration};
 
-// TODO: Fix 'World'.
-// TODO: Is it possible to extract a (serializable) template from an entity?
-// TODO: Is it possible to copy an entity's components to another entity?
-// TODO: How to serialize an entity with all its (serializable) components?
+/*
+    TODO: Add tests.
+    TODO: Fix templates 'Vec<T>; Option<T>; [T; N]'...
+        - They are broken because if the template is '[] as [Add<Position>; 0]', the segment will allocate a slot for 'Position'
+        but it will never be initialized. This may lead to UB since the 'Position' component will be junk memory.
+        - Thus, an empty vector, an empty array and a none must do something else.
+        - 'Option<T>' might initialize 2 segments; 1 with its content and 1 without.
+        - 'Vec<T>' and '[T; 0]' will use the same initialization as 'Option<T>'.
+    TODO: Is it possible to extract a (serializable) template from an entity?
+    TODO: Is it possible to copy an entity's components to another entity?
+    TODO: How to serialize an entity with all its (serializable) components?
+    TODO: Think about 'query::item::child' some more.
+        What about these (might require the 'At' trait to return an 'Option<Self::Item>')?
+        - 'Child<I, F>'
+            = get the first child that matches
+            - fails if no match is found
+        = 'Children<I, F>'
+            - gets all children that match
+            - never fails
+        = 'Ancestor<I, F, const C: isize = isize::MAX>'
+        = 'Ancestors<I, F>'
+        = 'Descendant<I, F, const C: isize = isize::MAX>'
+        = 'Descendants<I, F>'
+        = 'Root<I, F>'
+        If the 'At' trait returns an 'Option', it allows for dynamic filters as well.
+            - The 'Filter' trait would have 2 methods: 'static_filter' and 'dynamic_filter'.
+*/
 
 #[derive(Clone, Debug)]
 enum Input {

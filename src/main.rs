@@ -115,7 +115,7 @@ fn main() {
         }
     };
 
-    fn simple() -> impl StaticTemplate<Input = impl Default, State = impl Send> {
+    fn simple() -> impl Template<Input = impl Default, State = impl Send> {
         (
             Add::new(Frozen),
             Add::new(Position(Vec::new())),
@@ -123,7 +123,7 @@ fn main() {
         )
     }
 
-    fn complex() -> impl StaticTemplate<Input = impl Default, State = impl Send> {
+    fn complex() -> impl Template<Input = impl Default, State = impl Send> {
         (Spawn::new(simple()), [simple()], With::new(|_| simple()))
     }
 
