@@ -8,8 +8,6 @@ use crate::{
 };
 use std::{array::IntoIter, collections::HashMap, marker::PhantomData, sync::Arc};
 
-pub struct GetMeta(fn(&mut World) -> Arc<Meta>);
-
 pub struct DeclareContext<'a> {
     metas_index: usize,
     segment_metas: &'a mut Vec<Vec<Arc<Meta>>>,
@@ -57,6 +55,13 @@ pub trait Template {
     fn apply(self, state: &Self::State, context: ApplyContext);
 }
 
+/// Implementors of this trait must guarantee that the 'static_count' function always succeeds.
+pub unsafe trait StaticTemplate: Template {}
+/// Implementors of this trait must guarantee that they will not declare any child.
+pub unsafe trait LeafTemplate: Template {}
+/// Implementors of this trait must guarantee that they will do nothing else other than spawn a child.
+pub unsafe trait SpawnTemplate: Template {}
+
 impl<'a> DeclareContext<'a> {
     pub(crate) fn new(
         metas_index: usize,
@@ -78,8 +83,8 @@ impl<'a> DeclareContext<'a> {
         DeclareContext::new(metas_index, self.segment_metas, self.world)
     }
 
-    pub fn meta(&mut self, get: GetMeta) -> Arc<Meta> {
-        let meta = get.get(self.world);
+    pub fn meta<T: Send + Sync + 'static>(&mut self) -> Arc<Meta> {
+        let meta = self.world.get_or_add_meta::<T>();
         self.segment_metas[self.metas_index].push(meta.clone());
         meta
     }
@@ -342,17 +347,50 @@ impl<'a> ApplyContext<'a> {
     }
 }
 
-impl GetMeta {
-    pub fn new<T: Send + Sync + 'static>() -> Self {
-        Self(|world| world.get_or_add_meta::<T>())
+unsafe impl<T: SpawnTemplate> SpawnTemplate for Option<T> {}
+unsafe impl<T: SpawnTemplate + StaticTemplate> StaticTemplate for Option<T> {}
+unsafe impl<T: SpawnTemplate + LeafTemplate> LeafTemplate for Option<T> {}
+
+impl<T: SpawnTemplate> Template for Option<T> {
+    type Input = T::Input;
+    type Declare = T::Declare;
+    type State = T::State;
+
+    #[inline]
+    fn declare(input: Self::Input, context: DeclareContext) -> Self::Declare {
+        T::declare(input, context)
     }
 
-    pub fn get(&self, world: &mut World) -> Arc<Meta> {
-        (self.0)(world)
+    #[inline]
+    fn initialize(state: Self::Declare, context: InitializeContext) -> Self::State {
+        T::initialize(state, context)
+    }
+
+    #[inline]
+    fn static_count(_: &Self::State, _: CountContext) -> Result<bool> {
+        Ok(false)
+    }
+
+    #[inline]
+    fn dynamic_count(&self, state: &Self::State, context: CountContext) {
+        if let Some(value) = self {
+            value.dynamic_count(state, context);
+        }
+    }
+
+    #[inline]
+    fn apply(self, state: &Self::State, context: ApplyContext) {
+        if let Some(value) = self {
+            value.apply(state, context);
+        }
     }
 }
 
-impl<T: Template> Template for Vec<T> {
+unsafe impl<T: SpawnTemplate> SpawnTemplate for Vec<T> {}
+unsafe impl<T: SpawnTemplate + StaticTemplate> StaticTemplate for Vec<T> {}
+unsafe impl<T: SpawnTemplate + LeafTemplate> LeafTemplate for Vec<T> {}
+
+impl<T: SpawnTemplate> Template for Vec<T> {
     type Input = T::Input;
     type Declare = T::Declare;
     type State = T::State;
@@ -387,42 +425,11 @@ impl<T: Template> Template for Vec<T> {
     }
 }
 
-impl<T: Template> Template for Option<T> {
-    type Input = T::Input;
-    type Declare = T::Declare;
-    type State = T::State;
+unsafe impl<T: SpawnTemplate, const N: usize> SpawnTemplate for [T; N] {}
+unsafe impl<T: SpawnTemplate + StaticTemplate, const N: usize> StaticTemplate for [T; N] {}
+unsafe impl<T: SpawnTemplate + LeafTemplate, const N: usize> LeafTemplate for [T; N] {}
 
-    #[inline]
-    fn declare(input: Self::Input, context: DeclareContext) -> Self::Declare {
-        T::declare(input, context)
-    }
-
-    #[inline]
-    fn initialize(state: Self::Declare, context: InitializeContext) -> Self::State {
-        T::initialize(state, context)
-    }
-
-    #[inline]
-    fn static_count(_: &Self::State, _: CountContext) -> Result<bool> {
-        Ok(false)
-    }
-
-    #[inline]
-    fn dynamic_count(&self, state: &Self::State, mut context: CountContext) {
-        if let Some(value) = self {
-            value.dynamic_count(state, context.owned());
-        }
-    }
-
-    #[inline]
-    fn apply(self, state: &Self::State, mut context: ApplyContext) {
-        if let Some(value) = self {
-            value.apply(state, context.owned());
-        }
-    }
-}
-
-impl<T: Template, const N: usize> Template for [T; N] {
+impl<T: SpawnTemplate, const N: usize> Template for [T; N] {
     type Input = T::Input;
     type Declare = T::Declare;
     type State = T::State;
@@ -462,6 +469,9 @@ impl<T: Template, const N: usize> Template for [T; N] {
 #[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Add<T>(T);
 
+unsafe impl<T: Send + Sync + 'static> StaticTemplate for Add<T> {}
+unsafe impl<T: Send + Sync + 'static> LeafTemplate for Add<T> {}
+
 impl<T: Send + Sync + 'static> Add<T> {
     #[inline]
     pub fn new(component: T) -> Self {
@@ -483,7 +493,7 @@ impl<T: Send + Sync + 'static> Template for Add<T> {
 
     #[inline]
     fn declare(_: Self::Input, mut context: DeclareContext) -> Self::Declare {
-        context.meta(GetMeta::new::<T>())
+        context.meta::<T>()
     }
 
     #[inline]
@@ -508,6 +518,13 @@ impl<T: Send + Sync + 'static> Template for Add<T> {
 #[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct With<T, F = fn(Family) -> T>(F, PhantomData<T>);
 
+unsafe impl<T: StaticTemplate + SpawnTemplate, F: FnOnce(Family) -> T> SpawnTemplate
+    for With<T, F>
+{
+}
+unsafe impl<T: StaticTemplate, F: FnOnce(Family) -> T> StaticTemplate for With<T, F> {}
+unsafe impl<T: StaticTemplate + LeafTemplate, F: FnOnce(Family) -> T> LeafTemplate for With<T, F> {}
+
 impl<T: Template, F: FnOnce(Family) -> T> With<T, F> {
     #[inline]
     pub fn new(with: F) -> Self {
@@ -522,7 +539,7 @@ impl<T: Template, F: FnOnce(Family) -> T> From<F> for With<T, F> {
     }
 }
 
-impl<T: Template, F: FnOnce(Family) -> T> Template for With<T, F> {
+impl<T: StaticTemplate, F: FnOnce(Family) -> T> Template for With<T, F> {
     type Input = T::Input;
     type Declare = T::Declare;
     type State = T::State;
@@ -559,6 +576,9 @@ impl<T: Template, F: FnOnce(Family) -> T> Template for With<T, F> {
 
 #[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Spawn<T>(T);
+
+unsafe impl<T: Template> SpawnTemplate for Spawn<T> {}
+unsafe impl<T: StaticTemplate> StaticTemplate for Spawn<T> {}
 
 impl<T: Template> Spawn<T> {
     #[inline]
@@ -604,6 +624,10 @@ impl<T: Template> Template for Spawn<T> {
 
 macro_rules! template {
     ($($p:ident, $t:ident),*) => {
+        unsafe impl<$($t: SpawnTemplate,)*> SpawnTemplate for ($($t,)*) {}
+        unsafe impl<$($t: StaticTemplate,)*> StaticTemplate for ($($t,)*) {}
+        unsafe impl<$($t: LeafTemplate,)*> LeafTemplate for ($($t,)*) {}
+
         impl<$($t: Template,)*> Template for ($($t,)*) {
             type Input = ($($t::Input,)*);
             type Declare = ($($t::Declare,)*);

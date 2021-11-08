@@ -37,7 +37,6 @@ impl Datum {
         next_sibling: u32::MAX,
     };
 
-    #[inline]
     pub fn initialize(
         &mut self,
         generation: u32,
@@ -66,18 +65,16 @@ impl Datum {
         }
     }
 
-    #[inline]
-    pub fn update(&mut self, store_index: u32, segment_index: u32) -> bool {
-        if self.initialized() {
-            self.store_index = store_index;
-            self.segment_index = segment_index;
+    pub fn update(&mut self, datum: &Self) -> bool {
+        if self.initialized() && datum.initialized() {
+            self.store_index = datum.store_index;
+            self.segment_index = datum.segment_index;
             true
         } else {
             false
         }
     }
 
-    #[inline]
     pub fn release(&mut self) -> bool {
         if self.initialized() {
             self.store_index = u32::MAX;
@@ -160,8 +157,8 @@ impl Entities {
     pub(crate) fn resolve(&mut self) {
         self.data.0.resize(*self.data.1.get_mut(), Datum::DEFAULT);
         let free = self.free.1.get_mut();
-        let count = max(*free, 0);
-        self.free.0.truncate(count as usize);
+        let count = max(*free, 0) as usize;
+        self.free.0.truncate(count);
         *free = self.free.0.len() as isize;
     }
 

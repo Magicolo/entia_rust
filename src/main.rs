@@ -115,7 +115,7 @@ fn main() {
         }
     };
 
-    fn simple() -> impl Template<Input = impl Default, State = impl Send> {
+    fn simple() -> impl StaticTemplate<Input = impl Default, State = impl Send> {
         (
             Add::new(Frozen),
             Add::new(Position(Vec::new())),
@@ -124,7 +124,7 @@ fn main() {
     }
 
     fn complex() -> impl Template<Input = impl Default, State = impl Send> {
-        (Spawn::new(simple()), [simple()], With::new(|_| simple()))
+        (Spawn::new(simple()), simple(), With::new(|_| simple()))
     }
 
     fn dynamic(count: usize) -> impl Template<Input = impl Default, State = impl Send> {
@@ -174,8 +174,10 @@ fn main() {
                 vec![With::new(|family| {
                     Spawn::new(Add::new(Target(family.entity())))
                 })],
-                Spawn::new(vec![With::new(|family| Add::new(Target(family.entity())))]),
-                Spawn::new(With::new(|family| vec![Add::new(Target(family.entity()))])),
+                With::new(|family| vec![Spawn::new(Add::new(Target(family.entity())))]),
+                [Spawn::new(With::new(|family| {
+                    Add::new(Target(family.entity()))
+                }))],
             ));
         })
         .add(|query: Query<(Entity, Child<Entity>, Parent<Entity>)>| {

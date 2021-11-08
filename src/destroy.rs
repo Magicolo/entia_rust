@@ -118,7 +118,7 @@ impl Inject for Destroy<'_> {
                     entities
                         .get_datum_at_mut(moved.index())
                         .unwrap()
-                        .update(datum.store_index, datum.segment_index);
+                        .update(&datum);
                 }
             }
 

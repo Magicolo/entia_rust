@@ -5,6 +5,8 @@ use std::{collections::VecDeque, error, result::Result, time::Duration};
 
 /*
     TODO: Add tests.
+    TODO: Fix conflict between 'Create' and 'Families' where a read to 'Families::roots' could have a non-deterministic behavior
+    if 'Create' creates entities concurrently.
     TODO: Fix templates 'Vec<T>; Option<T>; [T; N]'...
         - They are broken because if the template is '[] as [Add<Position>; 0]', the segment will allocate a slot for 'Position'
         but it will never be initialized. This may lead to UB since the 'Position' component will be junk memory.

@@ -233,6 +233,7 @@ impl<T: Template + 'static> Inject for Create<'_, T> {
         let mut segment_to_index = HashMap::new();
         let mut metas_to_segment = HashMap::new();
         let mut segment_indices = Vec::with_capacity(segment_metas.len());
+
         for (i, metas) in segment_metas.into_iter().enumerate() {
             let segment = world.get_or_add_segment(&metas).index;
             let index = match segment_to_index.get(&segment) {
@@ -370,9 +371,10 @@ impl<'a, T: Template + 'a> Get<'a> for State<T> {
 
 unsafe impl<T: Template> Depend for State<T> {
     fn depend(&self, _: &World) -> Vec<Dependency> {
-        vec![
-            Dependency::defer::<Entity>(),
-            Dependency::defer::<Entities>(),
-        ]
+        let mut dependencies = vec![Dependency::defer::<Entities>()];
+        for indices in self.inner.segment_indices.iter() {
+            dependencies.push(Dependency::defer::<Entity>().at(indices.segment));
+        }
+        dependencies
     }
 }
