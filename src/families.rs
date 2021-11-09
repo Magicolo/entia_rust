@@ -31,13 +31,15 @@ impl<'a> Families<'a> {
         Family::new(entity, self.1)
     }
 
-    #[inline]
-    pub fn roots(&self) -> impl DoubleEndedIterator<Item = Family<'a>> {
-        let entities = self.1;
-        entities
-            .roots()
-            .map(move |entity| Family::new(entity, entities))
-    }
+    // FIXME: This read over all 'Datum' allows to observe entities that are not fully initialized from 'Create' in a
+    // non-deterministic way and possibly data-racy way.
+    // #[inline]
+    // pub fn roots(&self) -> impl DoubleEndedIterator<Item = Family<'a>> {
+    //     let entities = self.1;
+    //     entities
+    //         .roots()
+    //         .map(move |entity| Family::new(entity, entities))
+    // }
 
     #[inline]
     pub fn adopt_at(&mut self, parent: Entity, child: Entity, index: usize) {

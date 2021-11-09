@@ -3,9 +3,10 @@ use quote::__private::Span;
 use quote::quote;
 use syn::punctuated::Punctuated;
 use syn::{
-    self, AngleBracketedGenericArguments, Binding, DeriveInput, Fields, GenericArgument,
-    GenericParam, Ident, Index, Lifetime, LifetimeDef, Member, Path, PathArguments, PathSegment,
-    TraitBound, TraitBoundModifier, Type, TypeParam, TypeParamBound,
+    self, AngleBracketedGenericArguments, Binding, BoundLifetimes, DeriveInput, Fields,
+    GenericArgument, GenericParam, Ident, Index, Lifetime, LifetimeDef, Member, Path,
+    PathArguments, PathSegment, PredicateType, TraitBound, TraitBoundModifier, Type, TypeParam,
+    TypeParamBound, TypePath, TypeTuple, WhereClause, WherePredicate,
 };
 use syn::{parse_macro_input, Data, DataStruct};
 
@@ -76,7 +77,7 @@ pub fn inject(input: TokenStream) -> TokenStream {
         });
 
         let mut get_generics = generics.clone();
-        let get_lifetime = Lifetime::new("'__lt__", ident.span());
+        let get_lifetime = Lifetime::new("'__get__", ident.span());
         get_generics
             .params
             .push(GenericParam::Lifetime(LifetimeDef {
@@ -262,6 +263,35 @@ pub fn template(input: TokenStream) -> TokenStream {
         let result_path = result_path(ident.span());
         let context_path = full_path(ident.span(), vec!["entia", "template"]);
         let template_path = full_path(ident.span(), vec!["entia", "template", "Template"]);
+        let spawn_template_path =
+            full_path(ident.span(), vec!["entia", "template", "SpawnTemplate"]);
+        let leaf_template_path = full_path(ident.span(), vec!["entia", "template", "LeafTemplate"]);
+        let static_template_path =
+            full_path(ident.span(), vec!["entia", "template", "StaticTemplate"]);
+        let indirect_lifetime = Lifetime::new("'__indirect__", ident.span());
+        let indirect_path = |marker| {
+            let mut arguments = Punctuated::new();
+            arguments.push(GenericArgument::Lifetime(indirect_lifetime.clone()));
+            arguments.push(GenericArgument::Type(Type::Path(TypePath {
+                path: full_path(ident.span(), vec!["entia", "template", marker]),
+                qself: Default::default(),
+            })));
+            let mut path = full_path(ident.span(), vec!["entia", "core"]);
+            path.segments.push(PathSegment {
+                ident: Ident::new("Indirect", ident.span()),
+                arguments: PathArguments::AngleBracketed(AngleBracketedGenericArguments {
+                    args: arguments,
+                    colon2_token: Default::default(),
+                    gt_token: Default::default(),
+                    lt_token: Default::default(),
+                }),
+            });
+            path
+        };
+        let spawn_indirect_path = indirect_path("SpawnMarker");
+        let static_indirect_path = indirect_path("StaticMarker");
+        let leaf_indirect_path = indirect_path("LeafMarker");
+
         let (impl_generics, type_generics, where_clauses) = generics.split_for_impl();
         let input_type = unpack_fields(&fields).map(|(_, _, field_type)| {
             quote! { <#field_type as #template_path>::Input, }
@@ -287,6 +317,47 @@ pub fn template(input: TokenStream) -> TokenStream {
         let apply_body = unpack_fields(&fields).map(|(index, member, _)| {
             quote! { self.#member.apply(&_state.#index, _context.owned()); }
         });
+
+        let marker_impl = |trait_path: &Path, indirect_path: &Path| {
+            let mut where_clauses = where_clauses.cloned().unwrap_or_else(|| WhereClause {
+                predicates: Default::default(),
+                where_token: Default::default(),
+            });
+            where_clauses
+                .predicates
+                .push(WherePredicate::Type(PredicateType {
+                    bounded_ty: Type::Tuple(TypeTuple {
+                        elems: unpack_fields(&fields)
+                            .map(|(_, _, field_type)| field_type)
+                            .collect(),
+                        paren_token: Default::default(),
+                    }),
+                    bounds: vec![TypeParamBound::Trait(TraitBound {
+                        path: indirect_path.clone(),
+                        lifetimes: Some(BoundLifetimes {
+                            lifetimes: vec![LifetimeDef {
+                                lifetime: indirect_lifetime.clone(),
+                                attrs: Vec::new(),
+                                bounds: Default::default(),
+                                colon_token: Default::default(),
+                            }]
+                            .into_iter()
+                            .collect(),
+                            ..Default::default()
+                        }),
+                        paren_token: Default::default(),
+                        modifier: TraitBoundModifier::None,
+                    })]
+                    .into_iter()
+                    .collect(),
+                    colon_token: Default::default(),
+                    lifetimes: Default::default(),
+                }));
+            quote! { unsafe impl #impl_generics #trait_path for #ident #type_generics #where_clauses { } }
+        };
+        let spawn_marker_impl = marker_impl(&spawn_template_path, &spawn_indirect_path);
+        let leaf_marker_impl = marker_impl(&leaf_template_path, &leaf_indirect_path);
+        let static_marker_impl = marker_impl(&static_template_path, &static_indirect_path);
 
         let code = quote! {
             #[automatically_derived]
@@ -321,7 +392,9 @@ pub fn template(input: TokenStream) -> TokenStream {
                 }
             }
 
-            // TODO: Implement 'StaticTemplate' and 'LeafTemplate' similarly to tuples when/if the 'trivial_bounds' feature stabilizes.
+            #spawn_marker_impl
+            #leaf_marker_impl
+            #static_marker_impl
         };
         code.into()
     } else {

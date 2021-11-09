@@ -1,3 +1,5 @@
+use entia_core::Marker;
+
 use crate::{
     entities::Entities,
     entity::Entity,
@@ -55,12 +57,23 @@ pub trait Template {
     fn apply(self, state: &Self::State, context: ApplyContext);
 }
 
-/// Implementors of this trait must guarantee that the 'static_count' function always succeeds.
+/// SAFETY: Implementors of this trait must guarantee that the 'Template::static_count' function always succeeds.
 pub unsafe trait StaticTemplate: Template {}
-/// Implementors of this trait must guarantee that they will not declare any child.
+/// SAFETY: Implementors of this trait must guarantee that they will not declare any child.
 pub unsafe trait LeafTemplate: Template {}
-/// Implementors of this trait must guarantee that they will do nothing else other than spawn a child.
+/// SAFETY: Implementors of this trait must guarantee that they will do nothing else other than spawn a child.
+/// A wrong implementation of this trait can lead to uninitialized data.
 pub unsafe trait SpawnTemplate: Template {}
+
+/// Serves only as a hack to allow 'trivial_bounds' in the 'Template' derive macro.
+pub struct StaticMarker;
+impl<T: StaticTemplate> Marker<T> for StaticMarker {}
+/// Serves only as a hack to allow 'trivial_bounds' in the 'Template' derive macro.
+pub struct LeafMarker;
+impl<T: LeafTemplate> Marker<T> for LeafMarker {}
+/// Serves only as a hack to allow 'trivial_bounds' in the 'Template' derive macro.
+pub struct SpawnMarker;
+impl<T: SpawnTemplate> Marker<T> for SpawnMarker {}
 
 impl<'a> DeclareContext<'a> {
     pub(crate) fn new(
@@ -356,17 +369,14 @@ impl<T: SpawnTemplate> Template for Option<T> {
     type Declare = T::Declare;
     type State = T::State;
 
-    #[inline]
     fn declare(input: Self::Input, context: DeclareContext) -> Self::Declare {
         T::declare(input, context)
     }
 
-    #[inline]
     fn initialize(state: Self::Declare, context: InitializeContext) -> Self::State {
         T::initialize(state, context)
     }
 
-    #[inline]
     fn static_count(_: &Self::State, _: CountContext) -> Result<bool> {
         Ok(false)
     }
@@ -395,17 +405,14 @@ impl<T: SpawnTemplate> Template for Vec<T> {
     type Declare = T::Declare;
     type State = T::State;
 
-    #[inline]
     fn declare(input: Self::Input, context: DeclareContext) -> Self::Declare {
         T::declare(input, context)
     }
 
-    #[inline]
     fn initialize(state: Self::Declare, context: InitializeContext) -> Self::State {
         T::initialize(state, context)
     }
 
-    #[inline]
     fn static_count(_: &Self::State, _: CountContext) -> Result<bool> {
         Ok(false)
     }
@@ -434,17 +441,14 @@ impl<T: SpawnTemplate, const N: usize> Template for [T; N] {
     type Declare = T::Declare;
     type State = T::State;
 
-    #[inline]
     fn declare(input: Self::Input, context: DeclareContext) -> Self::Declare {
         T::declare(input, context)
     }
 
-    #[inline]
     fn initialize(state: Self::Declare, context: InitializeContext) -> Self::State {
         T::initialize(state, context)
     }
 
-    #[inline]
     fn static_count(state: &Self::State, mut context: CountContext) -> Result<bool> {
         for _ in 0..N {
             if !T::static_count(state, context.owned())? {
@@ -472,14 +476,14 @@ pub struct Add<T>(T);
 unsafe impl<T: Send + Sync + 'static> StaticTemplate for Add<T> {}
 unsafe impl<T: Send + Sync + 'static> LeafTemplate for Add<T> {}
 
-impl<T: Send + Sync + 'static> Add<T> {
+impl<T> Add<T> {
     #[inline]
-    pub fn new(component: T) -> Self {
+    pub const fn new(component: T) -> Self {
         Self(component)
     }
 }
 
-impl<T: Send + Sync + 'static> From<T> for Add<T> {
+impl<T> From<T> for Add<T> {
     #[inline]
     fn from(component: T) -> Self {
         Add::new(component)
@@ -491,17 +495,14 @@ impl<T: Send + Sync + 'static> Template for Add<T> {
     type Declare = Arc<Meta>;
     type State = Arc<Store>;
 
-    #[inline]
     fn declare(_: Self::Input, mut context: DeclareContext) -> Self::Declare {
         context.meta::<T>()
     }
 
-    #[inline]
     fn initialize(state: Self::Declare, context: InitializeContext) -> Self::State {
         context.segment().store(&state).unwrap()
     }
 
-    #[inline]
     fn static_count(_: &Self::State, _: CountContext) -> Result<bool> {
         Ok(true)
     }
@@ -525,14 +526,14 @@ unsafe impl<T: StaticTemplate + SpawnTemplate, F: FnOnce(Family) -> T> SpawnTemp
 unsafe impl<T: StaticTemplate, F: FnOnce(Family) -> T> StaticTemplate for With<T, F> {}
 unsafe impl<T: StaticTemplate + LeafTemplate, F: FnOnce(Family) -> T> LeafTemplate for With<T, F> {}
 
-impl<T: Template, F: FnOnce(Family) -> T> With<T, F> {
+impl<T, F: FnOnce(Family) -> T> With<T, F> {
     #[inline]
     pub fn new(with: F) -> Self {
         Self(with, PhantomData)
     }
 }
 
-impl<T: Template, F: FnOnce(Family) -> T> From<F> for With<T, F> {
+impl<T, F: FnOnce(Family) -> T> From<F> for With<T, F> {
     #[inline]
     fn from(with: F) -> Self {
         With::new(with)
@@ -544,17 +545,14 @@ impl<T: StaticTemplate, F: FnOnce(Family) -> T> Template for With<T, F> {
     type Declare = T::Declare;
     type State = T::State;
 
-    #[inline]
     fn declare(input: Self::Input, context: DeclareContext) -> Self::Declare {
         T::declare(input, context)
     }
 
-    #[inline]
     fn initialize(state: Self::Declare, context: InitializeContext) -> Self::State {
         T::initialize(state, context)
     }
 
-    #[inline]
     fn static_count(state: &Self::State, context: CountContext) -> Result<bool> {
         if T::static_count(state, context)? {
             Ok(true)
@@ -580,14 +578,14 @@ pub struct Spawn<T>(T);
 unsafe impl<T: Template> SpawnTemplate for Spawn<T> {}
 unsafe impl<T: StaticTemplate> StaticTemplate for Spawn<T> {}
 
-impl<T: Template> Spawn<T> {
+impl<T> Spawn<T> {
     #[inline]
-    pub fn new(child: T) -> Self {
+    pub const fn new(child: T) -> Self {
         Self(child)
     }
 }
 
-impl<T: Template> From<T> for Spawn<T> {
+impl<T> From<T> for Spawn<T> {
     #[inline]
     fn from(child: T) -> Self {
         Spawn::new(child)
@@ -622,6 +620,30 @@ impl<T: Template> Template for Spawn<T> {
     }
 }
 
+impl<T> Template for PhantomData<T> {
+    type Input = <() as Template>::Input;
+    type Declare = <() as Template>::Declare;
+    type State = <() as Template>::State;
+
+    fn declare(input: Self::Input, context: DeclareContext) -> Self::Declare {
+        <() as Template>::declare(input, context)
+    }
+    fn initialize(state: Self::Declare, context: InitializeContext) -> Self::State {
+        <() as Template>::initialize(state, context)
+    }
+    fn static_count(state: &Self::State, context: CountContext) -> Result<bool> {
+        <() as Template>::static_count(state, context)
+    }
+    #[inline]
+    fn dynamic_count(&self, state: &Self::State, context: CountContext) {
+        ().dynamic_count(state, context)
+    }
+    #[inline]
+    fn apply(self, state: &Self::State, context: ApplyContext) {
+        ().apply(state, context)
+    }
+}
+
 macro_rules! template {
     ($($p:ident, $t:ident),*) => {
         unsafe impl<$($t: SpawnTemplate,)*> SpawnTemplate for ($($t,)*) {}
@@ -633,17 +655,14 @@ macro_rules! template {
             type Declare = ($($t::Declare,)*);
             type State = ($($t::State,)*);
 
-            #[inline]
             fn declare(($($p,)*): Self::Input, mut _context: DeclareContext) -> Self::Declare {
                 ($($t::declare($p, _context.owned()),)*)
             }
 
-            #[inline]
             fn initialize(($($p,)*): Self::Declare, mut _context: InitializeContext) -> Self::State {
                 ($($t::initialize($p, _context.owned()),)*)
             }
 
-            #[inline]
             fn static_count(($($p,)*): &Self::State, mut _context: CountContext) -> Result<bool> {
                 Ok($($t::static_count($p, _context.owned())? &&)* true)
             }

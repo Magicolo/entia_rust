@@ -3,6 +3,7 @@ use entia_core::{utility::short_type_name, Bits};
 use std::{
     any::TypeId,
     collections::{HashMap, HashSet},
+    marker::PhantomData,
 };
 
 /// SAFETY: This trait is unsafe since a wrong implementation may lead to undefined behavior. Every
@@ -62,6 +63,12 @@ unsafe impl<D: Depend> Depend for Option<D> {
             Some(depend) => depend.depend(world),
             None => Vec::new(),
         }
+    }
+}
+
+unsafe impl<T> Depend for PhantomData<T> {
+    fn depend(&self, world: &World) -> Vec<Dependency> {
+        ().depend(world)
     }
 }
 

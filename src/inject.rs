@@ -73,6 +73,14 @@ impl<'a> Context<'a> {
     }
 }
 
+impl<T> Inject for PhantomData<T> {
+    type Input = <() as Inject>::Input;
+    type State = <() as Inject>::State;
+    fn initialize(input: Self::Input, context: Context) -> Result<Self::State> {
+        <() as Inject>::initialize(input, context)
+    }
+}
+
 macro_rules! inject {
     ($($p:ident, $t:ident),*) => {
         impl<$($t: Inject,)*> Inject for ($($t,)*) {

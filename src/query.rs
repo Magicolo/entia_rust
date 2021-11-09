@@ -268,6 +268,21 @@ pub mod item {
         }
     }
 
+    impl<T> Item for PhantomData<T> {
+        type State = <() as Item>::State;
+        fn initialize(context: Context) -> Result<Self::State> {
+            <() as Item>::initialize(context)
+        }
+    }
+
+    impl<'a, T> At<'a> for PhantomData<T> {
+        type Item = <() as At<'a>>::Item;
+        #[inline]
+        fn at(&'a self, index: usize, world: &'a World) -> Self::Item {
+            ().at(index, world)
+        }
+    }
+
     macro_rules! item {
         ($($p:ident, $t:ident),*) => {
             impl<$($t: Item,)*> Item for ($($t,)*) {
@@ -322,6 +337,12 @@ pub mod filter {
     impl<F: Filter> Filter for Not<F> {
         fn filter(segment: &Segment, world: &World) -> bool {
             !F::filter(segment, world)
+        }
+    }
+
+    impl<T> Filter for PhantomData<T> {
+        fn filter(segment: &Segment, world: &World) -> bool {
+            <() as Filter>::filter(segment, world)
         }
     }
 
