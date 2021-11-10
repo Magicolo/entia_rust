@@ -9,10 +9,16 @@ use std::{
     any::{Any, TypeId},
     collections::HashMap,
     marker::PhantomData,
+    ops::{Deref, DerefMut},
 };
 
 pub struct Local<'a, T>(&'a mut T);
-pub struct State<T>(usize, write::State<Inner>, PhantomData<T>);
+
+pub struct State<T> {
+    index: usize,
+    inner: write::State<Inner>,
+    _marker: PhantomData<T>,
+}
 
 #[derive(Default)]
 struct Inner {
@@ -21,10 +27,10 @@ struct Inner {
 }
 
 impl<T: Default + Send + Sync + 'static> Inject for Local<'_, T> {
-    type Input = ();
+    type Input = Option<T>;
     type State = State<T>;
 
-    fn initialize(_: Self::Input, mut context: Context) -> Result<Self::State> {
+    fn initialize(input: Self::Input, mut context: Context) -> Result<Self::State> {
         let mut inner = <Write<Inner> as Inject>::initialize(None, context.owned())?;
         let index = {
             let key = (context.identifier(), TypeId::of::<T>());
@@ -33,18 +39,26 @@ impl<T: Default + Send + Sync + 'static> Inject for Local<'_, T> {
                 Some(&index) => index,
                 None => {
                     let index = inner.states.len();
-                    inner.states.push(Box::new(T::default()));
+                    inner.states.push(Box::new(input.unwrap_or_default()));
                     index
                 }
             }
         };
-        Ok(State(index, inner, PhantomData))
+        Ok(State {
+            index,
+            inner,
+            _marker: PhantomData,
+        })
     }
 }
 
 impl<T> Clone for State<T> {
     fn clone(&self) -> Self {
-        Self(self.0, self.1.clone(), PhantomData)
+        Self {
+            index: self.index,
+            inner: self.inner.clone(),
+            _marker: PhantomData,
+        }
     }
 }
 
@@ -52,7 +66,11 @@ impl<'a, T: Default + 'static> Get<'a> for State<T> {
     type Item = Local<'a, T>;
 
     fn get(&'a mut self, world: &'a World) -> Self::Item {
-        Local(self.1.get(world).states[self.0].downcast_mut().unwrap())
+        Local(
+            self.inner.get(world).states[self.index]
+                .downcast_mut()
+                .unwrap(),
+        )
     }
 }
 
@@ -65,25 +83,45 @@ unsafe impl<T> Depend for State<T> {
 impl<T: 'static> AsRef<T> for State<T> {
     #[inline]
     fn as_ref(&self) -> &T {
-        self.1.as_ref().states[self.0].downcast_ref().unwrap()
+        self.inner.as_ref().states[self.index]
+            .downcast_ref()
+            .unwrap()
     }
 }
 
 impl<T: 'static> AsMut<T> for State<T> {
     #[inline]
     fn as_mut(&mut self) -> &mut T {
-        self.1.as_mut().states[self.0].downcast_mut().unwrap()
+        self.inner.as_mut().states[self.index]
+            .downcast_mut()
+            .unwrap()
     }
 }
 
-impl<'a, T> AsRef<T> for Local<'a, T> {
+impl<T> Deref for Local<'_, T> {
+    type Target = T;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        self.as_ref()
+    }
+}
+
+impl<T> DerefMut for Local<'_, T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.as_mut()
+    }
+}
+
+impl<T> AsRef<T> for Local<'_, T> {
     #[inline]
     fn as_ref(&self) -> &T {
         self.0
     }
 }
 
-impl<'a, T> AsMut<T> for Local<'a, T> {
+impl<T> AsMut<T> for Local<'_, T> {
     #[inline]
     fn as_mut(&mut self) -> &mut T {
         self.0

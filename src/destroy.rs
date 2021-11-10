@@ -1,4 +1,5 @@
 use crate::{
+    defer::{self, Resolve},
     depend::{Depend, Dependency},
     entities::Entities,
     entity::Entity,
@@ -9,12 +10,10 @@ use crate::{
 };
 use std::collections::HashSet;
 
-pub struct Destroy<'a> {
-    defer: &'a mut Vec<Defer>,
-}
+pub struct Destroy<'a>(defer::Defer<'a, Inner>);
+pub struct State(defer::State<Inner>);
 
-pub struct State {
-    defer: Vec<Defer>,
+struct Inner {
     set: HashSet<Entity>,
     entities: write::State<Entities>,
 }
@@ -27,7 +26,7 @@ enum Defer {
 impl Destroy<'_> {
     #[inline]
     pub fn one(&mut self, entity: Entity) {
-        self.defer.push(Defer::One(entity));
+        self.0.defer(Defer::One(entity));
     }
 
     #[inline]
@@ -39,7 +38,7 @@ impl Destroy<'_> {
 
     #[inline]
     pub fn family(&mut self, entity: Entity) {
-        self.defer.push(Defer::Family(entity));
+        self.0.defer(Defer::Family(entity));
     }
 }
 
@@ -47,20 +46,28 @@ impl Inject for Destroy<'_> {
     type Input = ();
     type State = State;
 
-    fn initialize(_: Self::Input, context: Context) -> Result<Self::State> {
-        Ok(State {
-            defer: Vec::new(),
+    fn initialize(_: Self::Input, mut context: Context) -> Result<Self::State> {
+        let inner = Inner {
             set: HashSet::new(),
-            entities: <Write<Entities> as Inject>::initialize(None, context)?,
-        })
+            entities: <Write<Entities> as Inject>::initialize(None, context.owned())?,
+        };
+        let defer = <defer::Defer<Inner> as Inject>::initialize(inner, context)?;
+        Ok(State(defer))
     }
 
-    fn resolve(state: &mut Self::State, mut context: Context) {
-        let entities = state.entities.as_mut();
-        let world = context.world();
-        let set = &mut state.set;
+    fn resolve(State(state): &mut Self::State, context: Context) {
+        <defer::Defer<Inner> as Inject>::resolve(state, context)
+    }
+}
 
-        for defer in state.defer.drain(..) {
+impl Resolve for Inner {
+    type Item = Defer;
+
+    fn resolve(&mut self, items: impl Iterator<Item = Self::Item>, world: &mut World) {
+        let entities = self.entities.as_mut();
+        let set = &mut self.set;
+
+        for defer in items {
             match defer {
                 Defer::One(entity) if entities.has(entity) => {
                     destroy(entity.index(), true, false, set, entities, world);
@@ -131,18 +138,16 @@ impl<'a> Get<'a> for State {
     type Item = Destroy<'a>;
 
     #[inline]
-    fn get(&'a mut self, _: &'a World) -> Self::Item {
-        Destroy {
-            defer: &mut self.defer,
-        }
+    fn get(&'a mut self, world: &'a World) -> Self::Item {
+        Destroy(self.0.get(world).0)
     }
 }
 
 unsafe impl Depend for State {
-    fn depend(&self, _: &World) -> Vec<Dependency> {
-        vec![
-            Dependency::defer::<Entities>(),
-            Dependency::defer::<Entity>(),
-        ]
+    fn depend(&self, world: &World) -> Vec<Dependency> {
+        let mut dependencies = self.0.depend(world);
+        dependencies.push(Dependency::defer::<Entities>());
+        dependencies.push(Dependency::defer::<Entity>());
+        dependencies
     }
 }

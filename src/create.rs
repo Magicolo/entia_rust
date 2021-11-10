@@ -1,6 +1,10 @@
-use std::{collections::HashMap, iter::once};
+use std::{
+    collections::HashMap,
+    iter::{empty, once},
+};
 
 use crate::{
+    defer::{self, Resolve},
     depend::{Depend, Dependency},
     entities::Entities,
     entity::Entity,
@@ -12,20 +16,21 @@ use crate::{
     Result,
 };
 
-pub struct Create<'a, T: Template> {
+pub struct Create<'a, T: Template + 'a> {
+    defer: defer::Defer<'a, Outer<T>>,
     inner: &'a mut Inner<T>,
     entities: &'a mut Entities,
     world: &'a World,
 }
+pub struct State<T: Template>(defer::State<Outer<T>>);
 
-pub struct State<T: Template> {
+struct Outer<T: Template> {
     inner: Inner<T>,
     entities: write::State<Entities>,
 }
 
 struct Inner<T: Template> {
     count: Option<usize>,
-    defer: Vec<Defer<T>>,
     segment_indices: Vec<SegmentIndices>,
     entity_indices: Vec<EntityIndices>,
     entity_instances: Vec<Entity>,
@@ -46,10 +51,8 @@ struct Defer<T: Template> {
 impl<T: Template> Create<'_, T> {
     pub fn all(&mut self, templates: impl IntoIterator<Item = T>) -> Families {
         match self.inner.count {
-            Some(count) => self
-                .inner
-                .all_static(count, templates, self.entities, self.world),
-            None => self.inner.all_dynamic(templates, self.entities, self.world),
+            Some(count) => self.all_static(count, templates),
+            None => self.all_dynamic(templates),
         }
     }
 
@@ -73,100 +76,104 @@ impl<T: Template> Create<'_, T> {
     {
         self.all((0..count).map(|_| T::default()))
     }
-}
 
-impl<T: Template> Inner<T> {
-    fn all_static(
-        &mut self,
-        count: usize,
-        templates: impl IntoIterator<Item = T>,
-        entities: &mut Entities,
-        world: &World,
-    ) -> Families {
-        self.initial_roots.clear();
+    fn all_static(&mut self, count: usize, templates: impl IntoIterator<Item = T>) -> Families {
+        let Create {
+            defer,
+            inner,
+            entities,
+            world,
+        } = self;
+
+        inner.initial_roots.clear();
         for template in templates {
-            self.initial_roots.push(Spawn::new(template));
+            inner.initial_roots.push(Spawn::new(template));
         }
 
-        if self.initial_roots.len() == 0 {
+        if inner.initial_roots.len() == 0 {
             return Families::EMPTY;
         }
 
-        self.entity_roots.truncate(self.initial_roots.len());
-        while self.entity_roots.len() < self.initial_roots.len() {
-            self.entity_roots.push((self.entity_roots.len(), 0));
+        inner.entity_roots.truncate(inner.initial_roots.len());
+        while inner.entity_roots.len() < inner.initial_roots.len() {
+            inner.entity_roots.push((inner.entity_roots.len(), 0));
         }
 
-        let (index, success) = self.reserve(count * self.initial_roots.len(), entities, world);
+        let (index, success) = inner.reserve(count * inner.initial_roots.len(), entities, world);
         if success {
             apply(
-                &self.initial_state,
-                self.initial_roots.drain(..),
-                &self.entity_roots,
-                &self.entity_instances,
-                &self.entity_indices,
+                &inner.initial_state,
+                inner.initial_roots.drain(..),
+                &inner.entity_roots,
+                &inner.entity_instances,
+                &inner.entity_indices,
                 entities,
-                &self.segment_indices,
+                &inner.segment_indices,
             );
         } else {
-            self.defer(index);
+            defer.defer(inner.defer(index));
         }
 
-        self.families()
+        inner.families()
     }
 
-    fn all_dynamic(
-        &mut self,
-        templates: impl IntoIterator<Item = T>,
-        entities: &mut Entities,
-        world: &World,
-    ) -> Families {
-        self.entity_roots.clear();
-        self.entity_indices.clear();
-        self.segment_indices
+    fn all_dynamic(&mut self, templates: impl IntoIterator<Item = T>) -> Families {
+        let Create {
+            defer,
+            inner,
+            entities,
+            world,
+        } = self;
+
+        inner.entity_roots.clear();
+        inner.entity_indices.clear();
+        inner
+            .segment_indices
             .iter_mut()
             .for_each(|indices| indices.count = 0);
 
         for template in templates {
-            self.entity_roots.push((0, self.entity_indices.len()));
+            inner.entity_roots.push((0, inner.entity_indices.len()));
             let root = Spawn::new(template);
             root.dynamic_count(
-                &self.initial_state,
+                &inner.initial_state,
                 CountContext::new(
                     0,
-                    &mut self.segment_indices,
-                    self.entity_indices.len(),
+                    &mut inner.segment_indices,
+                    inner.entity_indices.len(),
                     None,
                     &mut None,
-                    &mut self.entity_indices,
+                    &mut inner.entity_indices,
                 ),
             );
-            self.initial_roots.push(root);
+            inner.initial_roots.push(root);
         }
 
-        let count = self.entity_indices.len();
+        let count = inner.entity_indices.len();
         if count == 0 {
             return Families::EMPTY;
         }
 
-        let (index, success) = self.reserve(count, entities, world);
+        let (index, success) = inner.reserve(count, entities, world);
         if success {
             apply(
-                &self.initial_state,
-                self.initial_roots.drain(..),
-                &self.entity_roots,
-                &self.entity_instances,
-                &self.entity_indices,
+                &inner.initial_state,
+                inner.initial_roots.drain(..),
+                &inner.entity_roots,
+                &inner.entity_instances,
+                &inner.entity_indices,
                 entities,
-                &self.segment_indices,
+                &inner.segment_indices,
             );
         } else {
-            self.defer(index);
+            defer.defer(inner.defer(index));
         }
 
-        self.families()
+        inner.families()
     }
+}
 
+impl<T: Template> Inner<T> {
     fn reserve(&mut self, count: usize, entities: &Entities, world: &World) -> (usize, bool) {
         self.entity_instances.resize(count, Entity::NULL);
         let ready = entities.reserve(&mut self.entity_instances);
@@ -209,19 +216,22 @@ impl<T: Template> Inner<T> {
         )
     }
 
-    fn defer(&mut self, index: usize) {
-        self.defer.push(Defer {
+    fn defer(&mut self, index: usize) -> Defer<T> {
+        Defer {
             index,
             initial_roots: self.initial_roots.drain(..).collect(),
             entity_roots: self.entity_roots.clone(),
             entity_instances: self.entity_instances.clone(),
             entity_indices: self.entity_indices.clone(),
             segment_indices: self.segment_indices.clone(),
-        });
+        }
     }
 }
 
-impl<T: Template + 'static> Inject for Create<'_, T> {
+impl<T: Template + Send + Sync + 'static> Inject for Create<'_, T>
+where
+    T::State: Send + Sync,
+{
     type Input = T::Input;
     type State = State<T>;
 
@@ -275,10 +285,9 @@ impl<T: Template + 'static> Inject for Create<'_, T> {
             None
         };
 
-        Ok(State {
+        let state = Outer {
             inner: Inner {
                 count,
-                defer: Vec::new(),
                 initial_state: state,
                 initial_roots: Vec::new(),
                 entity_indices,
@@ -287,21 +296,32 @@ impl<T: Template + 'static> Inject for Create<'_, T> {
                 segment_indices,
             },
             entities,
-        })
+        };
+        let defer = <defer::Defer<Outer<T>> as Inject>::initialize(state, context)?;
+        Ok(State(defer))
     }
 
-    fn resolve(state: &mut Self::State, mut context: Context) {
-        let inner = &mut state.inner;
-        let world = context.world();
-        let entities = state.entities.as_mut();
+    fn resolve(State(state): &mut Self::State, mut context: Context) {
+        // Must resolve unconditionally entities and segments *even* if nothing was deferred in the case where creation
+        // was completed at run time.
+        state.as_mut().resolve(empty(), context.world());
+        <defer::Defer<Outer<T>> as Inject>::resolve(state, context.owned());
+    }
+}
+
+impl<T: Template> Resolve for Outer<T> {
+    type Item = Defer<T>;
+
+    fn resolve(&mut self, items: impl Iterator<Item = Self::Item>, world: &mut World) {
+        let inner = &mut self.inner;
+        let entities = self.entities.as_mut();
         entities.resolve();
 
-        // Must resolve unconditionally all segments *even* if nothing was deferred.
         for segment_indices in inner.segment_indices.iter() {
             world.segments[segment_indices.segment].resolve();
         }
 
-        for defer in inner.defer.drain(..) {
+        for defer in items {
             let multiplier = defer.entity_instances.len() / defer.entity_indices.len();
             for segment_indices in defer.segment_indices[defer.index..].iter() {
                 let segment_count = segment_indices.count * multiplier;
@@ -309,7 +329,7 @@ impl<T: Template + 'static> Inject for Create<'_, T> {
                     return;
                 }
 
-                let segment = &world.segments[segment_indices.segment];
+                let segment = &mut world.segments[segment_indices.segment];
                 let instances = &defer.entity_instances
                     [segment_indices.index..segment_indices.index + segment_count];
                 unsafe { segment.stores[0].set_all(segment_indices.store, instances) };
@@ -357,22 +377,26 @@ fn apply<T: Template>(
     }
 }
 
-impl<'a, T: Template + 'a> Get<'a> for State<T> {
+impl<'a, T: Template + 'static> Get<'a> for State<T> {
     type Item = Create<'a, T>;
 
     fn get(&'a mut self, world: &'a World) -> Self::Item {
+        let (defer, state) = self.0.get(world);
         Create {
-            inner: &mut self.inner,
-            entities: self.entities.get(world),
+            defer,
+            inner: &mut state.inner,
+            entities: state.entities.get(world),
             world,
         }
     }
 }
 
-unsafe impl<T: Template> Depend for State<T> {
-    fn depend(&self, _: &World) -> Vec<Dependency> {
-        let mut dependencies = vec![Dependency::defer::<Entities>()];
-        for indices in self.inner.segment_indices.iter() {
+unsafe impl<T: Template + 'static> Depend for State<T> {
+    fn depend(&self, world: &World) -> Vec<Dependency> {
+        let mut dependencies = self.0.depend(world);
+        let state = self.0.as_ref();
+        dependencies.push(Dependency::defer::<Entities>());
+        for indices in state.inner.segment_indices.iter() {
             dependencies.push(Dependency::defer::<Entity>().at(indices.segment));
         }
         dependencies

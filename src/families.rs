@@ -1,4 +1,5 @@
 use crate::{
+    defer::{self, Resolve},
     depend::{Depend, Dependency},
     entities::Entities,
     entity::Entity,
@@ -8,10 +9,12 @@ use crate::{
     write::{self, Write},
     Result,
 };
-use std::vec;
 
-pub struct Families<'a>(&'a mut Vec<Defer>, &'a Entities);
-pub struct State(Vec<Defer>, write::State<Entities>);
+pub struct Families<'a>(defer::Defer<'a, Inner>, &'a Entities);
+pub struct State(defer::State<Inner>);
+
+struct Inner(write::State<Entities>);
+
 enum Defer {
     AdoptAt(Entity, Entity, usize),
     AdoptFirst(Entity, Entity),
@@ -43,52 +46,52 @@ impl<'a> Families<'a> {
 
     #[inline]
     pub fn adopt_at(&mut self, parent: Entity, child: Entity, index: usize) {
-        self.0.push(Defer::AdoptAt(parent, child, index));
+        self.0.defer(Defer::AdoptAt(parent, child, index));
     }
 
     #[inline]
     pub fn adopt_first(&mut self, parent: Entity, child: Entity) {
-        self.0.push(Defer::AdoptFirst(parent, child));
+        self.0.defer(Defer::AdoptFirst(parent, child));
     }
 
     #[inline]
     pub fn adopt_last(&mut self, parent: Entity, child: Entity) {
-        self.0.push(Defer::AdoptLast(parent, child));
+        self.0.defer(Defer::AdoptLast(parent, child));
     }
 
     #[inline]
     pub fn adopt_before(&mut self, sibling: Entity, child: Entity) {
-        self.0.push(Defer::AdoptBefore(sibling, child));
+        self.0.defer(Defer::AdoptBefore(sibling, child));
     }
 
     #[inline]
     pub fn adopt_after(&mut self, sibling: Entity, child: Entity) {
-        self.0.push(Defer::AdoptAfter(sibling, child));
+        self.0.defer(Defer::AdoptAfter(sibling, child));
     }
 
     #[inline]
     pub fn reject_first(&mut self, parent: Entity) {
-        self.0.push(Defer::RejectFirst(parent));
+        self.0.defer(Defer::RejectFirst(parent));
     }
 
     #[inline]
     pub fn reject_last(&mut self, parent: Entity) {
-        self.0.push(Defer::RejectLast(parent));
+        self.0.defer(Defer::RejectLast(parent));
     }
 
     #[inline]
     pub fn reject_at(&mut self, parent: Entity, index: usize) {
-        self.0.push(Defer::RejectAt(parent, index));
+        self.0.defer(Defer::RejectAt(parent, index));
     }
 
     #[inline]
     pub fn reject(&mut self, child: Entity) {
-        self.0.push(Defer::Reject(child));
+        self.0.defer(Defer::Reject(child));
     }
 
     #[inline]
     pub fn reject_all(&mut self, parent: Entity) {
-        self.0.push(Defer::RejectAll(parent));
+        self.0.defer(Defer::RejectAll(parent));
     }
 }
 
@@ -96,16 +99,26 @@ impl Inject for Families<'_> {
     type Input = ();
     type State = State;
 
-    fn initialize(_: Self::Input, context: Context) -> Result<Self::State> {
-        Ok(State(
-            Vec::new(),
-            <Write<Entities> as Inject>::initialize(None, context)?,
-        ))
+    fn initialize(_: Self::Input, mut context: Context) -> Result<Self::State> {
+        let inner = Inner(<Write<Entities> as Inject>::initialize(
+            None,
+            context.owned(),
+        )?);
+        let defer = <defer::Defer<Inner> as Inject>::initialize(inner, context)?;
+        Ok(State(defer))
     }
 
-    fn resolve(state: &mut Self::State, _: Context) {
-        let entities = state.1.as_mut();
-        for defer in state.0.drain(..) {
+    fn resolve(State(state): &mut Self::State, context: Context) {
+        <defer::Defer<Inner> as Inject>::resolve(state, context)
+    }
+}
+
+impl Resolve for Inner {
+    type Item = Defer;
+
+    fn resolve(&mut self, items: impl Iterator<Item = Self::Item>, _: &mut World) {
+        let entities = self.0.as_mut();
+        for defer in items {
             match defer {
                 Defer::AdoptAt(parent, child, index) => {
                     entities.adopt_at(parent, child, index);
@@ -146,15 +159,16 @@ impl<'a> Get<'a> for State {
     type Item = Families<'a>;
 
     fn get(&'a mut self, world: &'a World) -> Self::Item {
-        Families(&mut self.0, self.1.get(world))
+        let (defer, inner) = self.0.get(world);
+        Families(defer, inner.0.get(world))
     }
 }
 
 unsafe impl Depend for State {
-    fn depend(&self, _: &World) -> Vec<Dependency> {
-        vec![
-            Dependency::defer::<Entities>(),
-            Dependency::read::<Entities>(),
-        ]
+    fn depend(&self, world: &World) -> Vec<Dependency> {
+        let mut dependencies = self.0.depend(world);
+        dependencies.push(Dependency::defer::<Entities>());
+        dependencies.push(Dependency::read::<Entities>());
+        dependencies
     }
 }

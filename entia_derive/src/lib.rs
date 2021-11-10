@@ -10,7 +10,14 @@ use syn::{
 };
 use syn::{parse_macro_input, Data, DataStruct};
 
-// TODO: Inject structs don't seem to work very well since their lifetime seem to conflict.
+/*
+TODO: Inject structs don't seem to work very well since their lifetime seem to conflict.
+    #[derive(Inject)]
+    struct Common<'a> {
+        time: &'a Time, // works
+        query: Query<'a, &'a Position> // lifetime error
+    }
+*/
 #[proc_macro_derive(Inject)]
 pub fn inject(input: TokenStream) -> TokenStream {
     if let DeriveInput {

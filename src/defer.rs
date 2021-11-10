@@ -2,7 +2,6 @@ use std::{any::Any, collections::VecDeque, marker::PhantomData};
 
 use crate::{
     depend::{Depend, Dependency},
-    entity::Entity,
     inject::{Context, Get, Inject},
     local::{self, Local},
     world::World,
@@ -10,21 +9,20 @@ use crate::{
 };
 
 pub struct Defer<'a, R: Resolve> {
-    defer: &'a mut Vec<(usize, usize)>,
-    store: &'a mut VecDeque<R>,
-    state: &'a mut R::State,
     index: usize,
+    indices: &'a mut Vec<(usize, usize)>,
+    queue: &'a mut VecDeque<R::Item>,
 }
 
-pub struct State<R: Resolve> {
+pub struct State<T> {
     inner: local::State<Inner>,
     index: usize,
-    _marker: PhantomData<R>,
+    _marker: PhantomData<T>,
 }
 
 pub trait Resolve {
-    type State;
-    fn resolve(items: impl Iterator<Item = Self>, state: &mut Self::State, world: &mut World);
+    type Item;
+    fn resolve(&mut self, items: impl Iterator<Item = Self::Item>, world: &mut World);
 }
 
 struct Resolver {
@@ -34,28 +32,14 @@ struct Resolver {
 
 #[derive(Default)]
 struct Inner {
-    defer: Vec<(usize, usize)>,
+    indices: Vec<(usize, usize)>,
     resolvers: Vec<Resolver>,
 }
 
 #[allow(type_alias_bounds)]
-type Pair<R: Resolve> = (VecDeque<R>, R::State);
+type Pair<R: Resolve> = (R, VecDeque<R::Item>);
 
 impl Resolver {
-    pub fn new<R: Resolve + Send + Sync + 'static>(state: R::State) -> Self
-    where
-        R::State: Send + Sync,
-    {
-        Resolver {
-            state: Box::new((VecDeque::<R>::new(), state)),
-            resolve: |count, state, world| {
-                if let Some((store, state)) = state.downcast_mut::<Pair<R>>() {
-                    R::resolve(store.drain(..count), state, world);
-                }
-            },
-        }
-    }
-
     #[inline]
     pub fn resolve(&mut self, count: usize, world: &mut World) {
         (self.resolve)(count, self.state.as_mut(), world);
@@ -73,35 +57,35 @@ impl Resolver {
 }
 
 impl<R: Resolve> Defer<'_, R> {
-    pub fn defer(&mut self, resolve: R) -> &R {
-        self.store.push_back(resolve);
-        let resolve = self.store.back().unwrap();
-        match self.defer.last_mut() {
+    pub fn defer(&mut self, resolve: R::Item) {
+        self.queue.push_back(resolve);
+        match self.indices.last_mut() {
             Some((index, count)) if *index == self.index => *count += 1,
-            _ => self.defer.push((self.index, 1)),
+            _ => self.indices.push((self.index, 1)),
         }
-        resolve
-    }
-
-    #[inline]
-    pub fn state(&mut self) -> &mut R::State {
-        self.state
     }
 }
 
 impl<R: Resolve + Send + Sync + 'static> Inject for Defer<'_, R>
 where
-    R::State: Send + Sync,
+    <R as Resolve>::Item: Send + Sync + 'static,
 {
-    type Input = R::State;
+    type Input = R;
     type State = State<R>;
 
     fn initialize(input: Self::Input, context: Context) -> Result<Self::State> {
-        let mut inner = <Local<Inner> as Inject>::initialize((), context)?;
+        let mut inner = <Local<Inner> as Inject>::initialize(None, context)?;
         let index = {
             let inner = inner.as_mut();
             let index = inner.resolvers.len();
-            inner.resolvers.push(Resolver::new::<R>(input));
+            inner.resolvers.push(Resolver {
+                state: Box::new((input, VecDeque::<R::Item>::new())),
+                resolve: |count, state, world| {
+                    if let Some((state, queue)) = state.downcast_mut::<Pair<R>>() {
+                        state.resolve(queue.drain(..count), world);
+                    }
+                },
+            });
             index
         };
 
@@ -113,14 +97,14 @@ where
     }
 
     fn resolve(state: &mut Self::State, mut context: Context) {
-        let inner = state.inner.as_mut();
-        for (index, count) in inner.defer.drain(..) {
-            inner.resolvers[index].resolve(count, context.world());
+        let Inner { indices, resolvers } = state.inner.as_mut();
+        for (index, count) in indices.drain(..) {
+            resolvers[index].resolve(count, context.world());
         }
     }
 }
 
-impl<R: Resolve> Clone for State<R> {
+impl<T> Clone for State<T> {
     #[inline]
     fn clone(&self) -> Self {
         Self {
@@ -132,41 +116,42 @@ impl<R: Resolve> Clone for State<R> {
 }
 
 impl<'a, R: Resolve + 'static> Get<'a> for State<R> {
-    type Item = Defer<'a, R>;
+    type Item = (Defer<'a, R>, &'a mut R);
 
     fn get(&'a mut self, _: &'a World) -> Self::Item {
         let inner = self.inner.as_mut();
-        let (store, state) = inner.resolvers[self.index].state_mut().unwrap();
-        Defer {
-            defer: &mut inner.defer,
-            store,
+        let (state, queue) = inner.resolvers[self.index].state_mut::<R>().unwrap();
+        (
+            Defer {
+                index: self.index,
+                indices: &mut inner.indices,
+                queue,
+            },
             state,
-            index: self.index,
-        }
+        )
     }
 }
 
-unsafe impl<R: Resolve> Depend for State<R> {
-    fn depend(&self, _: &World) -> Vec<Dependency> {
-        // TODO: Find a way to reduce dependencies.
-        vec![Dependency::defer::<Entity>()]
+unsafe impl<T> Depend for State<T> {
+    fn depend(&self, world: &World) -> Vec<Dependency> {
+        self.inner.depend(world)
     }
 }
 
-impl<R: Resolve + 'static> AsRef<R::State> for State<R> {
-    fn as_ref(&self) -> &R::State {
+impl<R: Resolve + 'static> AsRef<R> for State<R> {
+    fn as_ref(&self) -> &R {
         self.inner.as_ref().resolvers[self.index]
             .state_ref::<R>()
-            .map(|(_, state)| state)
+            .map(|(state, _)| state)
             .unwrap()
     }
 }
 
-impl<R: Resolve + 'static> AsMut<R::State> for State<R> {
-    fn as_mut(&mut self) -> &mut R::State {
+impl<R: Resolve + 'static> AsMut<R> for State<R> {
+    fn as_mut(&mut self) -> &mut R {
         self.inner.as_mut().resolvers[self.index]
             .state_mut::<R>()
-            .map(|(_, state)| state)
+            .map(|(state, _)| state)
             .unwrap()
     }
 }
