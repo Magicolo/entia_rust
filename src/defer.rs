@@ -118,6 +118,7 @@ impl<T> Clone for State<T> {
 impl<'a, R: Resolve + 'static> Get<'a> for State<R> {
     type Item = (Defer<'a, R>, &'a mut R);
 
+    #[inline]
     fn get(&'a mut self, _: &'a World) -> Self::Item {
         let inner = self.inner.as_mut();
         let (state, queue) = inner.resolvers[self.index].state_mut::<R>().unwrap();

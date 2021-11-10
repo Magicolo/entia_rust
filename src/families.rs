@@ -158,6 +158,7 @@ impl Resolve for Inner {
 impl<'a> Get<'a> for State {
     type Item = Families<'a>;
 
+    #[inline]
     fn get(&'a mut self, world: &'a World) -> Self::Item {
         let (defer, inner) = self.0.get(world);
         Families(defer, inner.0.get(world))

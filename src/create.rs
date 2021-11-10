@@ -380,6 +380,7 @@ fn apply<T: Template>(
 impl<'a, T: Template + 'static> Get<'a> for State<T> {
     type Item = Create<'a, T>;
 
+    #[inline]
     fn get(&'a mut self, world: &'a World) -> Self::Item {
         let (defer, state) = self.0.get(world);
         Create {

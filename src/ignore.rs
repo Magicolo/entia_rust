@@ -57,6 +57,7 @@ impl<I: Inject, S: Scope> Inject for Ignore<I, S> {
 impl<'a, T: Get<'a>, S: Scope> Get<'a> for State<T, S> {
     type Item = Ignore<T::Item, S>;
 
+    #[inline]
     fn get(&'a mut self, world: &'a World) -> Self::Item {
         Ignore(self.0.get(world), PhantomData)
     }

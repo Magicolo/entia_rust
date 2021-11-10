@@ -65,6 +65,7 @@ impl<T> Clone for State<T> {
 impl<'a, T: Default + 'static> Get<'a> for State<T> {
     type Item = Local<'a, T>;
 
+    #[inline]
     fn get(&'a mut self, world: &'a World) -> Self::Item {
         Local(
             self.inner.get(world).states[self.index]

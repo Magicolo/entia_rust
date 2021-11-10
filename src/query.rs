@@ -166,6 +166,7 @@ impl<I: Item, F: Filter> Clone for State<I, F> {
 impl<'a, I: Item + 'static, F: Filter + 'static> Get<'a> for State<I, F> {
     type Item = Query<'a, I, F>;
 
+    #[inline]
     fn get(&'a mut self, world: &'a World) -> Self::Item {
         Query {
             inner: self.inner.as_ref(),

@@ -134,6 +134,7 @@ impl Item for Family<'_> {
 impl<'a> At<'a> for State {
     type Item = Family<'a>;
 
+    #[inline]
     fn at(&'a self, index: usize, world: &'a World) -> Self::Item {
         Family(*self.0.at(index, world), self.1.as_ref())
     }
