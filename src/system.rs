@@ -24,17 +24,17 @@ pub struct System {
     pub(crate) depend: Box<dyn Fn(&World) -> Vec<Dependency> + Send>,
 }
 
-pub trait IntoSystem<I, M = ()> {
+pub trait IntoSystem<'a, I, M = ()> {
     fn into_system(self, input: I, world: &mut World) -> Result<System>;
 }
 
-impl<S: Into<System>> IntoSystem<()> for S {
+impl<S: Into<System>> IntoSystem<'_, ()> for S {
     fn into_system(self, _: (), _: &mut World) -> Result<System> {
         Ok(self.into())
     }
 }
 
-impl<I, S> IntoSystem<(), (I, S)> for (I, S)
+impl<I, S> IntoSystem<'_, (), (I, S)> for (I, S)
 where
     (I, S): Into<System>,
 {
@@ -43,7 +43,7 @@ where
     }
 }
 
-impl<I, M, S: IntoSystem<I, M>> IntoSystem<I, (I, M, S)> for Option<S> {
+impl<'a, I, M, S: IntoSystem<'a, I, M>> IntoSystem<'a, I, (I, M, S)> for Option<S> {
     fn into_system(self, input: I, world: &mut World) -> Result<System> {
         match self {
             Some(system) => system.into_system(input, world),
@@ -52,7 +52,9 @@ impl<I, M, S: IntoSystem<I, M>> IntoSystem<I, (I, M, S)> for Option<S> {
     }
 }
 
-impl<I, M, S: IntoSystem<I, M>, E: Into<Error>> IntoSystem<I, (I, M, S)> for result::Result<S, E> {
+impl<'a, I, M, S: IntoSystem<'a, I, M>, E: Into<Error>> IntoSystem<'a, I, (I, M, S)>
+    for result::Result<S, E>
+{
     fn into_system(self, input: I, world: &mut World) -> Result<System> {
         match self {
             Ok(system) => system.into_system(input, world),
@@ -62,7 +64,7 @@ impl<I, M, S: IntoSystem<I, M>, E: Into<Error>> IntoSystem<I, (I, M, S)> for res
 }
 
 impl<'a, I: Inject, O, C: Call<I, O> + Call<<I::State as Get<'a>>::Item, O> + Send + 'static>
-    IntoSystem<I::Input, (I, O, C)> for C
+    IntoSystem<'a, I::Input, (I, O, C)> for C
 where
     I::State: Send + 'static,
 {
@@ -310,11 +312,11 @@ pub mod schedule {
             self.with_prefix::<F, _>(schedule)
         }
 
-        pub fn add<I: Default, M, S: IntoSystem<I, M>>(self, system: S) -> Self {
+        pub fn add<I: Default, M, S: IntoSystem<'a, I, M>>(self, system: S) -> Self {
             self.add_with(I::default(), system)
         }
 
-        pub fn add_with<I, M, S: IntoSystem<I, M>>(self, input: I, system: S) -> Self {
+        pub fn add_with<I, M, S: IntoSystem<'a, I, M>>(self, input: I, system: S) -> Self {
             self.with_prefix::<S, _>(|mut scheduler| {
                 let system = system
                     .into_system(input, scheduler.world)

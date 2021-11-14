@@ -72,7 +72,7 @@ mod test {
                 position.0 += velocity.0;
                 position.1 += velocity.1;
                 position.2 += velocity.2;
-            });
+            })
         }
 
         let mut world = World::new();
@@ -112,7 +112,7 @@ mod test {
                 for _12 in &query {}
                 for (_1, _2) in &query {}
             })
-            .add(|_: &'static Time| {})
+            // .add(|_: &'static Time| {})
             .add_with(
                 (Some(Time(12.0)), None, (), 8, ()),
                 |_a: &Time,
@@ -181,7 +181,7 @@ mod test {
                         destroy.one(entity);
                     }
 
-                    query.each(|entity| destroy.one(entity));
+                    query.each(|entity| destroy.one(entity))
                 },
             )
             .add(|query: Query<Entity>, mut destroy: Destroy| {
