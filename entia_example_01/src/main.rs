@@ -6,23 +6,20 @@ use std::{collections::VecDeque, error, result::Result, time::Duration};
 /*
 TODO:
     - Add tests.
-    - When there are multiple interacting defer modules in one system, their resolution may produce surprising results.
-        - Use 'Defer<T>' to preserve the order of defer operations.
-        - If 'Defer<T>' is thread-safe, some defer modules may be allowed to be 'Send' ('Defer<T>' would need to be 'Send/Sync').
     - Is it possible to extract a (serializable) template from an entity?
     - Is it possible to copy an entity's components to another entity?
     - How to serialize an entity with all its (serializable) components?
     - Think about 'query::item::child' some more.
     - What about these (might require the 'At' trait to return an 'Option<Self::Item>')?
         - 'Child<I, F>'
-            = get the first child that matches
+            - get the first child that matches
             - fails if no match is found
         - 'Children<I, F>'
             - gets all children that match
             - never fails
-        - 'Ancestor<I, F, const C: isize = isize::MAX>'
+        - 'Ancestor<I, F>'
         - 'Ancestors<I, F>'
-        - 'Descendant<I, F, const C: isize = isize::MAX>'
+        - 'Descendant<I, F>'
         - 'Descendants<I, F>'
         - 'Root<I, F>'
         If the 'At' trait returns an 'Option', it allows for dynamic filters as well.
@@ -154,6 +151,14 @@ fn run() -> Result<(), Box<dyn error::Error>> {
                 )
             }));
         })
+        // .add(
+        //     |query: Query<Entity>, extract: Extract, create: Create<_>| {
+        //         for entity in &query {
+        //             let template/*: SomeClonableEntityRepresentation */ = extract.template(entity);
+        //             create.one(template);
+        //         }
+        //     },
+        // )
         .schedule()?;
 
     let mut inputs = world.injector::<Emit<Input>>()?;

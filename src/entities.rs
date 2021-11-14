@@ -14,7 +14,7 @@ pub struct Entities {
 pub struct Datum {
     // TODO: 'generation' doesn't strictly need to be stored in 'Datum'.
     // An entity could be validated against '*world.segments.get(segment_index)?.stores[0].at::<Entity>(store_index) == entity'.
-    // Maybe 'root' could take the spot of 'generation'?
+    // Maybe 'root' or 'state' flags could take the spot of 'generation'?
     pub(crate) generation: u32,
     pub(crate) store_index: u32,
     pub(crate) segment_index: u32,

@@ -34,8 +34,9 @@ impl<'a> Families<'a> {
         Family::new(entity, self.1)
     }
 
-    // FIXME: This read over all 'Datum' allows to observe entities that are not fully initialized from 'Create' in a
+    // TODO: This read over all 'Datum' allows to observe entities that are not fully initialized from 'Create' in a
     // non-deterministic way and possibly data-racy way.
+    // - Can be fixed by adding a validation step: 'datum.store < world.segments[datum.segment].count'
     // #[inline]
     // pub fn roots(&self) -> impl DoubleEndedIterator<Item = Family<'a>> {
     //     let entities = self.1;
