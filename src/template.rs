@@ -5,7 +5,7 @@ use crate::{
     entity::Entity,
     error::Error,
     family::template::{EntityIndices, Family, SegmentIndices},
-    world::{segment::Segment, store::Store, Meta, World},
+    world::{meta::Meta, segment::Segment, store::Store, World},
     Result,
 };
 use std::{array::IntoIter, collections::HashMap, marker::PhantomData, sync::Arc};

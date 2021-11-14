@@ -1,4 +1,4 @@
-use self::{segment::*, store::*};
+use self::{meta::*, segment::*, store::*};
 use crate::{entity::Entity, error::Error, Result};
 use entia_core::utility::next_power_of_2;
 use std::{
@@ -6,6 +6,8 @@ use std::{
     cell::UnsafeCell,
     cmp::min,
     collections::{HashMap, HashSet},
+    fmt,
+    marker::PhantomData,
     mem::{needs_drop, replace, size_of, ManuallyDrop},
     ptr::{copy, drop_in_place, slice_from_raw_parts_mut},
     slice::from_raw_parts_mut,
@@ -14,17 +16,6 @@ use std::{
         Arc,
     },
 };
-
-#[derive(Clone)]
-pub struct Meta {
-    pub(crate) identifier: TypeId,
-    pub(crate) name: &'static str,
-    pub(crate) size: usize,
-    pub(crate) allocate: fn(usize) -> *mut (),
-    pub(crate) free: unsafe fn(*mut (), usize, usize),
-    pub(crate) copy: unsafe fn((*const (), usize), (*mut (), usize), usize),
-    pub(crate) drop: unsafe fn(*mut (), usize, usize),
-}
 
 pub struct World {
     identifier: usize,
@@ -46,7 +37,7 @@ impl World {
 
         // Ensures that the 'Entity' meta has the lowest identifier of this world's metas and as such, 'Entity' stores will alway
         // appear as the first store of a segment if present.
-        world.get_or_add_meta::<Entity>();
+        world.set_meta(Meta::new::<Entity>(Some(Cloner::new()), Some(Formatter::new())).into());
         world
     }
 
@@ -66,17 +57,17 @@ impl World {
         self.version
     }
 
-    pub fn set_meta(&mut self, meta: Arc<Meta>) -> Option<Arc<Meta>> {
+    pub fn set_meta(&mut self, meta: Arc<Meta>) {
         let identifier = meta.identifier;
         match self.type_to_meta.get(&identifier) {
-            Some(&index) => Some(replace(&mut self.metas[index], meta)),
+            Some(&index) => self.metas[index] = meta,
             None => {
                 let index = self.metas.len();
                 self.metas.push(meta);
                 self.type_to_meta.insert(identifier, index);
-                None
             }
-        }
+        };
+        self.version += 1;
     }
 
     pub fn get_meta<T: Send + Sync + 'static>(&self) -> Result<Arc<Meta>> {
@@ -91,7 +82,11 @@ impl World {
     pub fn get_or_add_meta<T: Send + Sync + 'static>(&mut self) -> Arc<Meta> {
         match self.get_meta::<T>() {
             Ok(meta) => meta,
-            Err(_) => self.add_meta::<T>(),
+            Err(_) => {
+                let meta = Arc::new(Meta::new::<T>(None, None));
+                self.set_meta(meta.clone());
+                meta
+            }
         }
     }
 
@@ -123,44 +118,6 @@ impl World {
         Ok((store, segment.index))
     }
 
-    fn add_meta<T: Send + Sync + 'static>(&mut self) -> Arc<Meta> {
-        let identifier = TypeId::of::<T>();
-        let index = self.metas.len();
-        let meta = Arc::new(Meta {
-            identifier,
-            name: type_name::<T>(),
-            size: size_of::<T>(),
-            allocate: |capacity| {
-                let mut data = ManuallyDrop::new(Vec::<T>::with_capacity(capacity));
-                data.as_mut_ptr().cast()
-            },
-            free: |pointer, count, capacity| unsafe {
-                Vec::from_raw_parts(pointer.cast::<T>(), count, capacity);
-            },
-            copy: if size_of::<T>() > 0 {
-                |source, target, count| unsafe {
-                    let source = source.0.cast::<T>().add(source.1);
-                    let target = target.0.cast::<T>().add(target.1);
-                    copy(source, target, count);
-                }
-            } else {
-                |_, _, _| {}
-            },
-            drop: if needs_drop::<T>() {
-                |pointer, index, count| unsafe {
-                    let pointer = pointer.cast::<T>().add(index);
-                    drop_in_place(slice_from_raw_parts_mut(pointer, count));
-                }
-            } else {
-                |_, _, _| {}
-            },
-        });
-        self.metas.push(meta.clone());
-        self.type_to_meta.insert(identifier, index);
-        self.version += 1;
-        meta
-    }
-
     fn add_segment(&mut self, types: HashSet<TypeId>) -> &mut Segment {
         let index = self.segments.len();
         // Iterate over all metas in order to have them consistently ordered.
@@ -187,6 +144,126 @@ impl World {
         self.segments
             .iter()
             .position(|segment| &segment.types == types)
+    }
+}
+
+pub mod meta {
+    #[macro_export]
+    macro_rules! metas {
+        ($world:expr $(,$types:ty)*) => {{
+            struct Wrap<T: ?Sized>(::std::marker::PhantomData<T>);
+            trait MaybeCloner<T> {
+                fn cloner(self) -> ::std::option::Option<::entia::world::meta::Cloner<T>>;
+            }
+            impl<T: ::std::clone::Clone> MaybeCloner<T> for Wrap<T> {
+                fn cloner(self) -> ::std::option::Option<::entia::world::meta::Cloner<T>> { Some(::entia::world::meta::Cloner::new()) }
+            }
+            trait MaybeFormatter<T> {
+                fn formatter(self) -> ::std::option::Option<::entia::world::meta::Formatter<T>>;
+            }
+            impl<T: ::std::fmt::Debug> MaybeFormatter<T> for Wrap<T> {
+                fn formatter(self) -> ::std::option::Option<::entia::world::meta::Formatter<T>> { Some(::entia::world::meta::Formatter::new()) }
+            }
+
+            $(
+                impl MaybeCloner<$types> for &Wrap<$types>  {
+                    fn cloner(self) -> ::std::option::Option<::entia::world::meta::Cloner<$types>> { None }
+                }
+                impl MaybeFormatter<$types> for &Wrap<$types>  {
+                    fn formatter(self) -> ::std::option::Option<::entia::world::meta::Formatter<$types>> { None }
+                }
+                $world.set_meta(::entia::world::meta::Meta::new(
+                    Wrap::<$types>(::std::marker::PhantomData).cloner(),
+                    Wrap::<$types>(::std::marker::PhantomData).formatter(),
+                ).into());
+            )*
+        }};
+    }
+
+    use super::*;
+
+    #[derive(Clone)]
+    pub struct Meta {
+        pub(crate) identifier: TypeId,
+        pub(crate) name: &'static str,
+        pub(crate) size: usize,
+        pub(crate) allocate: fn(usize) -> *mut (),
+        pub(crate) free: unsafe fn(*mut (), usize, usize),
+        pub(crate) copy: unsafe fn((*const (), usize), (*mut (), usize), usize),
+        pub(crate) drop: unsafe fn(*mut (), usize, usize),
+        pub(crate) clone: Option<unsafe fn((*const (), usize), (*mut (), usize))>,
+        pub(crate) format: Option<unsafe fn(*const (), usize) -> String>,
+    }
+
+    pub struct Cloner<T: ?Sized>(
+        unsafe fn((*const (), usize), (*mut (), usize)),
+        PhantomData<T>,
+    );
+
+    pub struct Formatter<T: ?Sized>(unsafe fn(*const (), usize) -> String, PhantomData<T>);
+
+    impl Meta {
+        pub fn new<T: Send + Sync + 'static>(
+            cloner: Option<Cloner<T>>,
+            formatter: Option<Formatter<T>>,
+        ) -> Self {
+            Self {
+                identifier: TypeId::of::<T>(),
+                name: type_name::<T>(),
+                size: size_of::<T>(),
+                allocate: |capacity| {
+                    let mut data = ManuallyDrop::new(Vec::<T>::with_capacity(capacity));
+                    data.as_mut_ptr().cast()
+                },
+                free: |pointer, count, capacity| unsafe {
+                    Vec::from_raw_parts(pointer.cast::<T>(), count, capacity);
+                },
+                copy: if size_of::<T>() > 0 {
+                    |source, target, count| unsafe {
+                        let source = source.0.cast::<T>().add(source.1);
+                        let target = target.0.cast::<T>().add(target.1);
+                        copy(source, target, count);
+                    }
+                } else {
+                    |_, _, _| {}
+                },
+                drop: if needs_drop::<T>() {
+                    |pointer, index, count| unsafe {
+                        let pointer = pointer.cast::<T>().add(index);
+                        drop_in_place(slice_from_raw_parts_mut(pointer, count));
+                    }
+                } else {
+                    |_, _, _| {}
+                },
+                clone: cloner.map(|cloner| cloner.0),
+                format: formatter.map(|formatter| formatter.0),
+            }
+        }
+    }
+
+    impl<T: Clone> Cloner<T> {
+        pub fn new() -> Self {
+            Self(
+                |source, target| unsafe {
+                    let source = &*source.0.cast::<T>().add(source.1);
+                    let target = &mut *target.0.cast::<T>().add(target.1);
+                    *target = source.clone();
+                },
+                PhantomData,
+            )
+        }
+    }
+
+    impl<T: fmt::Debug> Formatter<T> {
+        pub fn new() -> Self {
+            Self(
+                |source, index| unsafe {
+                    let source = &*source.cast::<T>().add(index);
+                    format!("{:?}", source)
+                },
+                PhantomData,
+            )
+        }
     }
 }
 
