@@ -9,6 +9,7 @@ pub enum Error {
     MissingSystem,
     MissingStore(&'static str, usize),
     MissingMeta(&'static str),
+    MissingClone(&'static str),
     FailedToInject,
     InnerConflict(String, Box<Error>),
     OuterConflict(String, Box<Error>),

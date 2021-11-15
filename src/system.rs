@@ -25,11 +25,11 @@ pub struct System {
 }
 
 pub trait IntoSystem<'a, I, M = ()> {
-    fn into_system(self, input: I, world: &mut World) -> Result<System>;
+    fn system(self, input: I, world: &mut World) -> Result<System>;
 }
 
 impl<S: Into<System>> IntoSystem<'_, ()> for S {
-    fn into_system(self, _: (), _: &mut World) -> Result<System> {
+    fn system(self, _: (), _: &mut World) -> Result<System> {
         Ok(self.into())
     }
 }
@@ -38,15 +38,15 @@ impl<I, S> IntoSystem<'_, (), (I, S)> for (I, S)
 where
     (I, S): Into<System>,
 {
-    fn into_system(self, _: (), _: &mut World) -> Result<System> {
+    fn system(self, _: (), _: &mut World) -> Result<System> {
         Ok(self.into())
     }
 }
 
 impl<'a, I, M, S: IntoSystem<'a, I, M>> IntoSystem<'a, I, (I, M, S)> for Option<S> {
-    fn into_system(self, input: I, world: &mut World) -> Result<System> {
+    fn system(self, input: I, world: &mut World) -> Result<System> {
         match self {
-            Some(system) => system.into_system(input, world),
+            Some(system) => system.system(input, world),
             None => Err(Error::MissingSystem),
         }
     }
@@ -55,9 +55,9 @@ impl<'a, I, M, S: IntoSystem<'a, I, M>> IntoSystem<'a, I, (I, M, S)> for Option<
 impl<'a, I, M, S: IntoSystem<'a, I, M>, E: Into<Error>> IntoSystem<'a, I, (I, M, S)>
     for result::Result<S, E>
 {
-    fn into_system(self, input: I, world: &mut World) -> Result<System> {
+    fn system(self, input: I, world: &mut World) -> Result<System> {
         match self {
-            Ok(system) => system.into_system(input, world),
+            Ok(system) => system.system(input, world),
             Err(error) => Err(error.into()),
         }
     }
@@ -68,7 +68,7 @@ impl<'a, I: Inject, O, C: Call<I, O> + Call<<I::State as Get<'a>>::Item, O> + Se
 where
     I::State: Send + 'static,
 {
-    fn into_system(self, input: I::Input, world: &mut World) -> Result<System> {
+    fn system(self, input: I::Input, world: &mut World) -> Result<System> {
         let identifier = World::reserve();
         let state = I::initialize(input, Context::new(identifier, world))?;
         let system = unsafe {
@@ -318,12 +318,10 @@ pub mod schedule {
 
         pub fn add_with<I, M, S: IntoSystem<'a, I, M>>(self, input: I, system: S) -> Self {
             self.with_prefix::<S, _>(|mut scheduler| {
-                let system = system
-                    .into_system(input, scheduler.world)
-                    .map(|mut system| {
-                        system.name.insert_str(0, &scheduler.prefix);
-                        system
-                    });
+                let system = system.system(input, scheduler.world).map(|mut system| {
+                    system.name.insert_str(0, &scheduler.prefix);
+                    system
+                });
                 scheduler.systems.push(system);
                 scheduler
             })

@@ -198,7 +198,7 @@ impl<T: Template> Inner<T> {
                 last = i;
                 let instances =
                     &self.entity_instances[segment_index..segment_index + segment_count];
-                unsafe { segment.stores[0].set_all(pair.0, instances) };
+                unsafe { segment.store_at(0).set_all(pair.0, instances) };
             }
 
             segment_index += segment_count;
@@ -245,7 +245,7 @@ where
         let mut segment_indices = Vec::with_capacity(segment_metas.len());
 
         for (i, metas) in segment_metas.into_iter().enumerate() {
-            let segment = world.get_or_add_segment(&metas).index;
+            let segment = world.get_or_add_segment(&metas).index();
             let index = match segment_to_index.get(&segment) {
                 Some(&index) => index,
                 None => {
@@ -332,7 +332,11 @@ impl<T: Template> Resolve for Outer<T> {
                 let segment = &mut world.segments[segment_indices.segment];
                 let instances = &defer.entity_instances
                     [segment_indices.index..segment_indices.index + segment_count];
-                unsafe { segment.stores[0].set_all(segment_indices.store, instances) };
+                unsafe {
+                    segment
+                        .store_at(0)
+                        .set_all(segment_indices.store, instances)
+                };
             }
 
             apply(

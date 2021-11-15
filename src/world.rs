@@ -1,6 +1,6 @@
 use self::{meta::*, segment::*, store::*};
 use crate::{entity::Entity, error::Error, Result};
-use entia_core::utility::next_power_of_2;
+use entia_core::{utility::next_power_of_2, Flags, IntoFlags, Maybe, Wrap};
 use std::{
     any::{type_name, TypeId},
     cell::UnsafeCell,
@@ -37,7 +37,7 @@ impl World {
 
         // Ensures that the 'Entity' meta has the lowest identifier of this world's metas and as such, 'Entity' stores will alway
         // appear as the first store of a segment if present.
-        world.set_meta(Meta::new::<Entity>(Some(Cloner::new()), Some(Formatter::new())).into());
+        crate::metas!(world, Entity);
         world
     }
 
@@ -58,6 +58,12 @@ impl World {
     }
 
     pub fn set_meta(&mut self, meta: Arc<Meta>) {
+        println!(
+            "{} | {} | {}",
+            meta.name,
+            meta.clone.is_some(),
+            meta.format.is_some(),
+        );
         let identifier = meta.identifier;
         match self.type_to_meta.get(&identifier) {
             Some(&index) => self.metas[index] = meta,
@@ -97,10 +103,17 @@ impl World {
 
     pub fn get_or_add_segment<'a>(&'a mut self, metas: &[Arc<Meta>]) -> &'a mut Segment {
         let types: HashSet<_> = metas.iter().map(|meta| meta.identifier).collect();
-        match self.get_segment_index(&types) {
-            Some(index) => &mut self.segments[index],
-            None => self.add_segment(types),
-        }
+        let index = match self.get_segment_index(&types) {
+            Some(index) => index,
+            None => {
+                let index = self.segments.len();
+                let segment = Segment::new(index, 0, types, &self.metas);
+                self.segments.push(segment);
+                self.version += 1;
+                index
+            }
+        };
+        &mut self.segments[index]
     }
 
     pub(crate) fn initialize<T: Default + Send + Sync + 'static>(
@@ -110,34 +123,12 @@ impl World {
         let meta = self.get_or_add_meta::<T>();
         let segment = self.get_or_add_segment(&[meta.clone()]);
         let store = segment.store(&meta)?;
-        if segment.count == 0 {
+        if segment.count() == 0 {
             let (index, _) = segment.reserve(1);
             segment.resolve();
             unsafe { store.set(index, default.unwrap_or_default()) };
         }
-        Ok((store, segment.index))
-    }
-
-    fn add_segment(&mut self, types: HashSet<TypeId>) -> &mut Segment {
-        let index = self.segments.len();
-        // Iterate over all metas in order to have them consistently ordered.
-        let stores = self
-            .metas
-            .iter()
-            .filter(|meta| types.contains(&meta.identifier))
-            .map(|meta| Store::new(meta.clone(), 0).into())
-            .collect();
-        let segment = Segment {
-            index,
-            count: 0,
-            types,
-            stores,
-            reserved: 0.into(),
-            capacity: 0,
-        };
-        self.segments.push(segment);
-        self.version += 1;
-        &mut self.segments[index]
+        Ok((store, segment.index()))
     }
 
     fn get_segment_index(&self, types: &HashSet<TypeId>) -> Option<usize> {
@@ -148,38 +139,6 @@ impl World {
 }
 
 pub mod meta {
-    #[macro_export]
-    macro_rules! metas {
-        ($world:expr $(,$types:ty)*) => {{
-            struct Wrap<T: ?Sized>(::std::marker::PhantomData<T>);
-            trait MaybeCloner<T> {
-                fn cloner(self) -> ::std::option::Option<::entia::world::meta::Cloner<T>>;
-            }
-            impl<T: ::std::clone::Clone> MaybeCloner<T> for Wrap<T> {
-                fn cloner(self) -> ::std::option::Option<::entia::world::meta::Cloner<T>> { Some(::entia::world::meta::Cloner::new()) }
-            }
-            trait MaybeFormatter<T> {
-                fn formatter(self) -> ::std::option::Option<::entia::world::meta::Formatter<T>>;
-            }
-            impl<T: ::std::fmt::Debug> MaybeFormatter<T> for Wrap<T> {
-                fn formatter(self) -> ::std::option::Option<::entia::world::meta::Formatter<T>> { Some(::entia::world::meta::Formatter::new()) }
-            }
-
-            $(
-                impl MaybeCloner<$types> for &Wrap<$types>  {
-                    fn cloner(self) -> ::std::option::Option<::entia::world::meta::Cloner<$types>> { None }
-                }
-                impl MaybeFormatter<$types> for &Wrap<$types>  {
-                    fn formatter(self) -> ::std::option::Option<::entia::world::meta::Formatter<$types>> { None }
-                }
-                $world.set_meta(::entia::world::meta::Meta::new(
-                    Wrap::<$types>(::std::marker::PhantomData).cloner(),
-                    Wrap::<$types>(::std::marker::PhantomData).formatter(),
-                ).into());
-            )*
-        }};
-    }
-
     use super::*;
 
     #[derive(Clone)]
@@ -241,13 +200,26 @@ pub mod meta {
         }
     }
 
+    impl<T: Clone> Maybe<Cloner<T>> for Wrap<Cloner<T>> {
+        fn maybe(self) -> Option<Cloner<T>> {
+            Some(Cloner::new())
+        }
+    }
+
+    impl<T: fmt::Debug> Maybe<Formatter<T>> for Wrap<Formatter<T>> {
+        fn maybe(self) -> Option<Formatter<T>> {
+            Some(Formatter::new())
+        }
+    }
+
     impl<T: Clone> Cloner<T> {
         pub fn new() -> Self {
             Self(
                 |source, target| unsafe {
                     let source = &*source.0.cast::<T>().add(source.1);
-                    let target = &mut *target.0.cast::<T>().add(target.1);
-                    *target = source.clone();
+                    let target = target.0.cast::<T>().add(target.1);
+                    // Use 'ptd::write' to prevent the old value from being dropped since it might not be initialized.
+                    target.write(source.clone());
                 },
                 PhantomData,
             )
@@ -265,31 +237,98 @@ pub mod meta {
             )
         }
     }
+
+    #[macro_export]
+    macro_rules! metas {
+        ($world:expr $(,$types:ty)*) => {{
+            use $crate::core::Maybe;
+            $(
+                $world.set_meta($crate::world::meta::Meta::new(
+                    $crate::core::Wrap::<$crate::world::meta::Cloner<$types>>::default().maybe(),
+                    $crate::core::Wrap::<$crate::world::meta::Formatter<$types>>::default().maybe(),
+                ).into());
+            )*
+        }};
+    }
 }
 
 pub mod segment {
     use super::*;
 
+    #[derive(Clone, Copy)]
+    pub enum Flag {
+        None = 0,
+        Clone = 1 << 0,
+    }
+
     pub struct Segment {
-        pub(crate) index: usize,
-        pub(crate) count: usize,
-        pub(crate) stores: Box<[Arc<Store>]>,
-        pub(crate) types: HashSet<TypeId>,
-        pub(super) reserved: AtomicUsize,
-        pub(super) capacity: usize,
+        index: usize,
+        count: usize,
+        flags: Flags<Flag>,
+        stores: Box<[Arc<Store>]>,
+        pub(super) types: HashSet<TypeId>,
+        reserved: AtomicUsize,
+        capacity: usize,
     }
 
     impl Segment {
+        pub(super) fn new(
+            index: usize,
+            capacity: usize,
+            types: HashSet<TypeId>,
+            metas: &[Arc<Meta>],
+        ) -> Self {
+            // Iterate over all metas in order to have them consistently ordered.
+            let stores: Box<[_]> = metas
+                .iter()
+                .filter(|meta| types.contains(&meta.identifier))
+                .map(|meta| Arc::new(Store::new(meta.clone(), capacity)))
+                .collect();
+            let mut flags = Flag::None.flags();
+            if stores.iter().all(|store| store.meta().clone.is_some()) {
+                flags |= Flag::Clone;
+            }
+            Self {
+                index,
+                count: 0,
+                flags,
+                types,
+                stores,
+                reserved: 0.into(),
+                capacity: 0,
+            }
+        }
+
+        #[inline]
+        pub const fn index(&self) -> usize {
+            self.index
+        }
+
+        #[inline]
+        pub const fn count(&self) -> usize {
+            self.count
+        }
+
+        #[inline]
+        pub fn can_clone(&self) -> bool {
+            self.flags.has_all(Flag::Clone)
+        }
+
+        #[inline]
+        pub fn has_store(&self, identifier: &TypeId) -> bool {
+            self.types.contains(identifier)
+        }
+
         pub fn remove_at(&mut self, index: usize) -> bool {
             if index < self.count {
                 self.count -= 1;
                 if index == self.count {
-                    for store in self.stores.iter_mut() {
-                        unsafe { store.as_ref().drop(index, 1) };
+                    for store in self.stores() {
+                        unsafe { store.drop(index, 1) };
                     }
                     false
                 } else {
-                    for store in self.stores.iter_mut() {
+                    for store in self.stores() {
                         unsafe { store.squash(self.count, index) };
                     }
                     true
@@ -300,10 +339,18 @@ pub mod segment {
         }
 
         pub fn clear(&mut self) {
-            for store in self.stores.iter() {
-                unsafe { store.as_ref().drop(0, self.count) };
+            for store in self.stores() {
+                unsafe { store.drop(0, self.count) };
             }
             self.count = 0;
+        }
+
+        pub fn stores(&self) -> impl ExactSizeIterator<Item = &Store> {
+            self.stores.iter().map(AsRef::as_ref)
+        }
+
+        pub fn store_at(&self, index: usize) -> Arc<Store> {
+            self.stores[index].clone()
         }
 
         pub fn store(&self, meta: &Meta) -> Result<Arc<Store>> {
@@ -342,9 +389,17 @@ pub mod segment {
 
     impl Drop for Segment {
         fn drop(&mut self) {
-            for store in self.stores.iter() {
+            for store in self.stores() {
                 unsafe { (store.meta().free)(store.data(), self.count, self.capacity) };
             }
+        }
+    }
+
+    impl IntoFlags for Flag {
+        type Value = usize;
+
+        fn flags(self) -> Flags<Self, Self::Value> {
+            Flags::new(self as usize)
         }
     }
 }
@@ -361,7 +416,7 @@ pub mod store {
 
     impl Store {
         #[inline]
-        pub fn new(meta: Arc<Meta>, capacity: usize) -> Self {
+        pub(super) fn new(meta: Arc<Meta>, capacity: usize) -> Self {
             let pointer = (meta.allocate)(capacity);
             Self(meta, pointer.into())
         }
@@ -384,6 +439,18 @@ pub mod store {
                 (target.0.data(), target.1),
                 count,
             );
+        }
+
+        /// SAFETY: The target must be dropped before calling this function.
+        #[inline]
+        pub unsafe fn clone(source: (&Self, usize), target: (&Self, usize)) -> Result {
+            debug_assert_eq!(source.0.meta().identifier, target.0.meta().identifier);
+
+            let metas = (source.0.meta(), target.0.meta());
+            let error = Error::MissingClone(metas.0.name);
+            let clone = metas.0.clone.or(metas.1.clone).ok_or(error)?;
+            clone((source.0.data(), source.1), (target.0.data(), target.1));
+            Ok(())
         }
 
         /// SAFETY: The 'index' must be within the bounds of the store.

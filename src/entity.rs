@@ -77,7 +77,7 @@ impl Item for Entity {
         let meta = context.world().get_meta::<Entity>()?;
         let segment = context.segment();
         let store = segment.store(&meta)?;
-        Ok(State(store, segment.index))
+        Ok(State(store, segment.index()))
     }
 }
 

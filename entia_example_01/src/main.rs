@@ -6,6 +6,7 @@ use std::{collections::VecDeque, error, result::Result, time::Duration};
 /*
 TODO:
     - Add tests.
+    - Currently, using 'world.set_meta' will not update current meta users (including segments).
     - Is it possible to extract a (serializable) template from an entity?
     - Is it possible to copy an entity's components to another entity?
     - How to serialize an entity with all its (serializable) components?
@@ -110,7 +111,7 @@ struct Render {
 #[derive(Copy, Clone, Debug)]
 struct Controller;
 
-#[derive(Default)]
+#[derive(Default, Clone, Debug)]
 struct Time {
     pub frames: usize,
     pub total: Duration,

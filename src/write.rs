@@ -54,7 +54,7 @@ impl<T: Send + Sync + 'static> Item for Write<T> {
         let meta = context.world().get_meta::<T>()?;
         let segment = context.segment();
         let store = segment.store(&meta)?;
-        Ok(State(store, segment.index, PhantomData))
+        Ok(State(store, segment.index(), PhantomData))
     }
 }
 

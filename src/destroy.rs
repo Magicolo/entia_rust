@@ -120,8 +120,11 @@ impl Resolve for Inner {
                 if segment.remove_at(datum.store_index as usize) {
                     // SAFETY: When it exists, the entity store is always the first. This segment must have
                     // an entity store since the destroyed entity was in it.
-                    let moved =
-                        *unsafe { segment.stores[0].get::<Entity>(datum.store_index as usize) };
+                    let moved = *unsafe {
+                        segment
+                            .store_at(0)
+                            .get::<Entity>(datum.store_index as usize)
+                    };
                     entities
                         .get_datum_at_mut(moved.index())
                         .unwrap()

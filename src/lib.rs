@@ -2,6 +2,7 @@ pub mod create;
 pub mod defer;
 pub mod depend;
 pub mod destroy;
+pub mod duplicate;
 pub mod entities;
 pub mod entity;
 pub mod error;
@@ -26,6 +27,7 @@ pub use crate::{
     create::Create,
     defer::Defer,
     destroy::Destroy,
+    duplicate::Duplicate,
     entity::Entity,
     error::Error,
     families::Families,

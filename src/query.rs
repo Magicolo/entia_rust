@@ -54,7 +54,7 @@ impl<'a, I: Item, F: Filter> Query<'a, I, F> {
         self.inner
             .states
             .iter()
-            .map(|&(_, segment)| self.world.segments[segment].count)
+            .map(|&(_, segment)| self.world.segments[segment].count())
             .sum()
     }
 
@@ -62,7 +62,7 @@ impl<'a, I: Item, F: Filter> Query<'a, I, F> {
     pub fn each(&'a self, mut each: impl FnMut(<I::State as At<'a>>::Item)) {
         for (state, segment) in &self.inner.states {
             let segment = &self.world.segments[*segment];
-            for i in 0..segment.count {
+            for i in 0..segment.count() {
                 each(state.at(i, self.world));
             }
         }
@@ -96,7 +96,7 @@ impl<'a, 'b: 'a, I: Item, F: Filter> iter::Iterator for Iterator<'a, 'b, I, F> {
     fn next(&mut self) -> Option<Self::Item> {
         while let Some((item, segment)) = self.query.inner.states.get(self.segment) {
             let segment = &self.query.world.segments[*segment];
-            if self.index < segment.count {
+            if self.index < segment.count() {
                 let item = item.at(self.index, self.query.world);
                 self.index += 1;
                 return Some(item);
@@ -137,7 +137,7 @@ where
         let inner = state.inner.as_mut();
         while let Some(segment) = world.segments.get(inner.segments.len()) {
             if F::filter(segment, world) {
-                let segment = segment.index;
+                let segment = segment.index();
                 if let Ok(item) = I::initialize(Context::new(identifier, segment, world)) {
                     inner.segments.push(Some(inner.states.len()));
                     inner.states.push((item, segment));
