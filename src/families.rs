@@ -3,11 +3,11 @@ use crate::{
     depend::{Depend, Dependency},
     entities::Entities,
     entity::Entity,
+    error::Result,
     family::Family,
     inject::{Context, Get, Inject},
     world::World,
     write::{self, Write},
-    Result,
 };
 
 pub struct Families<'a>(defer::Defer<'a, Inner>, &'a Entities);
@@ -109,7 +109,7 @@ impl Inject for Families<'_> {
         Ok(State(defer))
     }
 
-    fn resolve(State(state): &mut Self::State, context: Context) {
+    fn resolve(State(state): &mut Self::State, context: Context) -> Result {
         <defer::Defer<Inner> as Inject>::resolve(state, context)
     }
 }
@@ -117,7 +117,7 @@ impl Inject for Families<'_> {
 impl Resolve for Inner {
     type Item = Defer;
 
-    fn resolve(&mut self, items: impl Iterator<Item = Self::Item>, _: &mut World) {
+    fn resolve(&mut self, items: impl Iterator<Item = Self::Item>, _: &mut World) -> Result {
         let entities = self.0.as_mut();
         for defer in items {
             match defer {
@@ -153,6 +153,7 @@ impl Resolve for Inner {
                 }
             }
         }
+        Ok(())
     }
 }
 

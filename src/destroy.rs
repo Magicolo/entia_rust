@@ -3,12 +3,12 @@ use crate::{
     depend::{Depend, Dependency},
     entities::Entities,
     entity::Entity,
+    error::{Error, Result},
     inject::{Context, Get, Inject},
     world::World,
     write::{self, Write},
-    Result,
 };
-use std::collections::HashSet;
+use std::{any::type_name, collections::HashSet};
 
 pub struct Destroy<'a>(defer::Defer<'a, Inner>);
 pub struct State(defer::State<Inner>);
@@ -55,7 +55,7 @@ impl Inject for Destroy<'_> {
         Ok(State(defer))
     }
 
-    fn resolve(State(state): &mut Self::State, context: Context) {
+    fn resolve(State(state): &mut Self::State, context: Context) -> Result {
         <defer::Defer<Inner> as Inject>::resolve(state, context)
     }
 }
@@ -63,17 +63,17 @@ impl Inject for Destroy<'_> {
 impl Resolve for Inner {
     type Item = Defer;
 
-    fn resolve(&mut self, items: impl Iterator<Item = Self::Item>, world: &mut World) {
+    fn resolve(&mut self, items: impl Iterator<Item = Self::Item>, world: &mut World) -> Result {
         let entities = self.entities.as_mut();
         let set = &mut self.set;
 
         for defer in items {
             match defer {
                 Defer::One(entity) if entities.has(entity) => {
-                    destroy(entity.index(), true, false, set, entities, world);
+                    destroy(entity.index(), true, false, set, entities, world)?;
                 }
                 Defer::Family(root) if entities.has(root) => {
-                    destroy(root.index(), true, true, set, entities, world);
+                    destroy(root.index(), true, true, set, entities, world)?;
                 }
                 _ => {}
             }
@@ -90,50 +90,56 @@ impl Resolve for Inner {
             set: &mut HashSet<Entity>,
             entities: &mut Entities,
             world: &mut World,
-        ) -> Option<u32> {
-            let datum = entities.get_datum_at(index)?.clone();
-            let entity = datum.entity(index);
-            if set.insert(entity) {
-                if family {
-                    let mut child = datum.first_child;
-                    while let Some(next) = destroy(child, false, family, set, entities, world) {
-                        child = next;
+        ) -> Result<Option<u32>> {
+            if let Some(datum) = entities.get_datum_at(index).cloned() {
+                if set.insert(datum.entity(index)) {
+                    if family {
+                        let mut child = datum.first_child;
+                        while let Some(next) = destroy(child, false, family, set, entities, world)?
+                        {
+                            child = next;
+                        }
+                    }
+
+                    if root {
+                        if let Some(previous_sibling) =
+                            entities.get_datum_at_mut(datum.previous_sibling)
+                        {
+                            previous_sibling.next_sibling = datum.next_sibling;
+                        } else if let Some(parent) = entities.get_datum_at_mut(datum.parent) {
+                            // Only an entity with no 'previous_sibling' can ever be the 'first_child' of its parent.
+                            parent.first_child = datum.next_sibling;
+                        }
+
+                        if let Some(next_sibling) = entities.get_datum_at_mut(datum.next_sibling) {
+                            next_sibling.previous_sibling = datum.previous_sibling;
+                        }
+                    }
+
+                    let segment = &mut world.segments[datum.segment_index as usize];
+                    if segment.remove_at(datum.store_index as usize) {
+                        // SAFETY: When it exists, the entity store is always the first. This segment must have
+                        // an entity store since the destroyed entity was in it.
+                        let entity = *unsafe {
+                            segment
+                                .store_at(0)
+                                .ok_or(Error::MissingStore(type_name::<Entity>(), segment.index()))?
+                                .get::<Entity>(datum.store_index as usize)
+                        };
+                        entities
+                            .get_datum_at_mut(entity.index())
+                            .ok_or(Error::InvalidEntity(entity))?
+                            .update(&datum);
                     }
                 }
 
-                if root {
-                    if let Some(previous_sibling) =
-                        entities.get_datum_at_mut(datum.previous_sibling)
-                    {
-                        previous_sibling.next_sibling = datum.next_sibling;
-                    } else if let Some(parent) = entities.get_datum_at_mut(datum.parent) {
-                        // Only an entity with no 'previous_sibling' can ever be the 'first_child' of its parent.
-                        parent.first_child = datum.next_sibling;
-                    }
-
-                    if let Some(next_sibling) = entities.get_datum_at_mut(datum.next_sibling) {
-                        next_sibling.previous_sibling = datum.previous_sibling;
-                    }
-                }
-
-                let segment = &mut world.segments[datum.segment_index as usize];
-                if segment.remove_at(datum.store_index as usize) {
-                    // SAFETY: When it exists, the entity store is always the first. This segment must have
-                    // an entity store since the destroyed entity was in it.
-                    let moved = *unsafe {
-                        segment
-                            .store_at(0)
-                            .get::<Entity>(datum.store_index as usize)
-                    };
-                    entities
-                        .get_datum_at_mut(moved.index())
-                        .unwrap()
-                        .update(&datum);
-                }
+                Ok(Some(datum.next_sibling))
+            } else {
+                Ok(None)
             }
-
-            Some(datum.next_sibling)
         }
+
+        Ok(())
     }
 }
 

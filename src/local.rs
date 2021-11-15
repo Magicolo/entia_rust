@@ -1,9 +1,9 @@
 use crate::{
     depend::Depend,
+    error::Result,
     inject::{Context, Get, Inject},
     world::World,
     write::{self, Write},
-    Result,
 };
 use std::{
     any::{Any, TypeId},

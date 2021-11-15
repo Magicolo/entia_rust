@@ -130,7 +130,7 @@ fn main() {
     run().unwrap();
 }
 
-fn run() -> Result<(), Box<dyn error::Error>> {
+fn run() -> Result<(), Box<dyn error::{Result, Error}>> {
     const SIZE: [f64; 2] = [640., 480.];
     const CELLS: [f64; 2] = [25., 25.];
 

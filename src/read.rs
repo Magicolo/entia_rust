@@ -1,15 +1,14 @@
-use std::{marker::PhantomData, sync::Arc};
-
 use crate::{
     depend::{Depend, Dependency},
+    error::Result,
     inject::{self, Get, Inject},
     query::item::{self, At, Item},
-    world::{store::Store, World},
-    Result,
+    world::{segment::Column, World},
 };
+use std::marker::PhantomData;
 
-pub struct Read<T>(Arc<Store>, PhantomData<T>);
-pub struct State<T>(Arc<Store>, usize, PhantomData<T>);
+pub struct Read<T>(Column, PhantomData<T>);
+pub struct State<T>(Column, usize, PhantomData<T>);
 
 impl<T: Default + Send + Sync + 'static> Inject for &T {
     type Input = <Read<T> as Inject>::Input;
@@ -25,8 +24,8 @@ impl<T: Default + Send + Sync + 'static> Inject for Read<T> {
     type State = State<T>;
 
     fn initialize(input: Self::Input, mut context: inject::Context) -> Result<Self::State> {
-        let (store, segment) = context.world().initialize(input)?;
-        Ok(State(store, segment, PhantomData))
+        let (column, segment) = context.world().initialize(input)?;
+        Ok(State(column, segment, PhantomData))
     }
 }
 
@@ -35,7 +34,7 @@ impl<'a, T: 'static> Get<'a> for State<T> {
 
     #[inline]
     fn get(&'a mut self, _: &World) -> Self::Item {
-        unsafe { self.0.get(0) }
+        unsafe { self.0.store().get(0) }
     }
 }
 
@@ -53,8 +52,8 @@ impl<T: Send + Sync + 'static> Item for Read<T> {
     fn initialize(mut context: item::Context) -> Result<Self::State> {
         let meta = context.world().get_meta::<T>()?;
         let segment = context.segment();
-        let store = segment.store(&meta)?;
-        Ok(State(store, segment.index(), PhantomData))
+        let column = segment.column(&meta)?;
+        Ok(State(column, segment.index(), PhantomData))
     }
 }
 
@@ -63,7 +62,7 @@ impl<'a, T: 'static> At<'a> for State<T> {
 
     #[inline]
     fn at(&'a self, index: usize, _: &'a World) -> Self::Item {
-        unsafe { self.0.get(index) }
+        unsafe { self.0.store().get(index) }
     }
 }
 
@@ -71,11 +70,6 @@ impl<T> State<T> {
     #[inline]
     pub const fn segment(&self) -> usize {
         self.1
-    }
-
-    #[inline]
-    pub fn store(&self) -> &Store {
-        &self.0
     }
 }
 
@@ -109,13 +103,13 @@ impl<'a, T> From<&'a mut State<T>> for Read<T> {
 impl<T: 'static> AsRef<T> for Read<T> {
     #[inline]
     fn as_ref(&self) -> &T {
-        unsafe { self.0.get(0) }
+        unsafe { self.0.store().get(0) }
     }
 }
 
 impl<T: 'static> AsRef<T> for State<T> {
     #[inline]
     fn as_ref(&self) -> &T {
-        unsafe { self.0.get(0) }
+        unsafe { self.0.store().get(0) }
     }
 }

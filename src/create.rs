@@ -1,4 +1,5 @@
 use std::{
+    any::type_name,
     collections::HashMap,
     iter::{empty, once},
 };
@@ -8,12 +9,12 @@ use crate::{
     depend::{Depend, Dependency},
     entities::Entities,
     entity::Entity,
+    error::{Error, Result},
     family::template::{EntityIndices, Families, Family, SegmentIndices},
     inject::{Context, Get, Inject},
     template::{ApplyContext, CountContext, DeclareContext, InitializeContext, Spawn, Template},
     world::World,
     write::{self, Write},
-    Result,
 };
 
 pub struct Create<'a, T: Template + 'a> {
@@ -49,7 +50,7 @@ struct Defer<T: Template> {
 }
 
 impl<T: Template> Create<'_, T> {
-    pub fn all(&mut self, templates: impl IntoIterator<Item = T>) -> Families {
+    pub fn all(&mut self, templates: impl IntoIterator<Item = T>) -> Result<Families> {
         match self.inner.count {
             Some(count) => self.all_static(count, templates),
             None => self.all_dynamic(templates),
@@ -57,12 +58,12 @@ impl<T: Template> Create<'_, T> {
     }
 
     #[inline]
-    pub fn one(&mut self, template: T) -> Family {
-        self.all(once(template)).roots().next().unwrap()
+    pub fn one(&mut self, template: T) -> Result<Family> {
+        self.all(once(template))?.get(0).ok_or(Error::MissingFamily)
     }
 
     #[inline]
-    pub fn clones(&mut self, count: usize, template: T) -> Families
+    pub fn clones(&mut self, count: usize, template: T) -> Result<Families>
     where
         T: Clone,
     {
@@ -70,14 +71,18 @@ impl<T: Template> Create<'_, T> {
     }
 
     #[inline]
-    pub fn defaults(&mut self, count: usize) -> Families
+    pub fn defaults(&mut self, count: usize) -> Result<Families>
     where
         T: Default,
     {
         self.all((0..count).map(|_| T::default()))
     }
 
-    fn all_static(&mut self, count: usize, templates: impl IntoIterator<Item = T>) -> Families {
+    fn all_static(
+        &mut self,
+        count: usize,
+        templates: impl IntoIterator<Item = T>,
+    ) -> Result<Families> {
         let Create {
             defer,
             inner,
@@ -91,7 +96,7 @@ impl<T: Template> Create<'_, T> {
         }
 
         if inner.initial_roots.len() == 0 {
-            return Families::EMPTY;
+            return Ok(Families::EMPTY);
         }
 
         inner.entity_roots.truncate(inner.initial_roots.len());
@@ -99,7 +104,7 @@ impl<T: Template> Create<'_, T> {
             inner.entity_roots.push((inner.entity_roots.len(), 0));
         }
 
-        let (index, success) = inner.reserve(count * inner.initial_roots.len(), entities, world);
+        let (index, success) = inner.reserve(count * inner.initial_roots.len(), entities, world)?;
         if success {
             apply(
                 &inner.initial_state,
@@ -114,10 +119,10 @@ impl<T: Template> Create<'_, T> {
             defer.defer(inner.defer(index));
         }
 
-        inner.families()
+        Ok(inner.families())
     }
 
-    fn all_dynamic(&mut self, templates: impl IntoIterator<Item = T>) -> Families {
+    fn all_dynamic(&mut self, templates: impl IntoIterator<Item = T>) -> Result<Families> {
         let Create {
             defer,
             inner,
@@ -151,10 +156,10 @@ impl<T: Template> Create<'_, T> {
 
         let count = inner.entity_indices.len();
         if count == 0 {
-            return Families::EMPTY;
+            return Ok(Families::EMPTY);
         }
 
-        let (index, success) = inner.reserve(count, entities, world);
+        let (index, success) = inner.reserve(count, entities, world)?;
         if success {
             apply(
                 &inner.initial_state,
@@ -169,12 +174,17 @@ impl<T: Template> Create<'_, T> {
             defer.defer(inner.defer(index));
         }
 
-        inner.families()
+        Ok(inner.families())
     }
 }
 
 impl<T: Template> Inner<T> {
-    fn reserve(&mut self, count: usize, entities: &Entities, world: &World) -> (usize, bool) {
+    fn reserve(
+        &mut self,
+        count: usize,
+        entities: &Entities,
+        world: &World,
+    ) -> Result<(usize, bool)> {
         self.entity_instances.resize(count, Entity::NULL);
         let ready = entities.reserve(&mut self.entity_instances);
         let mut last = 0;
@@ -198,13 +208,18 @@ impl<T: Template> Inner<T> {
                 last = i;
                 let instances =
                     &self.entity_instances[segment_index..segment_index + segment_count];
-                unsafe { segment.store_at(0).set_all(pair.0, instances) };
+                unsafe {
+                    segment
+                        .store_at(0)
+                        .ok_or(Error::MissingStore(type_name::<Entity>(), segment.index()))?
+                        .set_all(pair.0, instances)
+                };
             }
 
             segment_index += segment_count;
         }
 
-        (last, success && ready == count)
+        Ok((last, success && ready == count))
     }
 
     fn families(&self) -> Families {
@@ -301,18 +316,18 @@ where
         Ok(State(defer))
     }
 
-    fn resolve(State(state): &mut Self::State, mut context: Context) {
+    fn resolve(State(state): &mut Self::State, mut context: Context) -> Result {
         // Must resolve unconditionally entities and segments *even* if nothing was deferred in the case where creation
         // was completed at run time.
-        state.as_mut().resolve(empty(), context.world());
-        <defer::Defer<Outer<T>> as Inject>::resolve(state, context.owned());
+        state.as_mut().resolve(empty(), context.world())?;
+        <defer::Defer<Outer<T>> as Inject>::resolve(state, context.owned())
     }
 }
 
 impl<T: Template> Resolve for Outer<T> {
     type Item = Defer<T>;
 
-    fn resolve(&mut self, items: impl Iterator<Item = Self::Item>, world: &mut World) {
+    fn resolve(&mut self, items: impl Iterator<Item = Self::Item>, world: &mut World) -> Result {
         let inner = &mut self.inner;
         let entities = self.entities.as_mut();
         entities.resolve();
@@ -326,7 +341,7 @@ impl<T: Template> Resolve for Outer<T> {
             for segment_indices in defer.segment_indices[defer.index..].iter() {
                 let segment_count = segment_indices.count * multiplier;
                 if segment_count == 0 {
-                    return;
+                    continue;
                 }
 
                 let segment = &mut world.segments[segment_indices.segment];
@@ -335,6 +350,7 @@ impl<T: Template> Resolve for Outer<T> {
                 unsafe {
                     segment
                         .store_at(0)
+                        .ok_or(Error::MissingStore(type_name::<Entity>(), segment.index()))?
                         .set_all(segment_indices.store, instances)
                 };
             }
@@ -349,6 +365,8 @@ impl<T: Template> Resolve for Outer<T> {
                 &defer.segment_indices,
             );
         }
+
+        Ok(())
     }
 }
 

@@ -1,15 +1,21 @@
+use crate::entity::Entity;
 use std::{
     error,
     fmt::{self, Display},
+    result,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug)]
 pub enum Error {
     WrongWorld,
     MissingSystem,
     MissingStore(&'static str, usize),
     MissingMeta(&'static str),
     MissingClone(&'static str),
+    MissingFamily,
+    SegmentIndexOutOfRange(usize, usize),
+    InvalidEntity(Entity),
+    InvalidResolveState,
     FailedToInject,
     InnerConflict(String, Box<Error>),
     OuterConflict(String, Box<Error>),
@@ -21,6 +27,8 @@ pub enum Error {
     StaticCountMustBeTrue,
     All(Vec<Error>),
 }
+
+pub type Result<T = ()> = result::Result<T, Error>;
 
 impl Error {
     pub fn merge(self, error: Self) -> Self {

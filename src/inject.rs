@@ -1,8 +1,7 @@
 use crate::{
     depend::{Conflict, Depend, Dependency, Scope},
-    error::Error,
+    error::{Error, Result},
     world::World,
-    Result,
 };
 use entia_core::utility::short_type_name;
 use std::marker::PhantomData;
@@ -37,9 +36,13 @@ pub trait Inject {
     }
     fn initialize(input: Self::Input, context: Context) -> Result<Self::State>;
     #[inline]
-    fn update(_: &mut Self::State, _: Context) {}
+    fn update(_: &mut Self::State, _: Context) -> Result {
+        Ok(())
+    }
     #[inline]
-    fn resolve(_: &mut Self::State, _: Context) {}
+    fn resolve(_: &mut Self::State, _: Context) -> Result {
+        Ok(())
+    }
 }
 
 /// SAFETY: The implementations of the 'get' method must ensure that no reference to the 'World' are kept within 'self'
@@ -92,13 +95,15 @@ macro_rules! inject {
             }
 
             #[inline]
-            fn update(($($p,)*): &mut Self::State, mut _context: Context) {
-                $($t::update($p, _context.owned());)*
+            fn update(($($p,)*): &mut Self::State, mut _context: Context) -> Result {
+                $($t::update($p, _context.owned())?;)*
+                Ok(())
             }
 
             #[inline]
-            fn resolve(($($p,)*): &mut Self::State, mut _context: Context) {
-                $($t::resolve($p, _context.owned());)*
+            fn resolve(($($p,)*): &mut Self::State, mut _context: Context) -> Result {
+                $($t::resolve($p, _context.owned())?;)*
+                Ok(())
             }
         }
 
@@ -154,7 +159,7 @@ impl<I: Inject> Injector<I> {
         if self.world != world.identifier() {
             Err(Error::WrongWorld)
         } else if self.version != world.version() {
-            I::update(&mut self.state, Context::new(self.identifier, world));
+            I::update(&mut self.state, Context::new(self.identifier, world))?;
             self.dependencies = self.state.depend(world);
             let mut conflict = Conflict::default();
             match conflict.detect(Scope::Inner, &self.dependencies) {
@@ -184,6 +189,7 @@ impl<'a, I: Inject> Guard<'a, I> {
 
 impl<I: Inject> Drop for Guard<'_, I> {
     fn drop(&mut self) {
-        I::resolve(self.state, Context::new(self.identifier, self.world));
+        // TODO: Is it possible to do something more useful with this result?
+        I::resolve(self.state, Context::new(self.identifier, self.world)).unwrap();
     }
 }

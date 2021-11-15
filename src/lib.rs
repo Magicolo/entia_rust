@@ -29,7 +29,6 @@ pub use crate::{
     destroy::Destroy,
     duplicate::Duplicate,
     entity::Entity,
-    error::Error,
     families::Families,
     family::{
         item::{child::Child, parent::Parent},
@@ -46,8 +45,6 @@ pub use crate::{
     world::World,
 };
 pub use entia_derive::{Depend, Filter, Template};
-
-pub type Result<T = ()> = std::result::Result<T, Error>;
 
 #[cfg(test)]
 mod test {
@@ -173,7 +170,6 @@ mod test {
                 for message in on_kill {
                     println!("{:?}", message.0);
                 }
-                ""
             })
             .add(|on_kill: Receive<OnKill>| for _ in on_kill {})
             .add(|mut on_kill: Receive<OnKill>| while let Some(_) = on_kill.next() {})

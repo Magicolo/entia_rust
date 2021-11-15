@@ -2,6 +2,7 @@ use crate::{
     depend::{Depend, Dependency},
     entities::{Datum, Entities},
     entity::Entity,
+    error::Result,
     inject::Inject,
     query::{
         self,
@@ -11,7 +12,7 @@ use crate::{
     },
     read::{self, Read},
     world::World,
-    write, Result,
+    write,
 };
 use std::{any::type_name, fmt, iter::from_fn, marker::PhantomData};
 
@@ -388,7 +389,7 @@ pub mod template {
         }
     }
 
-    impl std::fmt::Debug for Families<'_> {
+    impl fmt::Debug for Families<'_> {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             f.debug_list().entries(self.roots()).finish()
         }
@@ -528,10 +529,11 @@ pub mod item {
                     query,
                 }: &mut Self::State,
                 mut context: Context,
-            ) {
-                <Read<Entity> as Item>::update(entity, context.owned());
-                <Read<Entities> as Inject>::update(entities, context.owned().into());
-                <Query<I, F> as Inject>::update(query, context.into());
+            ) -> Result {
+                <Read<Entity> as Item>::update(entity, context.owned())?;
+                <Read<Entities> as Inject>::update(entities, context.owned().into())?;
+                <Query<I, F> as Inject>::update(query, context.into())?;
+                Ok(())
             }
         }
 
@@ -638,10 +640,11 @@ pub mod item {
                     query,
                 }: &mut Self::State,
                 mut context: Context,
-            ) {
-                <Read<Entity> as Item>::update(entity, context.owned());
-                <Read<Entities> as Inject>::update(entities, context.owned().into());
-                <Query<I, F> as Inject>::update(query, context.into());
+            ) -> Result {
+                <Read<Entity> as Item>::update(entity, context.owned())?;
+                <Read<Entities> as Inject>::update(entities, context.owned().into())?;
+                <Query<I, F> as Inject>::update(query, context.into())?;
+                Ok(())
             }
         }
 

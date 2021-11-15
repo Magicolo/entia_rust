@@ -3,10 +3,13 @@ use entia_core::Marker;
 use crate::{
     entities::Entities,
     entity::Entity,
-    error::Error,
+    error::{Error, Result},
     family::template::{EntityIndices, Family, SegmentIndices},
-    world::{meta::Meta, segment::Segment, store::Store, World},
-    Result,
+    world::{
+        meta::Meta,
+        segment::{Column, Segment},
+        World,
+    },
 };
 use std::{array::IntoIter, collections::HashMap, marker::PhantomData, sync::Arc};
 
@@ -493,14 +496,14 @@ impl<T> From<T> for Add<T> {
 impl<T: Send + Sync + 'static> Template for Add<T> {
     type Input = ();
     type Declare = Arc<Meta>;
-    type State = Arc<Store>;
+    type State = Column;
 
     fn declare(_: Self::Input, mut context: DeclareContext) -> Self::Declare {
         context.meta::<T>()
     }
 
     fn initialize(state: Self::Declare, context: InitializeContext) -> Self::State {
-        context.segment().store(&state).unwrap()
+        context.segment().column(&state).unwrap()
     }
 
     fn static_count(_: &Self::State, _: CountContext) -> Result<bool> {
@@ -512,7 +515,7 @@ impl<T: Send + Sync + 'static> Template for Add<T> {
 
     #[inline]
     fn apply(self, state: &Self::State, context: ApplyContext) {
-        unsafe { state.set(context.store_index(), self.0) }
+        unsafe { state.store().set(context.store_index(), self.0) }
     }
 }
 

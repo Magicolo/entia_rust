@@ -17,6 +17,11 @@ pub struct Datum {
     // Maybe 'root' or 'state' flags could take the spot of 'generation'?
     pub(crate) generation: u32,
     pub(crate) store_index: u32,
+    // TODO: use the last 8 bits of this index to store 'state' information.
+    // - This will be used to determine the validity of the datum in a more reliable way.
+    // - If the determinant bits are used for state and that a valid datum has the state bits set to 0, the bounds check
+    // for segments will also be a validity check. 'world.segments.get(index)' will need to be used everywhere.
+    // - What happens when the number of segments overflows u24::MAX?
     pub(crate) segment_index: u32,
     pub(crate) parent: u32,
     pub(crate) first_child: u32,

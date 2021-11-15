@@ -15,10 +15,11 @@ fn main() {
         move |mut create: Create<_>| {
             let position = Position(Vec::with_capacity(counter));
             counter += counter / 100 + 1;
-            create.one((Add::new(position.clone()), Add::new(Frozen)));
-            create.all((0..counter).map(|_| (Add::new(position.clone()), Add::new(Frozen))));
-            create.defaults(counter);
-            create.clones(counter, (Add::new(position), Add::new(Frozen)));
+            create.one((Add::new(position.clone()), Add::new(Frozen)))?;
+            create.all((0..counter).map(|_| (Add::new(position.clone()), Add::new(Frozen))))?;
+            create.defaults(counter)?;
+            create.clones(counter, (Add::new(position), Add::new(Frozen)))?;
+            Ok(())
         }
     };
 
@@ -61,7 +62,8 @@ fn main() {
         .add(create())
         .add(create())
         .add(|mut create: Create<_>| {
-            create.one(());
+            create.one(())?;
+            Ok(())
         })
         .add(|mut create: Create<_>| {
             create.one((
@@ -71,10 +73,12 @@ fn main() {
                 Add::new(Frozen),
                 Add::new(Frozen),
                 Add::new(Frozen),
-            ));
+            ))?;
+            Ok(())
         })
         .add(|mut create: Create<_>| {
-            create.one(complex());
+            create.one(complex())?;
+            Ok(())
         })
         .add(|mut create: Create<_>| {
             create.one((
@@ -85,7 +89,8 @@ fn main() {
                 [Spawn::new(With::new(|family| {
                     Add::new(Target(family.entity()))
                 }))],
-            ));
+            ))?;
+            Ok(())
         })
         .add(|query: Query<(Entity, Child<Entity>, Parent<Entity>)>| {
             for (_entity, child, parent) in &query {

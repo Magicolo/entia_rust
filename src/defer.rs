@@ -2,10 +2,10 @@ use std::{any::Any, collections::VecDeque, marker::PhantomData};
 
 use crate::{
     depend::{Depend, Dependency},
+    error::{Error, Result},
     inject::{Context, Get, Inject},
     local::{self, Local},
     world::World,
-    Result,
 };
 
 pub struct Defer<'a, R: Resolve> {
@@ -22,12 +22,12 @@ pub struct State<T> {
 
 pub trait Resolve {
     type Item;
-    fn resolve(&mut self, items: impl Iterator<Item = Self::Item>, world: &mut World);
+    fn resolve(&mut self, items: impl Iterator<Item = Self::Item>, world: &mut World) -> Result;
 }
 
 struct Resolver {
     state: Box<dyn Any + Send + Sync>,
-    resolve: fn(usize, &mut dyn Any, &mut World),
+    resolve: fn(usize, &mut dyn Any, &mut World) -> Result,
 }
 
 #[derive(Default)]
@@ -41,8 +41,8 @@ type Pair<R: Resolve> = (R, VecDeque<R::Item>);
 
 impl Resolver {
     #[inline]
-    pub fn resolve(&mut self, count: usize, world: &mut World) {
-        (self.resolve)(count, self.state.as_mut(), world);
+    pub fn resolve(&mut self, count: usize, world: &mut World) -> Result {
+        (self.resolve)(count, self.state.as_mut(), world)
     }
 
     #[inline]
@@ -81,9 +81,10 @@ where
             inner.resolvers.push(Resolver {
                 state: Box::new((input, VecDeque::<R::Item>::new())),
                 resolve: |count, state, world| {
-                    if let Some((state, queue)) = state.downcast_mut::<Pair<R>>() {
-                        state.resolve(queue.drain(..count), world);
-                    }
+                    let (state, queue) = state
+                        .downcast_mut::<Pair<R>>()
+                        .ok_or(Error::InvalidResolveState)?;
+                    state.resolve(queue.drain(..count), world)
                 },
             });
             index
@@ -96,11 +97,12 @@ where
         })
     }
 
-    fn resolve(state: &mut Self::State, mut context: Context) {
+    fn resolve(state: &mut Self::State, mut context: Context) -> Result {
         let Inner { indices, resolvers } = state.inner.as_mut();
         for (index, count) in indices.drain(..) {
-            resolvers[index].resolve(count, context.world());
+            resolvers[index].resolve(count, context.world())?;
         }
+        Ok(())
     }
 }
 

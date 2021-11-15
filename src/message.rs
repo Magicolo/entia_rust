@@ -2,11 +2,11 @@ use std::collections::VecDeque;
 
 use crate::{
     depend::{Depend, Dependency},
+    error::Result,
     inject::{Context, Get, Inject},
     world::World,
     write,
     write::Write,
-    Result,
 };
 
 struct Queue<T>(usize, VecDeque<T>);
@@ -62,12 +62,13 @@ pub mod emit {
             Ok(State(inner, Vec::new()))
         }
 
-        fn resolve(State(inner, messages): &mut Self::State, _: Context) {
+        fn resolve(State(inner, messages): &mut Self::State, _: Context) -> Result {
             let inner = inner.as_mut();
             for queue in inner.queues.iter_mut() {
                 queue.enqueue(messages.iter().cloned());
             }
             messages.clear();
+            Ok(())
         }
     }
 

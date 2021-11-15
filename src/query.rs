@@ -3,11 +3,11 @@ use crate::{
     depend::{Depend, Dependency},
     entities::Entities,
     entity::Entity,
+    error::Result,
     inject::{self, Get, Inject},
     read::{self, Read},
     world::{segment::Segment, World},
     write::{self, Write},
-    Result,
 };
 use std::{
     any::type_name,
@@ -131,7 +131,7 @@ where
         Ok(State { inner, entities })
     }
 
-    fn update(state: &mut Self::State, mut context: inject::Context) {
+    fn update(state: &mut Self::State, mut context: inject::Context) -> Result {
         let identifier = context.identifier();
         let world = context.world();
         let inner = state.inner.as_mut();
@@ -149,8 +149,10 @@ where
 
         for (state, segment) in inner.states.iter_mut() {
             let context = Context::new(context.identifier(), *segment, context.world());
-            I::update(state, context);
+            I::update(state, context)?;
         }
+
+        Ok(())
     }
 }
 
@@ -201,7 +203,9 @@ pub mod item {
         type State: for<'a> At<'a> + Depend;
         fn initialize(context: Context) -> Result<Self::State>;
         #[inline]
-        fn update(_: &mut Self::State, _: Context) {}
+        fn update(_: &mut Self::State, _: Context) -> Result {
+            Ok(())
+        }
     }
 
     pub trait At<'a> {
@@ -253,10 +257,11 @@ pub mod item {
         }
 
         #[inline]
-        fn update(state: &mut Self::State, context: Context) {
+        fn update(state: &mut Self::State, context: Context) -> Result {
             if let Some(state) = state {
-                I::update(state, context);
+                I::update(state, context)?;
             }
+            Ok(())
         }
     }
 
@@ -293,8 +298,9 @@ pub mod item {
                     Ok(($($t::initialize(_context.owned())?,)*))
                 }
 
-                fn update(($($p,)*): &mut Self::State, mut _context: Context) {
-                    $($t::update($p, _context.owned());)*
+                fn update(($($p,)*): &mut Self::State, mut _context: Context) -> Result {
+                    $($t::update($p, _context.owned())?;)*
+                    Ok(())
                 }
             }
 

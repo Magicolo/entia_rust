@@ -2,10 +2,10 @@ use std::marker::PhantomData;
 
 use crate::{
     depend::{self, Depend, Dependency},
+    error::Result,
     inject::{self, Get, Inject},
     query::item::{self, At, Item},
     world::World,
-    Result,
 };
 
 pub struct Ignore<I, S: Scope = All>(I, PhantomData<S>);

@@ -1,10 +1,9 @@
-use crate::{error::Error, world::World};
-use entia_core::{utility::short_type_name, Bits};
-use std::{
-    any::TypeId,
-    collections::{HashMap, HashSet},
-    marker::PhantomData,
+use crate::{
+    error::{Error, Result},
+    world::World,
 };
+use entia_core::{utility::short_type_name, Bits};
+use std::{any::TypeId, collections::HashMap, marker::PhantomData};
 
 /// SAFETY: This trait is unsafe since a wrong implementation may lead to undefined behavior. Every
 /// implementor must declare all necessary dependencies in order to properly inform a scheduler of what it
@@ -137,7 +136,7 @@ impl Default for Has {
 }
 
 impl Conflict {
-    pub fn detect(&mut self, scope: Scope, dependencies: &Vec<Dependency>) -> Result<(), Error> {
+    pub fn detect(&mut self, scope: Scope, dependencies: &Vec<Dependency>) -> Result {
         let mut errors = Vec::new();
         if scope == Scope::Outer && self.unknown {
             errors.push(Error::UnknownConflict);
@@ -149,9 +148,6 @@ impl Conflict {
                 Err(error) => errors.push(error),
             }
         }
-
-        let mut set = HashSet::new();
-        errors.retain(move |error| set.insert(error.clone()));
         Error::All(errors).flatten(true).map(Err).unwrap_or(Ok(()))
     }
 
@@ -162,12 +158,7 @@ impl Conflict {
         self.defers.clear();
     }
 
-    fn conflict(
-        &mut self,
-        scope: Scope,
-        index: Option<usize>,
-        dependency: Dependency,
-    ) -> Result<(), Error> {
+    fn conflict(&mut self, scope: Scope, index: Option<usize>, dependency: Dependency) -> Result {
         use Scope::*;
 
         match (index, dependency) {

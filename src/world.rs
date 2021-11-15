@@ -1,5 +1,8 @@
 use self::{meta::*, segment::*, store::*};
-use crate::{entity::Entity, error::Error, Result};
+use crate::{
+    entity::Entity,
+    error::{Error, Result},
+};
 use entia_core::{utility::next_power_of_2, Flags, IntoFlags, Maybe, Wrap};
 use std::{
     any::{type_name, TypeId},
@@ -119,16 +122,16 @@ impl World {
     pub(crate) fn initialize<T: Default + Send + Sync + 'static>(
         &mut self,
         default: Option<T>,
-    ) -> Result<(Arc<Store>, usize)> {
+    ) -> Result<(Column, usize)> {
         let meta = self.get_or_add_meta::<T>();
         let segment = self.get_or_add_segment(&[meta.clone()]);
-        let store = segment.store(&meta)?;
+        let column = segment.column(&meta)?;
         if segment.count() == 0 {
             let (index, _) = segment.reserve(1);
             segment.resolve();
-            unsafe { store.set(index, default.unwrap_or_default()) };
+            unsafe { column.store().set(index, default.unwrap_or_default()) };
         }
-        Ok((store, segment.index()))
+        Ok((column, segment.index()))
     }
 
     fn get_segment_index(&self, types: &HashSet<TypeId>) -> Option<usize> {
@@ -150,12 +153,12 @@ pub mod meta {
         pub(crate) free: unsafe fn(*mut (), usize, usize),
         pub(crate) copy: unsafe fn((*const (), usize), (*mut (), usize), usize),
         pub(crate) drop: unsafe fn(*mut (), usize, usize),
-        pub(crate) clone: Option<unsafe fn((*const (), usize), (*mut (), usize))>,
+        pub(crate) clone: Option<unsafe fn((*const (), usize), (*mut (), usize), usize)>,
         pub(crate) format: Option<unsafe fn(*const (), usize) -> String>,
     }
 
     pub struct Cloner<T: ?Sized>(
-        unsafe fn((*const (), usize), (*mut (), usize)),
+        unsafe fn((*const (), usize), (*mut (), usize), usize),
         PhantomData<T>,
     );
 
@@ -215,11 +218,14 @@ pub mod meta {
     impl<T: Clone> Cloner<T> {
         pub fn new() -> Self {
             Self(
-                |source, target| unsafe {
-                    let source = &*source.0.cast::<T>().add(source.1);
+                |source, target, count| unsafe {
+                    let source = source.0.cast::<T>().add(source.1);
                     let target = target.0.cast::<T>().add(target.1);
                     // Use 'ptd::write' to prevent the old value from being dropped since it might not be initialized.
-                    target.write(source.clone());
+                    for i in 0..count {
+                        let source = &*source.add(i);
+                        target.add(i).write(source.clone());
+                    }
                 },
                 PhantomData,
             )
@@ -265,11 +271,16 @@ pub mod segment {
         index: usize,
         count: usize,
         flags: Flags<Flag>,
-        stores: Box<[Arc<Store>]>,
+        stores: Arc<[Store]>,
         pub(super) types: HashSet<TypeId>,
         reserved: AtomicUsize,
         capacity: usize,
     }
+
+    #[derive(Clone)]
+    pub struct Row(usize, Arc<[Store]>);
+    #[derive(Clone)]
+    pub struct Column(usize, Arc<[Store]>);
 
     impl Segment {
         pub(super) fn new(
@@ -279,10 +290,10 @@ pub mod segment {
             metas: &[Arc<Meta>],
         ) -> Self {
             // Iterate over all metas in order to have them consistently ordered.
-            let stores: Box<[_]> = metas
+            let stores: Arc<[_]> = metas
                 .iter()
                 .filter(|meta| types.contains(&meta.identifier))
-                .map(|meta| Arc::new(Store::new(meta.clone(), capacity)))
+                .map(|meta| Store::new(meta.clone(), capacity))
                 .collect();
             let mut flags = Flag::None.flags();
             if stores.iter().all(|store| store.meta().clone.is_some()) {
@@ -345,20 +356,37 @@ pub mod segment {
             self.count = 0;
         }
 
+        #[inline]
         pub fn stores(&self) -> impl ExactSizeIterator<Item = &Store> {
-            self.stores.iter().map(AsRef::as_ref)
+            self.stores.iter()
         }
 
-        pub fn store_at(&self, index: usize) -> Arc<Store> {
-            self.stores[index].clone()
+        #[inline]
+        pub fn store_at(&self, index: usize) -> Option<&Store> {
+            self.stores.get(index)
         }
 
-        pub fn store(&self, meta: &Meta) -> Result<Arc<Store>> {
+        pub fn row(&self, index: usize) -> Result<Row> {
+            if index < self.count {
+                Ok(Row(index, self.stores.clone()))
+            } else {
+                Err(Error::SegmentIndexOutOfRange(index, self.index))
+            }
+        }
+
+        pub fn column(&self, meta: &Meta) -> Result<Column> {
+            let index = self
+                .stores()
+                .position(|store| store.meta().identifier == meta.identifier)
+                .ok_or(Error::MissingStore(meta.name, self.index))?;
+            Ok(Column(index, self.stores.clone()))
+        }
+
+        pub fn store(&self, meta: &Meta) -> Result<&Store> {
             self.stores
                 .iter()
                 .filter(|store| store.meta().identifier == meta.identifier)
                 .next()
-                .cloned()
                 .ok_or(Error::MissingStore(meta.name, self.index))
         }
 
@@ -402,12 +430,41 @@ pub mod segment {
             Flags::new(self as usize)
         }
     }
+
+    impl Column {
+        #[inline]
+        pub fn store(&self) -> &Store {
+            &self.1[self.0]
+        }
+    }
+
+    impl Row {
+        #[inline]
+        pub const fn index(&self) -> usize {
+            self.0
+        }
+
+        #[inline]
+        pub fn store(&self, index: usize) -> Option<&Store> {
+            self.1.get(index)
+        }
+
+        pub fn extract(&self) -> Result<Self> {
+            let mut stores = Vec::with_capacity(self.1.len());
+            for source in self.1.iter() {
+                let target = Store::new(source.0.clone(), 1);
+                unsafe { Store::clone((source, self.0), (&target, 0), 1) }?;
+                stores.push(target);
+            }
+            Ok(Row(0, stores.into()))
+        }
+    }
 }
 
 pub mod store {
     use super::*;
 
-    pub struct Store(Arc<Meta>, pub(crate) UnsafeCell<*mut ()>);
+    pub struct Store(pub(super) Arc<Meta>, UnsafeCell<*mut ()>);
 
     // SAFETY: 'Sync' and 'Send' can be implemented for 'Store' because the only way to get a 'Meta' for some type is through a
     // 'World' which ensures that the type is 'Send' and 'Sync'.
@@ -443,13 +500,20 @@ pub mod store {
 
         /// SAFETY: The target must be dropped before calling this function.
         #[inline]
-        pub unsafe fn clone(source: (&Self, usize), target: (&Self, usize)) -> Result {
+        pub unsafe fn clone(
+            source: (&Self, usize),
+            target: (&Self, usize),
+            count: usize,
+        ) -> Result {
             debug_assert_eq!(source.0.meta().identifier, target.0.meta().identifier);
-
             let metas = (source.0.meta(), target.0.meta());
             let error = Error::MissingClone(metas.0.name);
             let clone = metas.0.clone.or(metas.1.clone).ok_or(error)?;
-            clone((source.0.data(), source.1), (target.0.data(), target.1));
+            clone(
+                (source.0.data(), source.1),
+                (target.0.data(), target.1),
+                count,
+            );
             Ok(())
         }
 

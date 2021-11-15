@@ -1,9 +1,9 @@
 use crate::{
     depend::{Conflict, Depend, Dependency, Scope},
-    error::Error,
+    error::{Error, Result},
+    family::template::Family,
     inject::{Context, Get, Inject},
     world::World,
-    Result,
 };
 use entia_core::{utility::short_type_name, Call};
 use runner::*;
@@ -18,10 +18,14 @@ use std::{
 pub struct System {
     identifier: usize,
     name: String, // TODO: Replace with 'Lazy<String>'
-    pub(crate) run: Box<dyn FnMut(&World) + Send>,
-    pub(crate) update: Box<dyn FnMut(&mut World) + Send>,
-    pub(crate) resolve: Box<dyn FnMut(&mut World) + Send>,
+    pub(crate) run: Box<dyn FnMut(&World) -> Result + Send>,
+    pub(crate) update: Box<dyn FnMut(&mut World) -> Result + Send>,
+    pub(crate) resolve: Box<dyn FnMut(&mut World) -> Result + Send>,
     pub(crate) depend: Box<dyn Fn(&World) -> Vec<Dependency> + Send>,
+}
+
+pub trait IntoOutput {
+    fn output(self) -> Result;
 }
 
 pub trait IntoSystem<'a, I, M = ()> {
@@ -63,8 +67,12 @@ impl<'a, I, M, S: IntoSystem<'a, I, M>, E: Into<Error>> IntoSystem<'a, I, (I, M,
     }
 }
 
-impl<'a, I: Inject, O, C: Call<I, O> + Call<<I::State as Get<'a>>::Item, O> + Send + 'static>
-    IntoSystem<'a, I::Input, (I, O, C)> for C
+impl<
+        'a,
+        I: Inject,
+        O: IntoOutput,
+        C: Call<I, O> + Call<<I::State as Get<'a>>::Item, O> + Send + 'static,
+    > IntoSystem<'a, I::Input, (I, O, C)> for C
 where
     I::State: Send + 'static,
 {
@@ -76,9 +84,7 @@ where
                 Some(identifier),
                 I::name(),
                 (self, state, identifier),
-                |(run, state, _), world| {
-                    run.call(state.get(world));
-                },
+                |(run, state, _), world| run.call(state.get(world)).output(),
                 |(_, state, identifier), world| I::update(state, Context::new(*identifier, world)),
                 |(_, state, identifier), world| I::resolve(state, Context::new(*identifier, world)),
                 |(_, state, _), world| state.depend(world),
@@ -88,15 +94,42 @@ where
     }
 }
 
+impl IntoOutput for () {
+    #[inline]
+    fn output(self) -> Result {
+        Ok(self)
+    }
+}
+
+impl IntoOutput for Error {
+    #[inline]
+    fn output(self) -> Result {
+        Err(self)
+    }
+}
+
+impl<'a> IntoOutput for Family<'a> {
+    fn output(self) -> Result {
+        Ok(())
+    }
+}
+
+impl<T: IntoOutput> IntoOutput for Result<T> {
+    #[inline]
+    fn output(self) -> Result {
+        self.and_then(IntoOutput::output)
+    }
+}
+
 impl System {
     #[inline]
     pub unsafe fn new<'a, T: Send + 'static>(
         identifier: Option<usize>,
         name: String,
         state: T,
-        run: fn(&'a mut T, &'a World),
-        update: fn(&'a mut T, &'a mut World),
-        resolve: fn(&'a mut T, &'a mut World),
+        run: fn(&'a mut T, &'a World) -> Result,
+        update: fn(&'a mut T, &'a mut World) -> Result,
+        resolve: fn(&'a mut T, &'a mut World) -> Result,
         depend: fn(&'a T, &'a World) -> Vec<Dependency>,
     ) -> Self {
         struct State<T>(Arc<UnsafeCell<T>>);
@@ -158,6 +191,8 @@ impl fmt::Debug for System {
 }
 
 pub mod runner {
+    use std::sync::Mutex;
+
     use super::*;
 
     pub struct Runner {
@@ -203,6 +238,7 @@ pub mod runner {
         pub fn run(&mut self, world: &mut World) -> Result {
             self.update(world)?;
 
+            let result = Mutex::new(Ok(()));
             for block in self.blocks.iter_mut() {
                 // If world's version has changed, this may mean that the dependencies used to schedule the systems
                 // are not up to date, therefore it is not safe to run the systems in parallel.
@@ -212,27 +248,37 @@ pub mod runner {
                         let systems = self.systems.as_mut_ptr() as usize;
                         // SAFETY: The indices stored in 'runs' are guaranteed to be unique and ordered. See 'Runner::schedule'.
                         block.runs.par_iter().for_each(|&index| unsafe {
-                            ((&mut *(systems as *mut System).add(index)).run)(world)
+                            if let Err(error) =
+                                ((&mut *(systems as *mut System).add(index)).run)(world)
+                            {
+                                if let Ok(mut guard) = result.lock() {
+                                    *guard = Err(error);
+                                }
+                            }
                         });
                     } else {
                         for &index in block.runs.iter() {
-                            (self.systems[index].run)(world);
+                            (self.systems[index].run)(world)?;
                         }
                     }
                 } else {
                     for &index in block.runs.iter() {
                         let system = &mut self.systems[index];
-                        (system.update)(world);
-                        (system.run)(world);
+                        (system.update)(world)?;
+                        (system.run)(world)?;
                     }
                 }
 
                 for &index in block.resolves.iter() {
-                    (self.systems[index].resolve)(world);
+                    (self.systems[index].resolve)(world)?;
                 }
             }
 
-            Ok(())
+            if let Ok(result) = result.into_inner() {
+                result
+            } else {
+                Ok(())
+            }
         }
 
         /// Batches the systems in blocks that can be executed in parallel using the dependencies produces by each system
@@ -243,7 +289,7 @@ pub mod runner {
             self.conflict.clear();
 
             for (index, system) in self.systems.iter_mut().enumerate() {
-                (system.update)(world);
+                (system.update)(world)?;
                 self.blocks.push(Block {
                     runs: vec![index],
                     resolves: vec![index],
@@ -333,9 +379,9 @@ pub mod schedule {
                     None,
                     "barrier".into(),
                     (),
-                    |_, _| {},
-                    |_, _| {},
-                    |_, _| {},
+                    |_, _| Ok(()),
+                    |_, _| Ok(()),
+                    |_, _| Ok(()),
                     |_, _| vec![Dependency::Unknown],
                 )
             })
