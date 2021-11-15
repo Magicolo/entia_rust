@@ -1,5 +1,4 @@
-use entia::template::*;
-use entia::*;
+use entia::{template::*, *};
 
 fn main() {
     #[derive(Default, Clone)]

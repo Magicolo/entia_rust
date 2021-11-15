@@ -414,7 +414,7 @@ fn world_path(span: Span) -> Path {
 }
 
 fn result_path(span: Span) -> Path {
-    full_path(span, vec!["entia", "Result"])
+    full_path(span, vec!["entia", "error", "Result"])
 }
 
 fn segment_path(span: Span) -> Path {

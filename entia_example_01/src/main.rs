@@ -1,4 +1,4 @@
-use entia::*;
+use entia::{error::Error, *};
 use piston::WindowSettings;
 use piston_window::*;
 use std::{collections::VecDeque, error, result::Result, time::Duration};
@@ -130,7 +130,7 @@ fn main() {
     run().unwrap();
 }
 
-fn run() -> Result<(), Box<dyn error::{Result, Error}>> {
+fn run() -> Result<(), Box<dyn error::Error>> {
     const SIZE: [f64; 2] = [640., 480.];
     const CELLS: [f64; 2] = [25., 25.];
 
@@ -152,7 +152,8 @@ fn run() -> Result<(), Box<dyn error::{Result, Error}>> {
                         visible: true,
                     },
                 )
-            }));
+            }))?;
+            Ok(())
         })
         // .add(
         //     |query: Query<Entity>, extract: Extract, create: Create<_>| {
@@ -206,7 +207,7 @@ fn run() -> Result<(), Box<dyn error::{Result, Error}>> {
                 runner.run(&mut world)?
             }
             event => window
-                .draw_2d(&event, |context, graphics, _| -> Result<(), Error> {
+                .draw_2d(&event, |context, graphics, _| -> Result<_, Error> {
                     graphics.clear_color([0.25, 0.4, 0.1, 1.]);
 
                     let cell_size = [SIZE[0] / CELLS[0], SIZE[1] / CELLS[1]];

@@ -1,12 +1,11 @@
+use self::{output::*, runner::*};
 use crate::{
     depend::{Conflict, Depend, Dependency, Scope},
     error::{Error, Result},
-    family::template::Family,
     inject::{Context, Get, Inject},
     world::World,
 };
 use entia_core::{utility::short_type_name, Call};
-use runner::*;
 use std::{
     any::type_name,
     cell::UnsafeCell,
@@ -22,10 +21,6 @@ pub struct System {
     pub(crate) update: Box<dyn FnMut(&mut World) -> Result + Send>,
     pub(crate) resolve: Box<dyn FnMut(&mut World) -> Result + Send>,
     pub(crate) depend: Box<dyn Fn(&World) -> Vec<Dependency> + Send>,
-}
-
-pub trait IntoOutput {
-    fn output(self) -> Result;
 }
 
 pub trait IntoSystem<'a, I, M = ()> {
@@ -91,33 +86,6 @@ where
             )
         };
         Ok(system)
-    }
-}
-
-impl IntoOutput for () {
-    #[inline]
-    fn output(self) -> Result {
-        Ok(self)
-    }
-}
-
-impl IntoOutput for Error {
-    #[inline]
-    fn output(self) -> Result {
-        Err(self)
-    }
-}
-
-impl<'a> IntoOutput for Family<'a> {
-    fn output(self) -> Result {
-        Ok(())
-    }
-}
-
-impl<T: IntoOutput> IntoOutput for Result<T> {
-    #[inline]
-    fn output(self) -> Result {
-        self.and_then(IntoOutput::output)
     }
 }
 
@@ -417,4 +385,48 @@ pub mod schedule {
             self
         }
     }
+}
+
+pub mod output {
+    use super::*;
+
+    pub trait IntoOutput {
+        fn output(self) -> Result;
+    }
+
+    impl IntoOutput for Error {
+        #[inline]
+        fn output(self) -> Result {
+            Err(self)
+        }
+    }
+
+    impl<T: IntoOutput> IntoOutput for Option<T> {
+        #[inline]
+        fn output(self) -> Result {
+            self.map_or(Ok(()), IntoOutput::output)
+        }
+    }
+
+    impl<T: IntoOutput> IntoOutput for Result<T> {
+        #[inline]
+        fn output(self) -> Result {
+            self.and_then(IntoOutput::output)
+        }
+    }
+
+    macro_rules! output {
+        ($($p:ident, $t:ident),*) => {
+            impl<'a, $($t: IntoOutput,)*> IntoOutput for ($($t,)*) {
+                #[inline]
+                fn output(self) -> Result {
+                    let ($($p,)*) = self;
+                    $($p.output()?;)*
+                    Ok(())
+                }
+            }
+        };
+    }
+
+    entia_macro::recurse_16!(output);
 }
