@@ -106,17 +106,6 @@ where
     }
 }
 
-impl<T> Clone for State<T> {
-    #[inline]
-    fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-            index: self.index,
-            _marker: PhantomData,
-        }
-    }
-}
-
 impl<'a, R: Resolve + 'static> Get<'a> for State<R> {
     type Item = (Defer<'a, R>, &'a mut R);
 

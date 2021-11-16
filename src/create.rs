@@ -14,7 +14,7 @@ use crate::{
     inject::{Context, Get, Inject},
     template::{ApplyContext, CountContext, DeclareContext, InitializeContext, Spawn, Template},
     world::World,
-    write::{self, Write},
+    write::Write,
 };
 
 pub struct Create<'a, T: Template + 'a> {
@@ -27,7 +27,7 @@ pub struct State<T: Template>(defer::State<Outer<T>>);
 
 struct Outer<T: Template> {
     inner: Inner<T>,
-    entities: write::State<Entities>,
+    entities: Write<Entities>,
 }
 
 struct Inner<T: Template> {

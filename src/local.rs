@@ -3,7 +3,7 @@ use crate::{
     error::Result,
     inject::{Context, Get, Inject},
     world::World,
-    write::{self, Write},
+    write::Write,
 };
 use std::{
     any::{Any, TypeId},
@@ -16,7 +16,7 @@ pub struct Local<'a, T>(&'a mut T);
 
 pub struct State<T> {
     index: usize,
-    inner: write::State<Inner>,
+    inner: Write<Inner>,
     _marker: PhantomData<T>,
 }
 
@@ -49,16 +49,6 @@ impl<T: Default + Send + Sync + 'static> Inject for Local<'_, T> {
             inner,
             _marker: PhantomData,
         })
-    }
-}
-
-impl<T> Clone for State<T> {
-    fn clone(&self) -> Self {
-        Self {
-            index: self.index,
-            inner: self.inner.clone(),
-            _marker: PhantomData,
-        }
     }
 }
 

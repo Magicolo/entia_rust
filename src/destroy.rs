@@ -6,7 +6,7 @@ use crate::{
     error::{Error, Result},
     inject::{Context, Get, Inject},
     world::World,
-    write::{self, Write},
+    write::Write,
 };
 use std::{any::type_name, collections::HashSet};
 
@@ -15,7 +15,7 @@ pub struct State(defer::State<Inner>);
 
 struct Inner {
     set: HashSet<Entity>,
-    entities: write::State<Entities>,
+    entities: Write<Entities>,
 }
 
 enum Defer {

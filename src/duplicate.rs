@@ -8,7 +8,7 @@ use crate::{
     error::{Error, Result},
     inject::{Context, Get, Inject},
     world::{segment::Row, store::Store, World},
-    write::{self, Write},
+    write::Write,
 };
 
 pub struct Duplicate<'a> {
@@ -22,7 +22,7 @@ pub struct Duplicate<'a> {
 pub struct State(defer::State<Inner>);
 
 struct Inner {
-    entities: write::State<Entities>,
+    entities: Write<Entities>,
     buffer: Vec<Entity>,
     segments: HashSet<usize>,
 }

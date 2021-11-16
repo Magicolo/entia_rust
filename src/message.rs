@@ -5,7 +5,6 @@ use crate::{
     error::Result,
     inject::{Context, Get, Inject},
     world::World,
-    write,
     write::Write,
 };
 
@@ -44,7 +43,7 @@ pub mod emit {
     use super::*;
 
     pub struct Emit<'a, T>(&'a mut Vec<T>);
-    pub struct State<T>(write::State<Inner<T>>, Vec<T>);
+    pub struct State<T>(Write<Inner<T>>, Vec<T>);
 
     impl<T> Emit<'_, T> {
         #[inline]
@@ -72,12 +71,6 @@ pub mod emit {
         }
     }
 
-    impl<T: Clone> Clone for State<T> {
-        fn clone(&self) -> Self {
-            Self(self.0.clone(), self.1.clone())
-        }
-    }
-
     impl<'a, T: 'a> Get<'a> for State<T> {
         type Item = Emit<'a, T>;
 
@@ -98,7 +91,7 @@ pub mod receive {
     use super::*;
 
     pub struct Receive<'a, T>(&'a mut Queue<T>);
-    pub struct State<T>(usize, write::State<Inner<T>>);
+    pub struct State<T>(usize, Write<Inner<T>>);
 
     impl<T> Iterator for Receive<'_, T> {
         type Item = T;
@@ -122,12 +115,6 @@ pub mod receive {
                 index
             };
             Ok(State(index, inner))
-        }
-    }
-
-    impl<T: Clone> Clone for State<T> {
-        fn clone(&self) -> Self {
-            Self(self.0, self.1.clone())
         }
     }
 

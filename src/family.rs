@@ -10,15 +10,14 @@ use crate::{
         item::{At, Context, Item},
         Query,
     },
-    read::{self, Read},
+    read::Read,
     world::World,
-    write,
 };
 use std::{any::type_name, fmt, iter::from_fn, marker::PhantomData};
 
 #[derive(Clone)]
 pub struct Family<'a>(Entity, &'a Entities);
-pub struct State(read::State<Entity>, read::State<Entities>);
+pub struct State(Read<Entity>, Read<Entities>);
 
 impl<'a> Family<'a> {
     #[inline]
@@ -469,7 +468,7 @@ pub mod item {
 
         pub struct Child<'a, I: Item, F: Filter = ()> {
             index: u32,
-            query: write::State<query::Inner<I, F>>,
+            query: &'a query::Inner<I, F>,
             entities: &'a Entities,
             world: &'a World,
         }
@@ -486,7 +485,7 @@ pub mod item {
                 I::State: At<'a>,
             {
                 let current = get_datum_at::<Self>(self.index, index + 1, self.entities)?;
-                get_item(current.0, self.query.as_ref(), self.world)
+                get_item(current.0, self.query, self.world)
             }
         }
 
@@ -537,7 +536,7 @@ pub mod item {
             }
         }
 
-        impl<'a, I: Item<State = impl At<'a>>, F: Filter> At<'a> for State<I, F> {
+        impl<'a, I: Item<State = impl At<'a>> + 'static, F: Filter + 'static> At<'a> for State<I, F> {
             type Item = Child<'a, I, F>;
 
             #[inline]
@@ -545,7 +544,7 @@ pub mod item {
                 Child {
                     index: self.entity.at(index, world).index(),
                     entities: self.entities.as_ref(),
-                    query: self.query.inner.clone(),
+                    query: self.query.inner.as_ref(),
                     world,
                 }
             }
@@ -566,7 +565,7 @@ pub mod item {
             fn into_iter(self) -> Self::IntoIter {
                 LinkIterator {
                     index: self.entities.get_datum_at(self.index).unwrap().first_child,
-                    query: self.query.as_ref(),
+                    query: self.query,
                     entities: self.entities,
                     world: self.world,
                     _marker: PhantomData,
@@ -580,7 +579,7 @@ pub mod item {
 
         pub struct Parent<'a, I: Item, F: Filter = ()> {
             index: u32,
-            query: write::State<query::Inner<I, F>>,
+            query: &'a query::Inner<I, F>,
             entities: &'a Entities,
             world: &'a World,
         }
@@ -597,7 +596,7 @@ pub mod item {
                 I::State: At<'a>,
             {
                 let pair = get_datum_at::<Self>(self.index, index + 1, self.entities)?;
-                get_item(pair.0, self.query.as_ref(), self.world)
+                get_item(pair.0, self.query, self.world)
             }
         }
 
@@ -648,7 +647,7 @@ pub mod item {
             }
         }
 
-        impl<'a, I: Item, F: Filter> At<'a> for State<I, F> {
+        impl<'a, I: Item + 'static, F: Filter + 'static> At<'a> for State<I, F> {
             type Item = Parent<'a, I, F>;
 
             #[inline]
@@ -656,7 +655,7 @@ pub mod item {
                 Parent {
                     index: self.entity.at(index, world).index(),
                     entities: self.entities.as_ref(),
-                    query: self.query.inner.clone(),
+                    query: self.query.inner.as_ref(),
                     world,
                 }
             }
@@ -677,7 +676,7 @@ pub mod item {
             fn into_iter(self) -> Self::IntoIter {
                 LinkIterator {
                     index: self.entities.get_datum_at(self.index).unwrap().parent,
-                    query: self.query.as_ref(),
+                    query: self.query,
                     entities: self.entities,
                     world: self.world,
                     _marker: PhantomData,

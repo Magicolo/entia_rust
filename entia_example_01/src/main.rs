@@ -7,6 +7,7 @@ use std::{collections::VecDeque, error, result::Result, time::Duration};
 TODO:
     - Add tests.
     - Currently, using 'world.set_meta' will not update current meta users (including segments).
+    - Split 'Families' in 2 modules: 1 (Families) that reads entities and 1 (Foster?) that defers family operations.
     - Is it possible to extract a (serializable) template from an entity?
     - Is it possible to copy an entity's components to another entity?
     - How to serialize an entity with all its (serializable) components?

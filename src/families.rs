@@ -7,13 +7,13 @@ use crate::{
     family::Family,
     inject::{Context, Get, Inject},
     world::World,
-    write::{self, Write},
+    write::Write,
 };
 
 pub struct Families<'a>(defer::Defer<'a, Inner>, &'a Entities);
 pub struct State(defer::State<Inner>);
 
-struct Inner(write::State<Entities>);
+struct Inner(Write<Entities>);
 
 enum Defer {
     AdoptAt(Entity, Entity, usize),

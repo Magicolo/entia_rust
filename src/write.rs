@@ -7,8 +7,14 @@ use crate::{
 };
 use std::marker::PhantomData;
 
-pub struct Write<T>(Column, PhantomData<T>);
-pub struct State<T>(Column, usize, PhantomData<T>);
+pub struct Write<T>(Column, usize, PhantomData<T>);
+
+impl<T> Write<T> {
+    #[inline]
+    pub const fn segment(&self) -> usize {
+        self.1
+    }
+}
 
 impl<T: Default + Send + Sync + 'static> Inject for &mut T {
     type Input = <Write<T> as Inject>::Input;
@@ -21,15 +27,15 @@ impl<T: Default + Send + Sync + 'static> Inject for &mut T {
 
 impl<T: Default + Send + Sync + 'static> Inject for Write<T> {
     type Input = Option<T>;
-    type State = State<T>;
+    type State = Self;
 
     fn initialize(input: Self::Input, mut context: inject::Context) -> Result<Self::State> {
         let (column, segment) = context.world().initialize(input)?;
-        Ok(State(column, segment, PhantomData))
+        Ok(Self(column, segment, PhantomData))
     }
 }
 
-impl<'a, T: 'static> Get<'a> for State<T> {
+impl<'a, T: 'static> Get<'a> for Write<T> {
     type Item = &'a mut T;
 
     #[inline]
@@ -47,17 +53,17 @@ impl<T: Send + Sync + 'static> Item for &mut T {
 }
 
 impl<T: Send + Sync + 'static> Item for Write<T> {
-    type State = State<T>;
+    type State = Self;
 
     fn initialize(mut context: item::Context) -> Result<Self::State> {
         let meta = context.world().get_meta::<T>()?;
         let segment = context.segment();
         let column = segment.column(&meta)?;
-        Ok(State(column, segment.index(), PhantomData))
+        Ok(Self(column, segment.index(), PhantomData))
     }
 }
 
-impl<'a, T: 'static> At<'a> for State<T> {
+impl<'a, T: 'static> At<'a> for Write<T> {
     type Item = &'a mut T;
 
     #[inline]
@@ -66,30 +72,9 @@ impl<'a, T: 'static> At<'a> for State<T> {
     }
 }
 
-impl<T> State<T> {
-    #[inline]
-    pub const fn segment(&self) -> usize {
-        self.1
-    }
-}
-
-impl<T> Clone for State<T> {
-    #[inline]
-    fn clone(&self) -> Self {
-        Self(self.0.clone(), self.1, PhantomData)
-    }
-}
-
-unsafe impl<T: 'static> Depend for State<T> {
+unsafe impl<T: 'static> Depend for Write<T> {
     fn depend(&self, _: &World) -> Vec<Dependency> {
         vec![Dependency::write::<T>().at(self.1)]
-    }
-}
-
-impl<'a, T> From<&'a mut State<T>> for Write<T> {
-    #[inline]
-    fn from(state: &'a mut State<T>) -> Self {
-        Write(state.0.clone(), PhantomData)
     }
 }
 
@@ -101,20 +86,6 @@ impl<T: 'static> AsRef<T> for Write<T> {
 }
 
 impl<T: 'static> AsMut<T> for Write<T> {
-    #[inline]
-    fn as_mut(&mut self) -> &mut T {
-        unsafe { self.0.store().get(0) }
-    }
-}
-
-impl<T: 'static> AsRef<T> for State<T> {
-    #[inline]
-    fn as_ref(&self) -> &T {
-        unsafe { self.0.store().get(0) }
-    }
-}
-
-impl<T: 'static> AsMut<T> for State<T> {
     #[inline]
     fn as_mut(&mut self) -> &mut T {
         unsafe { self.0.store().get(0) }

@@ -5,9 +5,9 @@ use crate::{
     entity::Entity,
     error::Result,
     inject::{self, Get, Inject},
-    read::{self, Read},
+    read::Read,
     world::{segment::Segment, World},
-    write::{self, Write},
+    write::Write,
 };
 use std::{
     any::type_name,
@@ -23,8 +23,8 @@ pub struct Query<'a, I: Item, F: Filter = ()> {
 }
 
 pub struct State<I: Item, F: Filter> {
-    pub(crate) inner: write::State<Inner<I, F>>,
-    pub(crate) entities: read::State<Entities>,
+    pub(crate) inner: Write<Inner<I, F>>,
+    pub(crate) entities: Read<Entities>,
 }
 
 pub struct Iterator<'a, 'b, I: Item, F: Filter> {
@@ -153,15 +153,6 @@ where
         }
 
         Ok(())
-    }
-}
-
-impl<I: Item, F: Filter> Clone for State<I, F> {
-    fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-            entities: self.entities.clone(),
-        }
     }
 }
 
