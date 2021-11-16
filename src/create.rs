@@ -8,7 +8,7 @@ use crate::{
     depend::{Depend, Dependency},
     entities::Entities,
     entity::Entity,
-    error::{Error, Result},
+    error::Result,
     family::template::{EntityIndices, Families, Family, SegmentIndices},
     inject::{Context, Get, Inject},
     template::{ApplyContext, CountContext, DeclareContext, InitializeContext, Spawn, Template},
@@ -49,7 +49,7 @@ struct Defer<T: Template> {
 }
 
 impl<T: Template> Create<'_, T> {
-    pub fn all(&mut self, templates: impl IntoIterator<Item = T>) -> Result<Families> {
+    pub fn all(&mut self, templates: impl IntoIterator<Item = T>) -> Families {
         match self.inner.count {
             Some(count) => self.all_static(count, templates),
             None => self.all_dynamic(templates),
@@ -57,12 +57,14 @@ impl<T: Template> Create<'_, T> {
     }
 
     #[inline]
-    pub fn one(&mut self, template: T) -> Result<Family> {
-        self.all(once(template))?.get(0).ok_or(Error::MissingFamily)
+    pub fn one(&mut self, template: T) -> Family {
+        self.all(once(template))
+            .get(0)
+            .expect("There must be have at least one root.")
     }
 
     #[inline]
-    pub fn clones(&mut self, count: usize, template: T) -> Result<Families>
+    pub fn clones(&mut self, count: usize, template: T) -> Families
     where
         T: Clone,
     {
@@ -70,18 +72,14 @@ impl<T: Template> Create<'_, T> {
     }
 
     #[inline]
-    pub fn defaults(&mut self, count: usize) -> Result<Families>
+    pub fn defaults(&mut self, count: usize) -> Families
     where
         T: Default,
     {
         self.all((0..count).map(|_| T::default()))
     }
 
-    fn all_static(
-        &mut self,
-        count: usize,
-        templates: impl IntoIterator<Item = T>,
-    ) -> Result<Families> {
+    fn all_static(&mut self, count: usize, templates: impl IntoIterator<Item = T>) -> Families {
         let Create {
             defer,
             inner,
@@ -95,7 +93,7 @@ impl<T: Template> Create<'_, T> {
         }
 
         if inner.initial_roots.len() == 0 {
-            return Ok(Families::EMPTY);
+            return Families::EMPTY;
         }
 
         inner.entity_roots.truncate(inner.initial_roots.len());
@@ -103,7 +101,7 @@ impl<T: Template> Create<'_, T> {
             inner.entity_roots.push((inner.entity_roots.len(), 0));
         }
 
-        let (index, success) = inner.reserve(count * inner.initial_roots.len(), entities, world)?;
+        let (index, success) = inner.reserve(count * inner.initial_roots.len(), entities, world);
         if success {
             apply(
                 &inner.initial_state,
@@ -118,10 +116,10 @@ impl<T: Template> Create<'_, T> {
             defer.defer(inner.defer(index));
         }
 
-        Ok(inner.families())
+        inner.families()
     }
 
-    fn all_dynamic(&mut self, templates: impl IntoIterator<Item = T>) -> Result<Families> {
+    fn all_dynamic(&mut self, templates: impl IntoIterator<Item = T>) -> Families {
         let Create {
             defer,
             inner,
@@ -155,10 +153,10 @@ impl<T: Template> Create<'_, T> {
 
         let count = inner.entity_indices.len();
         if count == 0 {
-            return Ok(Families::EMPTY);
+            return Families::EMPTY;
         }
 
-        let (index, success) = inner.reserve(count, entities, world)?;
+        let (index, success) = inner.reserve(count, entities, world);
         if success {
             apply(
                 &inner.initial_state,
@@ -173,17 +171,12 @@ impl<T: Template> Create<'_, T> {
             defer.defer(inner.defer(index));
         }
 
-        Ok(inner.families())
+        inner.families()
     }
 }
 
 impl<T: Template> Inner<T> {
-    fn reserve(
-        &mut self,
-        count: usize,
-        entities: &Entities,
-        world: &World,
-    ) -> Result<(usize, bool)> {
+    fn reserve(&mut self, count: usize, entities: &Entities, world: &World) -> (usize, bool) {
         self.entity_instances.resize(count, Entity::NULL);
         let ready = entities.reserve(&mut self.entity_instances);
         let mut last = 0;
@@ -207,13 +200,18 @@ impl<T: Template> Inner<T> {
                 last = i;
                 let instances =
                     &self.entity_instances[segment_index..segment_index + segment_count];
-                unsafe { segment.store_at::<Entity>(0)?.set_all(pair.0, instances) };
+                unsafe {
+                    segment
+                        .store_at(0)
+                        .expect("Segment must have an entity store.")
+                        .set_all(pair.0, instances)
+                };
             }
 
             segment_index += segment_count;
         }
 
-        Ok((last, success && ready == count))
+        (last, success && ready == count)
     }
 
     fn families(&self) -> Families {
@@ -342,7 +340,8 @@ impl<T: Template> Resolve for Outer<T> {
                     [segment_indices.index..segment_indices.index + segment_count];
                 unsafe {
                     segment
-                        .store_at::<Entity>(0)?
+                        .store_at(0)
+                        .expect("Segment must have an entity store.")
                         .set_all(segment_indices.store, instances)
                 };
             }

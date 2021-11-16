@@ -30,7 +30,7 @@ impl<T: Default + Send + Sync + 'static> Inject for Write<T> {
     type State = Self;
 
     fn initialize(input: Self::Input, mut context: inject::Context) -> Result<Self::State> {
-        let (column, segment) = context.world().initialize(input)?;
+        let (column, segment) = context.world().initialize(input);
         Ok(Self(column, segment, PhantomData))
     }
 }

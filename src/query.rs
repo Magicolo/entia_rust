@@ -250,9 +250,10 @@ pub mod item {
         #[inline]
         fn update(state: &mut Self::State, context: Context) -> Result {
             if let Some(state) = state {
-                I::update(state, context)?;
+                I::update(state, context)
+            } else {
+                Ok(())
             }
-            Ok(())
         }
     }
 

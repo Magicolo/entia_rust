@@ -3,7 +3,7 @@ use crate::{
     depend::{Depend, Dependency},
     entities::Entities,
     entity::Entity,
-    error::{Error, Result},
+    error::Result,
     inject::{Context, Get, Inject},
     world::World,
     write::Write,
@@ -63,25 +63,6 @@ impl Resolve for Inner {
     type Item = Defer;
 
     fn resolve(&mut self, items: impl Iterator<Item = Self::Item>, world: &mut World) -> Result {
-        let entities = self.entities.as_mut();
-        let set = &mut self.set;
-
-        for defer in items {
-            match defer {
-                Defer::One(entity) if entities.has(entity) => {
-                    destroy(entity.index(), true, false, set, entities, world)?;
-                }
-                Defer::Family(root) if entities.has(root) => {
-                    destroy(root.index(), true, true, set, entities, world)?;
-                }
-                _ => {}
-            }
-        }
-
-        if set.len() > 0 {
-            entities.release(set.drain());
-        }
-
         fn destroy(
             index: u32,
             root: bool,
@@ -89,52 +70,69 @@ impl Resolve for Inner {
             set: &mut HashSet<Entity>,
             entities: &mut Entities,
             world: &mut World,
-        ) -> Result<Option<u32>> {
-            if let Some(datum) = entities.get_datum_at(index).cloned() {
-                if set.insert(datum.entity(index)) {
-                    if family {
-                        let mut child = datum.first_child;
-                        while let Some(next) = destroy(child, false, family, set, entities, world)?
-                        {
-                            child = next;
-                        }
-                    }
-
-                    if root {
-                        if let Some(previous_sibling) =
-                            entities.get_datum_at_mut(datum.previous_sibling)
-                        {
-                            previous_sibling.next_sibling = datum.next_sibling;
-                        } else if let Some(parent) = entities.get_datum_at_mut(datum.parent) {
-                            // Only an entity with no 'previous_sibling' can ever be the 'first_child' of its parent.
-                            parent.first_child = datum.next_sibling;
-                        }
-
-                        if let Some(next_sibling) = entities.get_datum_at_mut(datum.next_sibling) {
-                            next_sibling.previous_sibling = datum.previous_sibling;
-                        }
-                    }
-
-                    let segment = &mut world.segments[datum.segment_index as usize];
-                    if segment.remove_at(datum.store_index as usize) {
-                        // SAFETY: When it exists, the entity store is always the first. This segment must have
-                        // an entity store since the destroyed entity was in it.
-                        let entity = *unsafe {
-                            segment
-                                .store_at::<Entity>(0)?
-                                .get::<Entity>(datum.store_index as usize)
-                        };
-                        entities
-                            .get_datum_at_mut(entity.index())
-                            .ok_or(Error::InvalidEntity(entity))?
-                            .update(&datum);
+        ) -> Option<u32> {
+            // Entity index must be validated by caller.
+            let datum = entities.get_datum_at(index).cloned()?;
+            if set.insert(datum.entity(index)) {
+                if family {
+                    let mut child = datum.first_child;
+                    while let Some(next) = destroy(child, false, family, set, entities, world) {
+                        child = next;
                     }
                 }
 
-                Ok(Some(datum.next_sibling))
-            } else {
-                Ok(None)
+                if root {
+                    if let Some(previous_sibling) =
+                        entities.get_datum_at_mut(datum.previous_sibling)
+                    {
+                        previous_sibling.next_sibling = datum.next_sibling;
+                    } else if let Some(parent) = entities.get_datum_at_mut(datum.parent) {
+                        // Only an entity with no 'previous_sibling' can ever be the 'first_child' of its parent.
+                        parent.first_child = datum.next_sibling;
+                    }
+
+                    if let Some(next_sibling) = entities.get_datum_at_mut(datum.next_sibling) {
+                        next_sibling.previous_sibling = datum.previous_sibling;
+                    }
+                }
+
+                let segment = &mut world.segments[datum.segment_index as usize];
+                if segment.remove_at(datum.store_index as usize) {
+                    // SAFETY: When it exists, the entity store is always the first. This segment must have
+                    // an entity store since the destroyed entity was in it.
+                    let entity = *unsafe {
+                        segment
+                            .store_at(0)
+                            .expect("Segment must have an entity store.")
+                            .get::<Entity>(datum.store_index as usize)
+                    };
+                    entities
+                        .get_datum_at_mut(entity.index())
+                        .expect("Entity must be valid.")
+                        .update(&datum);
+                }
             }
+
+            Some(datum.next_sibling)
+        }
+
+        let entities = self.entities.as_mut();
+        let set = &mut self.set;
+
+        for defer in items {
+            match defer {
+                Defer::One(entity) if entities.has(entity) => {
+                    destroy(entity.index(), true, false, set, entities, world);
+                }
+                Defer::Family(root) if entities.has(root) => {
+                    destroy(root.index(), true, true, set, entities, world);
+                }
+                _ => {}
+            }
+        }
+
+        if set.len() > 0 {
+            entities.release(set.drain());
         }
 
         Ok(())

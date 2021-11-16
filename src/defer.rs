@@ -2,7 +2,7 @@ use std::{any::Any, collections::VecDeque, marker::PhantomData};
 
 use crate::{
     depend::{Depend, Dependency},
-    error::{Error, Result},
+    error::Result,
     inject::{Context, Get, Inject},
     local::{self, Local},
     world::World,
@@ -83,7 +83,7 @@ where
                 resolve: |count, state, world| {
                     let (state, queue) = state
                         .downcast_mut::<Pair<R>>()
-                        .ok_or(Error::InvalidResolveState)?;
+                        .expect("Invalid resolve state.");
                     state.resolve(queue.drain(..count), world)
                 },
             });

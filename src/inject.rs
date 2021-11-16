@@ -162,10 +162,9 @@ impl<I: Inject> Injector<I> {
             I::update(&mut self.state, Context::new(self.identifier, world))?;
             self.dependencies = self.state.depend(world);
             let mut conflict = Conflict::default();
-            match conflict.detect(Scope::Inner, &self.dependencies) {
-                Ok(_) => Ok(()),
-                Err(error) => Err(Error::InnerConflict(self.name().into(), error.into())),
-            }
+            conflict
+                .detect(Scope::Inner, &self.dependencies)
+                .map_err(|error| Error::InnerConflict(self.name().into(), error.into()))
         } else {
             Ok(())
         }

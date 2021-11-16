@@ -119,19 +119,20 @@ impl World {
         &mut self.segments[index]
     }
 
+    // TODO: Move elsewhere.
     pub(crate) fn initialize<T: Default + Send + Sync + 'static>(
         &mut self,
         default: Option<T>,
-    ) -> Result<(Column, usize)> {
+    ) -> (Column, usize) {
         let meta = self.get_or_add_meta::<T>();
         let segment = self.get_or_add_segment(&[meta.clone()]);
-        let column = segment.column(&meta)?;
+        let column = segment.column(&meta).expect("Segment must have meta.");
         if segment.count() == 0 {
             let (index, _) = segment.reserve(1);
             segment.resolve();
             unsafe { column.store().set(index, default.unwrap_or_default()) };
         }
-        Ok((column, segment.index()))
+        (column, segment.index())
     }
 
     fn get_segment_index(&self, types: &HashSet<TypeId>) -> Option<usize> {
@@ -362,13 +363,8 @@ pub mod segment {
         }
 
         #[inline]
-        pub fn store_at<T: 'static>(&self, index: usize) -> Result<&Store> {
-            if let Some(store) = self.stores.get(index) {
-                debug_assert_eq!(TypeId::of::<T>(), store.meta().identifier);
-                Ok(store)
-            } else {
-                Err(Error::MissingStore(type_name::<T>(), self.index()))
-            }
+        pub fn store_at(&self, index: usize) -> Option<&Store> {
+            self.stores.get(index)
         }
 
         pub fn row(&self, index: usize) -> Result<Row> {
@@ -390,8 +386,7 @@ pub mod segment {
         pub fn store(&self, meta: &Meta) -> Result<&Store> {
             self.stores
                 .iter()
-                .filter(|store| store.meta().identifier == meta.identifier)
-                .next()
+                .find(|store| store.meta().identifier == meta.identifier)
                 .ok_or(Error::MissingStore(meta.name, self.index))
         }
 
@@ -454,11 +449,11 @@ pub mod segment {
             self.1.get(index)
         }
 
-        pub fn extract(&self) -> Result<Self> {
-            let mut stores = Vec::with_capacity(self.1.len());
-            for source in self.1.iter() {
+        pub fn clone(row: &Self) -> Result<Self> {
+            let mut stores = Vec::with_capacity(row.1.len());
+            for source in row.1.iter() {
                 let target = Store::new(source.0.clone(), 1);
-                unsafe { Store::clone((source, self.0), (&target, 0), 1) }?;
+                unsafe { Store::clone((source, row.0), (&target, 0), 1) }?;
                 stores.push(target);
             }
             Ok(Row(0, stores.into()))

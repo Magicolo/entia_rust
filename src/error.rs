@@ -8,6 +8,7 @@ use std::{
 #[derive(Debug)]
 pub enum Error {
     WrongWorld,
+    MutexPoison,
     MissingSystem,
     MissingStore(&'static str, usize),
     MissingMeta(&'static str),

@@ -148,7 +148,8 @@ impl Conflict {
                 Err(error) => errors.push(error),
             }
         }
-        Error::All(errors).flatten(true).map(Err).unwrap_or(Ok(()))
+
+        Error::All(errors).flatten(true).map_or(Ok(()), Err)
     }
 
     pub fn clear(&mut self) {
@@ -246,9 +247,7 @@ fn add_all(map: &mut HashMap<TypeId, Has>, identifier: TypeId) {
 }
 
 fn has(map: &HashMap<TypeId, Has>, identifier: TypeId, index: usize) -> bool {
-    map.get(&identifier)
-        .map(|has| has.has(index))
-        .unwrap_or(false)
+    map.get(&identifier).map_or(false, |has| has.has(index))
 }
 
 fn has_any(map: &HashMap<TypeId, Has>, identifier: TypeId) -> bool {

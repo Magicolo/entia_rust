@@ -156,8 +156,7 @@ fn run() -> Result<(), Box<dyn error::Error>> {
                         visible: true,
                     },
                 )
-            }))?;
-            Ok(())
+            }));
         })
         // .add(
         //     |query: Query<Entity>, extract: Extract, create: Create<_>| {

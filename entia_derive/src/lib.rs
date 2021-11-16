@@ -77,10 +77,10 @@ pub fn inject(input: TokenStream) -> TokenStream {
             quote! { <#field_type as #inject_path>::initialize(_input.#index, _context.owned())? }
         });
         let update_body = unpack_fields(&fields).map(|(index, _, field_type)| {
-            quote! { <#field_type as #inject_path>::update(&mut _state.#index, _context.owned()); }
+            quote! { <#field_type as #inject_path>::update(&mut _state.#index, _context.owned())?; }
         });
         let resolve_body = unpack_fields(&fields).map(|(index, _, field_type)| {
-            quote! { <#field_type as #inject_path>::resolve(&mut _state.#index, _context.owned()); }
+            quote! { <#field_type as #inject_path>::resolve(&mut _state.#index, _context.owned())?; }
         });
 
         let mut get_generics = generics.clone();
@@ -157,13 +157,15 @@ pub fn inject(input: TokenStream) -> TokenStream {
                 }
 
                 #[inline]
-                fn update(_state: &mut Self::State, mut _context: #context_path) {
+                fn update(_state: &mut Self::State, mut _context: #context_path) -> #result_path {
                     #(#update_body)*
+                    Ok(())
                 }
 
                 #[inline]
-                fn resolve(_state: &mut Self::State, mut _context: #context_path) {
+                fn resolve(_state: &mut Self::State, mut _context: #context_path) -> #result_path {
                     #(#resolve_body)*
+                    Ok(())
                 }
             }
 
@@ -427,8 +429,9 @@ fn unpack_fields(fields: &Fields) -> impl Iterator<Item = (Index, Member, Type)>
         let member = field
             .ident
             .as_ref()
-            .map(|name| Member::Named(name.clone()))
-            .unwrap_or(Member::Unnamed(index.clone()));
+            .map_or(Member::Unnamed(index.clone()), |name| {
+                Member::Named(name.clone())
+            });
         (index, member, field.ty.clone())
     })
 }

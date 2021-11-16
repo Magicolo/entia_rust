@@ -159,7 +159,7 @@ impl fmt::Debug for System {
 }
 
 pub mod runner {
-    use std::sync::Mutex;
+    use std::{mem::replace, sync::Mutex};
 
     use super::*;
 
@@ -169,6 +169,7 @@ pub mod runner {
         systems: Vec<System>,
         blocks: Vec<Block>,
         conflict: Conflict,
+        result: Mutex<Result>,
     }
 
     #[derive(Default)]
@@ -186,6 +187,7 @@ pub mod runner {
                 systems: systems.into_iter().collect(),
                 blocks: Vec::new(),
                 conflict: Conflict::default(),
+                result: Mutex::new(Ok(())),
             }
         }
 
@@ -206,24 +208,26 @@ pub mod runner {
         pub fn run(&mut self, world: &mut World) -> Result {
             self.update(world)?;
 
-            let result = Mutex::new(Ok(()));
             for block in self.blocks.iter_mut() {
                 // If world's version has changed, this may mean that the dependencies used to schedule the systems
                 // are not up to date, therefore it is not safe to run the systems in parallel.
                 if self.version == world.version() {
                     if block.runs.len() > 1 {
                         use rayon::prelude::*;
+                        let result = &mut self.result;
                         let systems = self.systems.as_mut_ptr() as usize;
-                        // SAFETY: The indices stored in 'runs' are guaranteed to be unique and ordered. See 'Runner::schedule'.
-                        block.runs.par_iter().for_each(|&index| unsafe {
-                            if let Err(error) =
-                                ((&mut *(systems as *mut System).add(index)).run)(world)
-                            {
+                        block.runs.par_iter().for_each(|&index| {
+                            // SAFETY: The indices stored in 'runs' are guaranteed to be unique and ordered. See 'Runner::schedule'.
+                            let system = unsafe { &mut *(systems as *mut System).add(index) };
+                            if let Err(error) = (system.run)(world) {
                                 if let Ok(mut guard) = result.lock() {
                                     *guard = Err(error);
                                 }
                             }
                         });
+                        result
+                            .get_mut()
+                            .map_or(Err(Error::MutexPoison), |result| replace(result, Ok(())))?;
                     } else {
                         for &index in block.runs.iter() {
                             (self.systems[index].run)(world)?;
@@ -242,29 +246,13 @@ pub mod runner {
                 }
             }
 
-            if let Ok(result) = result.into_inner() {
-                result
-            } else {
-                Ok(())
-            }
+            Ok(())
         }
 
         /// Batches the systems in blocks that can be executed in parallel using the dependencies produces by each system
         /// to ensure safety. The indices stored in the blocks are guaranteed to be unique and ordered within each block.
         /// Note that systems may be reordered if their dependencies allow it.
         fn schedule(&mut self, world: &mut World) -> Result {
-            self.blocks.clear();
-            self.conflict.clear();
-
-            for (index, system) in self.systems.iter_mut().enumerate() {
-                (system.update)(world)?;
-                self.blocks.push(Block {
-                    runs: vec![index],
-                    resolves: vec![index],
-                    dependencies: (system.depend)(world),
-                });
-            }
-
             fn next(blocks: &mut [Block], conflict: &mut Conflict) -> Result {
                 if let Some((head, rest)) = blocks.split_first_mut() {
                     conflict.detect(Scope::Inner, &head.dependencies)?;
@@ -291,6 +279,18 @@ pub mod runner {
                 }
 
                 Ok(())
+            }
+
+            self.blocks.clear();
+            self.conflict.clear();
+
+            for (index, system) in self.systems.iter_mut().enumerate() {
+                (system.update)(world)?;
+                self.blocks.push(Block {
+                    runs: vec![index],
+                    resolves: vec![index],
+                    dependencies: (system.depend)(world),
+                });
             }
 
             next(&mut self.blocks, &mut self.conflict)?;
@@ -366,10 +366,9 @@ pub mod schedule {
                 }
             }
 
-            match Error::All(errors).flatten(true) {
-                Some(error) => Err(error),
-                None => Ok(Runner::new(self.world.identifier(), systems)),
-            }
+            Error::All(errors)
+                .flatten(true)
+                .map_or(Ok(Runner::new(self.world.identifier(), systems)), Err)
         }
 
         fn with_prefix<T, F: FnOnce(Self) -> Self>(mut self, with: F) -> Self {

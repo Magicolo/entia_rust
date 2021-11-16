@@ -269,8 +269,9 @@ impl Entities {
 
         let index = self
             .get_datum(entity)
-            .map(|datum| (datum.first_child, datum.last_child))
-            .unwrap_or((u32::MAX, u32::MAX));
+            .map_or((u32::MAX, u32::MAX), |datum| {
+                (datum.first_child, datum.last_child)
+            });
         Children(index.0, index.1, false, self)
     }
 

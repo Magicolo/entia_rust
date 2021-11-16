@@ -54,14 +54,25 @@ impl Duplicate<'_> {
                     segment: segment.index(),
                     entities: self.buffer.drain(..).collect(),
                     store: pair.0,
-                    row: segment.row(datum.store_index as usize)?.extract()?,
+                    row: Row::clone(
+                        &segment
+                            .row(datum.store_index as usize)
+                            .expect("Index must be in range."),
+                    )
+                    .expect("Segment must be clonable."),
                 });
             } else {
-                unsafe { segment.store_at::<Entity>(0)?.set_all(pair.0, self.buffer) };
+                unsafe {
+                    segment
+                        .store_at(0)
+                        .expect("Segment must have an entity store.")
+                        .set_all(pair.0, self.buffer)
+                };
                 for store in segment.stores().skip(1) {
                     let source = (store, datum.store_index as usize);
                     let target = (store, pair.0);
-                    unsafe { Store::clone(source, target, count) }?;
+                    unsafe { Store::clone(source, target, count) }
+                        .expect("Store must be clonable.");
                 }
 
                 // TODO: Calling 'initialize' may make the entities visible. There should be a way to distinguish pending entities
@@ -94,7 +105,7 @@ impl Duplicate<'_> {
                     .collect(),
             )
             .flatten(false)
-            .unwrap())
+            .expect("Segment must not be clonable."))
         }
     }
 }
@@ -150,24 +161,22 @@ impl Resolve for Inner {
 
             unsafe {
                 segment
-                    .store_at::<Entity>(0)?
+                    .store_at(0)
+                    .expect("Segment must have an entity store.")
                     .set_all(defer.store, &defer.entities)
             };
 
             for (i, store) in segment.stores().enumerate().skip(1) {
-                let source = defer
-                    .row
-                    .store(i)
-                    .ok_or(Error::MissingStore(store.meta().name, segment.index()))?;
+                let source = defer.row.store(i).expect("Store must exist.");
                 let source = (source, defer.row.index());
                 let target = (store, defer.store);
-                unsafe { Store::clone(source, target, count) }?;
+                unsafe { Store::clone(source, target, count) }.expect("Store must be clonable.");
             }
 
             for (i, &entity) in self.buffer.iter().enumerate() {
                 entities
                     .get_datum_at_mut(entity.index())
-                    .ok_or(Error::InvalidEntity(entity))?
+                    .expect("Entity index must be in bounds.")
                     .initialize(
                         entity.generation(),
                         (defer.store + i) as u32,
