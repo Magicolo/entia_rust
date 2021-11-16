@@ -74,7 +74,7 @@ where
     type State = State<R>;
 
     fn initialize(input: Self::Input, context: Context) -> Result<Self::State> {
-        let mut inner = <Local<Inner> as Inject>::initialize(None, context)?;
+        let mut inner = Local::<Inner>::initialize(None, context)?;
         let index = {
             let inner = inner.as_mut();
             let index = inner.resolvers.len();

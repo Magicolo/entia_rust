@@ -49,14 +49,13 @@ impl Inject for Destroy<'_> {
     fn initialize(_: Self::Input, mut context: Context) -> Result<Self::State> {
         let inner = Inner {
             set: HashSet::new(),
-            entities: <Write<Entities> as Inject>::initialize(None, context.owned())?,
+            entities: Write::initialize(None, context.owned())?,
         };
-        let defer = <defer::Defer<Inner> as Inject>::initialize(inner, context)?;
-        Ok(State(defer))
+        Ok(State(defer::Defer::initialize(inner, context)?))
     }
 
     fn resolve(State(state): &mut Self::State, context: Context) -> Result {
-        <defer::Defer<Inner> as Inject>::resolve(state, context)
+        defer::Defer::resolve(state, context)
     }
 }
 

@@ -126,8 +126,8 @@ where
     type State = State<I, F>;
 
     fn initialize(_: Self::Input, mut context: inject::Context) -> Result<Self::State> {
-        let inner = <Write<Inner<I, F>> as Inject>::initialize(None, context.owned())?;
-        let entities = <Read<Entities> as Inject>::initialize(None, context.owned())?;
+        let inner = <Write<_> as Inject>::initialize(None, context.owned())?;
+        let entities = <Read<_> as Inject>::initialize(None, context.owned())?;
         Ok(State { inner, entities })
     }
 

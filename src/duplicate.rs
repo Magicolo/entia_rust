@@ -110,18 +110,17 @@ impl Inject for Duplicate<'_> {
     type State = State;
 
     fn initialize(_: Self::Input, mut context: Context) -> Result<Self::State> {
-        let entities = <Write<Entities> as Inject>::initialize(None, context.owned())?;
+        let entities = Write::initialize(None, context.owned())?;
         let inner = Inner {
             entities,
             segments: HashSet::new(),
             buffer: Vec::new(),
         };
-        let defer = <defer::Defer<Inner> as Inject>::initialize(inner, context)?;
-        Ok(State(defer))
+        Ok(State(defer::Defer::initialize(inner, context)?))
     }
 
     fn resolve(State(state): &mut Self::State, mut context: Context) -> Result {
-        <defer::Defer<Inner> as Inject>::resolve(state, context.owned())
+        defer::Defer::resolve(state, context.owned())
     }
 }
 

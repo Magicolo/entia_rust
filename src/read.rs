@@ -21,7 +21,7 @@ impl<T: Default + Send + Sync + 'static> Inject for &T {
     type State = <Read<T> as Inject>::State;
 
     fn initialize(input: Self::Input, context: inject::Context) -> Result<Self::State> {
-        <Read<T> as Inject>::initialize(input, context)
+        <Read<_> as Inject>::initialize(input, context)
     }
 }
 
@@ -48,7 +48,7 @@ impl<T: Send + Sync + 'static> Item for &T {
     type State = <Read<T> as Item>::State;
 
     fn initialize(context: item::Context) -> Result<Self::State> {
-        <Read<T> as Item>::initialize(context)
+        Read::<T>::initialize(context)
     }
 }
 

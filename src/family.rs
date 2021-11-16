@@ -125,8 +125,8 @@ impl Item for Family<'_> {
 
     fn initialize(mut context: Context) -> Result<Self::State> {
         Ok(State(
-            <Read<Entity> as Item>::initialize(context.owned())?,
-            <Read<Entities> as Inject>::initialize(None, context.into())?,
+            <Read<_> as Item>::initialize(context.owned())?,
+            <Read<_> as Inject>::initialize(None, context.into())?,
         ))
     }
 }
@@ -514,9 +514,9 @@ pub mod item {
 
             fn initialize(mut context: Context) -> Result<Self::State> {
                 Ok(State {
-                    entity: <Read<Entity> as Item>::initialize(context.owned())?,
-                    entities: <Read<Entities> as Inject>::initialize(None, context.owned().into())?,
-                    query: <Query<I, F> as Inject>::initialize((), context.into())?,
+                    entity: <Read<_> as Item>::initialize(context.owned())?,
+                    entities: <Read<_> as Inject>::initialize(None, context.owned().into())?,
+                    query: Query::initialize((), context.into())?,
                 })
             }
 
@@ -529,9 +529,9 @@ pub mod item {
                 }: &mut Self::State,
                 mut context: Context,
             ) -> Result {
-                <Read<Entity> as Item>::update(entity, context.owned())?;
-                <Read<Entities> as Inject>::update(entities, context.owned().into())?;
-                <Query<I, F> as Inject>::update(query, context.into())?;
+                <Read<_> as Item>::update(entity, context.owned())?;
+                <Read<_> as Inject>::update(entities, context.owned().into())?;
+                Query::update(query, context.into())?;
                 Ok(())
             }
         }
@@ -625,9 +625,9 @@ pub mod item {
 
             fn initialize(mut context: Context) -> Result<Self::State> {
                 Ok(State {
-                    entity: <Read<Entity> as Item>::initialize(context.owned())?,
-                    entities: <Read<Entities> as Inject>::initialize(None, context.owned().into())?,
-                    query: <Query<I, F> as Inject>::initialize((), context.into())?,
+                    entity: <Read<_> as Item>::initialize(context.owned())?,
+                    entities: <Read<_> as Inject>::initialize(None, context.owned().into())?,
+                    query: Query::initialize((), context.into())?,
                 })
             }
 
@@ -640,9 +640,9 @@ pub mod item {
                 }: &mut Self::State,
                 mut context: Context,
             ) -> Result {
-                <Read<Entity> as Item>::update(entity, context.owned())?;
-                <Read<Entities> as Inject>::update(entities, context.owned().into())?;
-                <Query<I, F> as Inject>::update(query, context.into())?;
+                <Read<_> as Item>::update(entity, context.owned())?;
+                <Read<_> as Inject>::update(entities, context.owned().into())?;
+                Query::update(query, context.into())?;
                 Ok(())
             }
         }

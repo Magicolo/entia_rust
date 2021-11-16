@@ -101,16 +101,13 @@ impl Inject for Families<'_> {
     type State = State;
 
     fn initialize(_: Self::Input, mut context: Context) -> Result<Self::State> {
-        let inner = Inner(<Write<Entities> as Inject>::initialize(
-            None,
-            context.owned(),
-        )?);
-        let defer = <defer::Defer<Inner> as Inject>::initialize(inner, context)?;
-        Ok(State(defer))
+        let entities = Write::<Entities>::initialize(None, context.owned())?;
+        let inner = Inner(entities);
+        Ok(State(defer::Defer::initialize(inner, context)?))
     }
 
     fn resolve(State(state): &mut Self::State, context: Context) -> Result {
-        <defer::Defer<Inner> as Inject>::resolve(state, context)
+        defer::Defer::resolve(state, context)
     }
 }
 

@@ -21,7 +21,7 @@ impl<T: Default + Send + Sync + 'static> Inject for &mut T {
     type State = <Write<T> as Inject>::State;
 
     fn initialize(input: Self::Input, context: inject::Context) -> Result<Self::State> {
-        <Write<T> as Inject>::initialize(input, context)
+        <Write<_> as Inject>::initialize(input, context)
     }
 }
 
@@ -48,7 +48,7 @@ impl<T: Send + Sync + 'static> Item for &mut T {
     type State = <Write<T> as Item>::State;
 
     fn initialize(context: item::Context) -> Result<Self::State> {
-        <Write<T> as Item>::initialize(context)
+        Write::<T>::initialize(context)
     }
 }
 

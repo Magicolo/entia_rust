@@ -57,8 +57,7 @@ pub mod emit {
         type State = State<T>;
 
         fn initialize(_: Self::Input, context: Context) -> Result<Self::State> {
-            let inner = <Write<Inner<T>> as Inject>::initialize(None, context)?;
-            Ok(State(inner, Vec::new()))
+            Ok(State(Write::initialize(None, context)?, Vec::new()))
         }
 
         fn resolve(State(inner, messages): &mut Self::State, _: Context) -> Result {
@@ -107,7 +106,7 @@ pub mod receive {
         type State = State<T>;
 
         fn initialize(input: Self::Input, context: Context) -> Result<Self::State> {
-            let mut inner = <Write<Inner<T>> as Inject>::initialize(None, context)?;
+            let mut inner = Write::<Inner<T>>::initialize(None, context)?;
             let index = {
                 let inner = inner.as_mut();
                 let index = inner.queues.len();

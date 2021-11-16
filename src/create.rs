@@ -251,7 +251,7 @@ where
     type State = State<T>;
 
     fn initialize(input: Self::Input, mut context: Context) -> Result<Self::State> {
-        let entities = <Write<Entities> as Inject>::initialize(None, context.owned())?;
+        let entities = Write::initialize(None, context.owned())?;
         let world = context.world();
         let mut segment_metas = Vec::new();
         let declare = Spawn::<T>::declare(input, DeclareContext::new(0, &mut segment_metas, world));
@@ -312,15 +312,14 @@ where
             },
             entities,
         };
-        let defer = <defer::Defer<Outer<T>> as Inject>::initialize(state, context)?;
-        Ok(State(defer))
+        Ok(State(defer::Defer::initialize(state, context)?))
     }
 
     fn resolve(State(state): &mut Self::State, mut context: Context) -> Result {
         // Must resolve unconditionally entities and segments *even* if nothing was deferred in the case where creation
         // was completed at run time.
         state.as_mut().resolve(empty(), context.world())?;
-        <defer::Defer<Outer<T>> as Inject>::resolve(state, context.owned())
+        defer::Defer::resolve(state, context.owned())
     }
 }
 

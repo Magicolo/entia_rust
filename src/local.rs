@@ -31,7 +31,7 @@ impl<T: Default + Send + Sync + 'static> Inject for Local<'_, T> {
     type State = State<T>;
 
     fn initialize(input: Self::Input, mut context: Context) -> Result<Self::State> {
-        let mut inner = <Write<Inner> as Inject>::initialize(None, context.owned())?;
+        let mut inner = Write::<Inner>::initialize(None, context.owned())?;
         let index = {
             let key = (context.identifier(), TypeId::of::<T>());
             let inner = inner.as_mut();
