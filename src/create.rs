@@ -1,5 +1,4 @@
 use std::{
-    any::type_name,
     collections::HashMap,
     iter::{empty, once},
 };
@@ -208,12 +207,7 @@ impl<T: Template> Inner<T> {
                 last = i;
                 let instances =
                     &self.entity_instances[segment_index..segment_index + segment_count];
-                unsafe {
-                    segment
-                        .store_at(0)
-                        .ok_or(Error::MissingStore(type_name::<Entity>(), segment.index()))?
-                        .set_all(pair.0, instances)
-                };
+                unsafe { segment.store_at::<Entity>(0)?.set_all(pair.0, instances) };
             }
 
             segment_index += segment_count;
@@ -348,8 +342,7 @@ impl<T: Template> Resolve for Outer<T> {
                     [segment_indices.index..segment_indices.index + segment_count];
                 unsafe {
                     segment
-                        .store_at(0)
-                        .ok_or(Error::MissingStore(type_name::<Entity>(), segment.index()))?
+                        .store_at::<Entity>(0)?
                         .set_all(segment_indices.store, instances)
                 };
             }

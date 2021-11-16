@@ -8,7 +8,7 @@ use crate::{
     world::World,
     write::Write,
 };
-use std::{any::type_name, collections::HashSet};
+use std::collections::HashSet;
 
 pub struct Destroy<'a>(defer::Defer<'a, Inner>);
 pub struct State(defer::State<Inner>);
@@ -121,8 +121,7 @@ impl Resolve for Inner {
                         // an entity store since the destroyed entity was in it.
                         let entity = *unsafe {
                             segment
-                                .store_at(0)
-                                .ok_or(Error::MissingStore(type_name::<Entity>(), segment.index()))?
+                                .store_at::<Entity>(0)?
                                 .get::<Entity>(datum.store_index as usize)
                         };
                         entities

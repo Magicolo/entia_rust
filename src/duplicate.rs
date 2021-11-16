@@ -1,5 +1,3 @@
-use std::{any::type_name, collections::HashSet};
-
 use crate::{
     defer::{self, Resolve},
     depend::{Depend, Dependency},
@@ -10,6 +8,7 @@ use crate::{
     world::{segment::Row, store::Store, World},
     write::Write,
 };
+use std::collections::HashSet;
 
 pub struct Duplicate<'a> {
     defer: defer::Defer<'a, Inner>,
@@ -58,12 +57,7 @@ impl Duplicate<'_> {
                     row: segment.row(datum.store_index as usize)?.extract()?,
                 });
             } else {
-                unsafe {
-                    segment
-                        .store_at(0)
-                        .ok_or(Error::MissingStore(type_name::<Entity>(), segment.index()))?
-                        .set_all(pair.0, self.buffer)
-                };
+                unsafe { segment.store_at::<Entity>(0)?.set_all(pair.0, self.buffer) };
                 for store in segment.stores().skip(1) {
                     let source = (store, datum.store_index as usize);
                     let target = (store, pair.0);
@@ -156,8 +150,7 @@ impl Resolve for Inner {
 
             unsafe {
                 segment
-                    .store_at(0)
-                    .ok_or(Error::MissingStore(type_name::<Entity>(), segment.index()))?
+                    .store_at::<Entity>(0)?
                     .set_all(defer.store, &defer.entities)
             };
 

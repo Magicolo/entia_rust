@@ -362,8 +362,13 @@ pub mod segment {
         }
 
         #[inline]
-        pub fn store_at(&self, index: usize) -> Option<&Store> {
-            self.stores.get(index)
+        pub fn store_at<T: 'static>(&self, index: usize) -> Result<&Store> {
+            if let Some(store) = self.stores.get(index) {
+                debug_assert_eq!(TypeId::of::<T>(), store.meta().identifier);
+                Ok(store)
+            } else {
+                Err(Error::MissingStore(type_name::<T>(), self.index()))
+            }
         }
 
         pub fn row(&self, index: usize) -> Result<Row> {
