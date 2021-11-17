@@ -29,19 +29,20 @@ pub use crate::{
     destroy::Destroy,
     duplicate::Duplicate,
     entity::Entity,
-    families::Families,
+    families::{adopt::Adopt, reject::Reject, Families},
     family::{
         item::{child::Child, parent::Parent},
         Family,
     },
     ignore::{Ignore, Scope},
     inject::{Inject, Injector},
-    message::emit::Emit,
-    message::receive::Receive,
-    query::filter::{Filter, Has, Not},
-    query::Query,
+    message::{emit::Emit, receive::Receive},
+    query::{
+        filter::{Filter, Has, Not},
+        Query,
+    },
     system::{runner::Runner, schedule::Scheduler, IntoSystem, System},
-    template::{Add, Spawn, Template, With},
+    template::{Add, LeafTemplate, Spawn, SpawnTemplate, StaticTemplate, Template, With},
     world::World,
 };
 pub use entia_derive::{Depend, Filter, Inject, Template};

@@ -119,8 +119,7 @@ impl World {
         &mut self.segments[index]
     }
 
-    // TODO: Move elsewhere.
-    pub(crate) fn initialize<T: Default + Send + Sync + 'static>(
+    pub(crate) fn get_or_add_resource<T: Default + Send + Sync + 'static>(
         &mut self,
         default: Option<T>,
     ) -> (Column, usize) {

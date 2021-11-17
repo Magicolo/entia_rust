@@ -15,6 +15,10 @@ use crate::{
 };
 use std::{any::type_name, fmt, iter::from_fn, marker::PhantomData};
 
+// Do not replace '&'a Entities' by 'Read<Entities>' to remove the lifetime. This would allow users store a module that has
+// dependencies which would effectively hide those dependencies and potentially cause non-deterministic behaviours.
+// - Ex: a system adopts could be scheduled in parallel with a system that reads the children of a family instead
+// of being scheduled in sequence because of the 'defer-read' dependency conflict that couldn't be seen.
 #[derive(Clone)]
 pub struct Family<'a>(Entity, &'a Entities);
 pub struct State(Read<Entity>, Read<Entities>);
@@ -142,9 +146,9 @@ impl<'a> At<'a> for State {
 
 unsafe impl Depend for State {
     fn depend(&self, world: &World) -> Vec<Dependency> {
+        let mut dependencies = self.1.depend(world);
         // 'Family' may read entities from any segment.
-        let mut dependencies = self.0.depend(world);
-        dependencies.append(&mut self.1.depend(world));
+        dependencies.push(Dependency::read::<Entity>());
         dependencies
     }
 }
@@ -558,9 +562,10 @@ pub mod item {
             I::State: 'static,
         {
             fn depend(&self, world: &World) -> Vec<Dependency> {
-                let mut dependencies = self.entity.depend(world);
-                dependencies.append(&mut self.entities.depend(world));
+                let mut dependencies = self.entities.depend(world);
                 dependencies.append(&mut self.query.inner.depend(world));
+                // 'Child' may read entities from any segment.
+                dependencies.push(Dependency::read::<Entity>());
                 dependencies
             }
         }
@@ -675,9 +680,10 @@ pub mod item {
             I::State: 'static,
         {
             fn depend(&self, world: &World) -> Vec<Dependency> {
-                let mut dependencies = self.entity.depend(world);
-                dependencies.append(&mut self.entities.depend(world));
+                let mut dependencies = self.entities.depend(world);
                 dependencies.append(&mut self.query.inner.depend(world));
+                // 'Parent' may read entities from any segment.
+                dependencies.push(Dependency::read::<Entity>());
                 dependencies
             }
         }
