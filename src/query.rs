@@ -16,30 +16,30 @@ use std::{
     marker::PhantomData,
 };
 
-pub struct Query<'a, I: Item, F: Filter = ()> {
-    pub(crate) inner: &'a Inner<I, F>,
+pub struct Query<'a, I: Item, F = ()> {
+    pub(crate) inner: &'a Inner<I::State, F>,
     pub(crate) entities: &'a Entities,
     pub(crate) world: &'a World,
 }
 
-pub struct State<I: Item, F: Filter> {
-    pub(crate) inner: Write<Inner<I, F>>,
+pub struct State<I: Item, F> {
+    pub(crate) inner: Write<Inner<I::State, F>>,
     pub(crate) entities: Read<Entities>,
 }
 
-pub struct Iterator<'a, 'b, I: Item, F: Filter> {
+pub struct Iterator<'a, 'b, I: Item, F> {
     index: usize,
     segment: usize,
     query: &'b Query<'a, I, F>,
 }
 
-pub(crate) struct Inner<I: Item, F: Filter> {
+pub(crate) struct Inner<S, F> {
     pub(crate) segments: Vec<Option<usize>>,
-    pub(crate) states: Vec<(I::State, usize)>,
+    pub(crate) states: Vec<(S, usize)>,
     _marker: PhantomData<fn(F)>,
 }
 
-impl<I: Item, F: Filter> Default for Inner<I, F> {
+impl<S, F> Default for Inner<S, F> {
     fn default() -> Self {
         Self {
             segments: Vec::new(),
@@ -49,7 +49,7 @@ impl<I: Item, F: Filter> Default for Inner<I, F> {
     }
 }
 
-impl<'a, I: Item, F: Filter> Query<'a, I, F> {
+impl<'a, I: Item, F> Query<'a, I, F> {
     pub fn len(&self) -> usize {
         self.inner
             .states
@@ -76,7 +76,7 @@ impl<'a, I: Item, F: Filter> Query<'a, I, F> {
     }
 }
 
-impl<'a, 'b: 'a, I: Item, F: Filter> IntoIterator for &'b Query<'a, I, F> {
+impl<'a, 'b: 'a, I: Item, F> IntoIterator for &'b Query<'a, I, F> {
     type Item = <I::State as At<'a>>::Item;
     type IntoIter = Iterator<'a, 'b, I, F>;
 
@@ -89,7 +89,7 @@ impl<'a, 'b: 'a, I: Item, F: Filter> IntoIterator for &'b Query<'a, I, F> {
     }
 }
 
-impl<'a, 'b: 'a, I: Item, F: Filter> iter::Iterator for Iterator<'a, 'b, I, F> {
+impl<'a, 'b: 'a, I: Item, F> iter::Iterator for Iterator<'a, 'b, I, F> {
     type Item = <I::State as At<'a>>::Item;
 
     #[inline]
@@ -108,7 +108,7 @@ impl<'a, 'b: 'a, I: Item, F: Filter> iter::Iterator for Iterator<'a, 'b, I, F> {
         None
     }
 }
-impl<I: Item, F: Filter> fmt::Debug for Query<'_, I, F>
+impl<I: Item, F> fmt::Debug for Query<'_, I, F>
 where
     for<'a> <I::State as At<'a>>::Item: fmt::Debug,
 {
@@ -118,9 +118,9 @@ where
     }
 }
 
-impl<'a, I: Item + 'static, F: Filter + 'static> Inject for Query<'a, I, F>
+impl<I: Item, F: Filter + 'static> Inject for Query<'_, I, F>
 where
-    I::State: Send + Sync,
+    I::State: Send + Sync + 'static,
 {
     type Input = ();
     type State = State<I, F>;
@@ -156,7 +156,10 @@ where
     }
 }
 
-impl<'a, I: Item + 'static, F: Filter + 'static> Get<'a> for State<I, F> {
+impl<'a, I: Item, F: 'static> Get<'a> for State<I, F>
+where
+    I::State: 'static,
+{
     type Item = Query<'a, I, F>;
 
     #[inline]
@@ -169,7 +172,10 @@ impl<'a, I: Item + 'static, F: Filter + 'static> Get<'a> for State<I, F> {
     }
 }
 
-unsafe impl<I: Item + 'static, F: Filter + 'static> Depend for State<I, F> {
+unsafe impl<I: Item, F: 'static> Depend for State<I, F>
+where
+    I::State: 'static,
+{
     fn depend(&self, world: &World) -> Vec<Dependency> {
         let mut dependencies = self.entities.depend(world);
         let inner = self.inner.as_ref();

@@ -12,10 +12,12 @@ use syn::{parse_macro_input, Data, DataStruct};
 
 /*
 TODO: Inject structs don't seem to work very well since their lifetime seem to conflict.
+    - "mismatched types; expected trait `Get<'a>`; found trait `Get<'_>`"
+
     #[derive(Inject)]
     struct Common<'a> {
-        time: &'a Time, // works
-        query: Query<'a, &'a Position> // lifetime error
+        time: &'a Time,
+        query: Query<'a, &'a Position>
     }
 */
 #[proc_macro_derive(Inject)]
@@ -140,11 +142,11 @@ pub fn inject(input: TokenStream) -> TokenStream {
 
         let code = quote! {
             #[automatically_derived]
-            #[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+            #[derive(Debug, Copy, Clone, Default)]
             #vis struct #input_struct_name<#(#struct_generics,)*>(#(#struct_generics,)*);
 
             #[automatically_derived]
-            #[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, #depend_path)]
+            #[derive(#depend_path)]
             #vis struct #state_struct_name<#(#struct_generics,)*>(#(#struct_generics,)*);
 
             #[automatically_derived]

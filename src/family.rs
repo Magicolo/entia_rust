@@ -398,9 +398,9 @@ pub mod template {
 pub mod item {
     use super::*;
 
-    pub struct LinkIterator<'a, I: Item, F: Filter, N: Next> {
+    pub struct LinkIterator<'a, I: Item, F, N> {
         index: u32,
-        query: &'a query::Inner<I, F>,
+        query: &'a query::Inner<I::State, F>,
         entities: &'a Entities,
         world: &'a World,
         _marker: PhantomData<N>,
@@ -424,13 +424,13 @@ pub mod item {
         }
     }
 
-    impl<'a, I: Item, F: Filter, N: Next> Iterator for LinkIterator<'a, I, F, N> {
+    impl<'a, I: Item, F, N: Next> Iterator for LinkIterator<'a, I, F, N> {
         type Item = <I::State as At<'a>>::Item;
 
         fn next(&mut self) -> Option<Self::Item> {
             while let Some(datum) = self.entities.get_datum_at(self.index) {
                 self.index = N::next(datum);
-                if let Some(item) = get_item(datum, self.query, self.world) {
+                if let Some(item) = get_item::<I, F>(datum, self.query, self.world) {
                     return Some(item);
                 }
             }
@@ -454,9 +454,9 @@ pub mod item {
     }
 
     #[inline]
-    fn get_item<'a, I: Item, F: Filter>(
+    fn get_item<'a, I: Item, F>(
         datum: &Datum,
-        inner: &'a query::Inner<I, F>,
+        inner: &'a query::Inner<I::State, F>,
         world: &'a World,
     ) -> Option<<I::State as At<'a>>::Item> {
         let state = inner.segments[datum.segment_index as usize]?;
@@ -466,37 +466,37 @@ pub mod item {
     pub mod child {
         use super::*;
 
-        pub struct Child<'a, I: Item, F: Filter = ()> {
+        pub struct Child<'a, I: Item, F = ()> {
             index: u32,
-            query: &'a query::Inner<I, F>,
+            query: &'a query::Inner<I::State, F>,
             entities: &'a Entities,
             world: &'a World,
         }
 
-        pub struct State<I: Item, F: Filter> {
+        pub struct State<I: Item, F> {
             entity: <Read<Entity> as Item>::State,
             entities: <Read<Entities> as Inject>::State,
             query: query::State<I, F>,
         }
 
-        impl<I: Item + 'static, F: Filter + 'static> Child<'_, I, F> {
+        impl<I: Item, F> Child<'_, I, F> {
             pub fn get<'a>(&'a self, index: usize) -> Option<<I::State as At<'a>>::Item>
             where
                 I::State: At<'a>,
             {
                 let current = get_datum_at::<Self>(self.index, index + 1, self.entities)?;
-                get_item(current.0, self.query, self.world)
+                get_item::<I, F>(current.0, self.query, self.world)
             }
         }
 
-        impl<I: Item, F: Filter> Next for Child<'_, I, F> {
+        impl<I: Item, F> Next for Child<'_, I, F> {
             #[inline]
             fn next(datum: &Datum) -> u32 {
                 datum.previous_sibling
             }
         }
 
-        impl<I: Item + 'static, F: Filter + 'static> fmt::Debug for Child<'_, I, F>
+        impl<I: Item, F> fmt::Debug for Child<'_, I, F>
         where
             for<'a> <I::State as At<'a>>::Item: fmt::Debug,
         {
@@ -506,9 +506,9 @@ pub mod item {
             }
         }
 
-        impl<I: Item + 'static, F: Filter + 'static> Item for Child<'_, I, F>
+        impl<I: Item, F: Filter + 'static> Item for Child<'_, I, F>
         where
-            I::State: Send + Sync,
+            I::State: Send + Sync + 'static,
         {
             type State = State<I, F>;
 
@@ -536,7 +536,10 @@ pub mod item {
             }
         }
 
-        impl<'a, I: Item<State = impl At<'a>> + 'static, F: Filter + 'static> At<'a> for State<I, F> {
+        impl<'a, I: Item, F: 'static> At<'a> for State<I, F>
+        where
+            I::State: 'static,
+        {
             type Item = Child<'a, I, F>;
 
             #[inline]
@@ -550,7 +553,10 @@ pub mod item {
             }
         }
 
-        unsafe impl<I: Item + 'static, F: Filter + 'static> Depend for State<I, F> {
+        unsafe impl<I: Item, F: 'static> Depend for State<I, F>
+        where
+            I::State: 'static,
+        {
             fn depend(&self, world: &World) -> Vec<Dependency> {
                 let mut dependencies = self.entity.depend(world);
                 dependencies.append(&mut self.entities.depend(world));
@@ -559,7 +565,7 @@ pub mod item {
             }
         }
 
-        impl<'a, I: Item + 'static, F: Filter + 'static> IntoIterator for &'a Child<'a, I, F> {
+        impl<'a, I: Item, F> IntoIterator for &'a Child<'a, I, F> {
             type Item = <I::State as At<'a>>::Item;
             type IntoIter = LinkIterator<'a, I, F, Self>;
             fn into_iter(self) -> Self::IntoIter {
@@ -577,37 +583,37 @@ pub mod item {
     pub mod parent {
         use super::*;
 
-        pub struct Parent<'a, I: Item, F: Filter = ()> {
+        pub struct Parent<'a, I: Item, F = ()> {
             index: u32,
-            query: &'a query::Inner<I, F>,
+            query: &'a query::Inner<I::State, F>,
             entities: &'a Entities,
             world: &'a World,
         }
 
-        pub struct State<I: Item, F: Filter> {
+        pub struct State<I: Item, F> {
             entity: <Read<Entity> as Item>::State,
             entities: <Read<Entities> as Inject>::State,
             query: query::State<I, F>,
         }
 
-        impl<I: Item + 'static, F: Filter + 'static> Parent<'_, I, F> {
+        impl<I: Item, F> Parent<'_, I, F> {
             pub fn get<'a>(&'a self, index: usize) -> Option<<I::State as At<'a>>::Item>
             where
                 I::State: At<'a>,
             {
                 let pair = get_datum_at::<Self>(self.index, index + 1, self.entities)?;
-                get_item(pair.0, self.query, self.world)
+                get_item::<I, F>(pair.0, self.query, self.world)
             }
         }
 
-        impl<I: Item, F: Filter> Next for Parent<'_, I, F> {
+        impl<I: Item, F> Next for Parent<'_, I, F> {
             #[inline]
             fn next(datum: &Datum) -> u32 {
                 datum.parent
             }
         }
 
-        impl<I: Item + 'static, F: Filter + 'static> fmt::Debug for Parent<'_, I, F>
+        impl<I: Item, F> fmt::Debug for Parent<'_, I, F>
         where
             for<'a> <I::State as At<'a>>::Item: fmt::Debug,
         {
@@ -617,9 +623,9 @@ pub mod item {
             }
         }
 
-        impl<I: Item + 'static, F: Filter + 'static> Item for Parent<'_, I, F>
+        impl<I: Item, F: Filter + 'static> Item for Parent<'_, I, F>
         where
-            I::State: Send + Sync,
+            I::State: Send + Sync + 'static,
         {
             type State = State<I, F>;
 
@@ -647,7 +653,10 @@ pub mod item {
             }
         }
 
-        impl<'a, I: Item + 'static, F: Filter + 'static> At<'a> for State<I, F> {
+        impl<'a, I: Item, F: 'static> At<'a> for State<I, F>
+        where
+            I::State: 'static,
+        {
             type Item = Parent<'a, I, F>;
 
             #[inline]
@@ -661,7 +670,10 @@ pub mod item {
             }
         }
 
-        unsafe impl<I: Item + 'static, F: Filter + 'static> Depend for State<I, F> {
+        unsafe impl<I: Item, F: 'static> Depend for State<I, F>
+        where
+            I::State: 'static,
+        {
             fn depend(&self, world: &World) -> Vec<Dependency> {
                 let mut dependencies = self.entity.depend(world);
                 dependencies.append(&mut self.entities.depend(world));
@@ -670,7 +682,7 @@ pub mod item {
             }
         }
 
-        impl<'a, I: Item + 'static, F: Filter + 'static> IntoIterator for &'a Parent<'a, I, F> {
+        impl<'a, I: Item, F> IntoIterator for &'a Parent<'a, I, F> {
             type Item = <I::State as At<'a>>::Item;
             type IntoIter = LinkIterator<'a, I, F, Self>;
             fn into_iter(self) -> Self::IntoIter {

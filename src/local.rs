@@ -17,7 +17,7 @@ pub struct Local<'a, T>(&'a mut T);
 pub struct State<T> {
     index: usize,
     inner: Write<Inner>,
-    _marker: PhantomData<T>,
+    _marker: PhantomData<fn(T)>,
 }
 
 #[derive(Default)]

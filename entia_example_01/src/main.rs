@@ -95,6 +95,12 @@ the deferred operations should have a 'Defer(Entity)' dependency on all segments
 - Clean up unnecessary #[inline].
 */
 
+// #[derive(Inject)]
+// struct Boba<'a> {
+//     pub time: &'a Time,
+//     pub query: Query<'a, &'a Position>,
+// }
+
 #[derive(Clone, Debug)]
 enum Input {
     Left(bool),
