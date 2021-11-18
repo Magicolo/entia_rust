@@ -164,7 +164,7 @@ impl<I: Inject> Injector<I> {
             let mut conflict = Conflict::default();
             conflict
                 .detect(Scope::Inner, &self.dependencies)
-                .map_err(|error| Error::InnerConflict(self.name().into(), error.into()))
+                .map_err(|error| Error::Depend(error))
         } else {
             Ok(())
         }

@@ -7,6 +7,10 @@ use std::{collections::VecDeque, error, result::Result, time::Duration};
 TODO:
     - Add tests.
     - Review all dependencies.
+    - Reorganize 'pub use'.
+        - Inject modules should be grouped together.
+    - Reorganize 'error::Error'.
+        - Use subgroups to allow more specific errors (ex: Error::Duplicate(duplicate::Error)).
     - Is it possible to extract a (serializable) template from an entity?
     - Is it possible to copy an entity's components to another entity?
     - Currently, using 'world.set_meta' will not update current meta users (including segments).

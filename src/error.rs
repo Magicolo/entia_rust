@@ -1,9 +1,5 @@
-use crate::entity::Entity;
-use std::{
-    error,
-    fmt::{self, Display},
-    result,
-};
+use crate::{depend, duplicate};
+use std::result;
 
 #[derive(Debug)]
 pub enum Error {
@@ -13,25 +9,20 @@ pub enum Error {
     MissingStore(&'static str, usize),
     MissingMeta(&'static str),
     MissingClone(&'static str),
-    MissingFamily,
     SegmentIndexOutOfRange(usize, usize),
-    InvalidEntity(Entity),
-    InvalidResolveState,
-    FailedToInject,
-    InnerConflict(String, Box<Error>),
-    OuterConflict(String, Box<Error>),
-    UnknownConflict,
-    ReadWriteConflict(String, Option<usize>),
-    WriteWriteConflict(String, Option<usize>),
-    ReadDeferConflict(String, Option<usize>),
-    WriteDeferConflict(String, Option<usize>),
     StaticCountMustBeTrue,
+    Depend(depend::Error),
+    Duplicate(duplicate::Error),
     All(Vec<Error>),
 }
 
 pub type Result<T = ()> = result::Result<T, Error>;
 
 impl Error {
+    pub fn all<E: Into<Error>>(errors: impl IntoIterator<Item = E>) -> Self {
+        Self::All(errors.into_iter().map(Into::into).collect())
+    }
+
     pub fn merge(self, error: Self) -> Self {
         match (self, error) {
             (Error::All(mut left), Error::All(mut right)) => {
@@ -79,10 +70,27 @@ impl Error {
     }
 }
 
-impl error::Error for Error {}
+error!(Error);
 
-impl Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        <Self as fmt::Debug>::fmt(self, f)
-    }
+macro_rules! error {
+    ($t:ty) => {
+        impl std::error::Error for $t {}
+
+        impl std::fmt::Display for $t {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                <Self as std::fmt::Debug>::fmt(self, f)
+            }
+        }
+    };
+    ($t:ty, $e:expr) => {
+        $crate::error::error!($t);
+
+        impl Into<$crate::error::Error> for $t {
+            fn into(self) -> $crate::error::Error {
+                $e(self)
+            }
+        }
+    };
 }
+
+pub(crate) use error;

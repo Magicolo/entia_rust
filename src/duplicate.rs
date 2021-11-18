@@ -3,7 +3,7 @@ use crate::{
     depend::{Depend, Dependency},
     entities::Entities,
     entity::Entity,
-    error::{Error, Result},
+    error,
     inject::{Context, Get, Inject},
     world::{segment::Row, store::Store, World},
     write::Write,
@@ -20,6 +20,12 @@ pub struct Duplicate<'a> {
 
 pub struct State(defer::State<Inner>);
 
+#[derive(Debug)]
+pub enum Error {
+    InvalidEntity(Entity),
+    MissingClone(usize),
+}
+
 struct Inner {
     entities: Write<Entities>,
     buffer: Vec<Entity>,
@@ -33,8 +39,10 @@ struct Defer {
     row: Row,
 }
 
+error::error!(Error, error::Error::Duplicate);
+
 impl Duplicate<'_> {
-    pub fn one(&mut self, entity: Entity, count: usize) -> Result<&[Entity]> {
+    pub fn one(&mut self, entity: Entity, count: usize) -> Result<&[Entity], Error> {
         if count == 0 {
             return Ok(&[]);
         }
@@ -95,17 +103,7 @@ impl Duplicate<'_> {
             }
             Ok(&self.buffer)
         } else {
-            Err(Error::All(
-                segment
-                    .stores()
-                    .filter_map(|store| {
-                        Some(Error::MissingClone(store.meta().name))
-                            .filter(|_| store.meta().clone.is_none())
-                    })
-                    .collect(),
-            )
-            .flatten(false)
-            .expect("Segment must not be clonable."))
+            Err(Error::MissingClone(segment.index()))
         }
     }
 }
@@ -114,7 +112,7 @@ impl Inject for Duplicate<'_> {
     type Input = ();
     type State = State;
 
-    fn initialize(_: Self::Input, mut context: Context) -> Result<Self::State> {
+    fn initialize(_: Self::Input, mut context: Context) -> Result<Self::State, error::Error> {
         let entities = Write::initialize(None, context.owned())?;
         let inner = Inner {
             entities,
@@ -124,7 +122,7 @@ impl Inject for Duplicate<'_> {
         Ok(State(defer::Defer::initialize(inner, context)?))
     }
 
-    fn resolve(State(state): &mut Self::State, mut context: Context) -> Result {
+    fn resolve(State(state): &mut Self::State, mut context: Context) -> Result<(), error::Error> {
         defer::Defer::resolve(state, context.owned())
     }
 }
@@ -147,7 +145,11 @@ impl<'a> Get<'a> for State {
 impl Resolve for Inner {
     type Item = Defer;
 
-    fn resolve(&mut self, items: impl Iterator<Item = Self::Item>, world: &mut World) -> Result {
+    fn resolve(
+        &mut self,
+        items: impl Iterator<Item = Self::Item>,
+        world: &mut World,
+    ) -> Result<(), error::Error> {
         let entities = self.entities.as_mut();
         entities.resolve();
 

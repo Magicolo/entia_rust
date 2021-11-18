@@ -1,5 +1,4 @@
-use std::marker::PhantomData;
-
+use self::scope::*;
 use crate::{
     depend::{self, Depend, Dependency},
     error::Result,
@@ -7,34 +6,10 @@ use crate::{
     query::item::{self, At, Item},
     world::World,
 };
+use std::marker::PhantomData;
 
 pub struct Ignore<I, S: Scope = All>(I, PhantomData<S>);
 pub struct State<T, S: Scope>(T, PhantomData<S>);
-
-pub struct All;
-pub struct Inner;
-pub struct Outer;
-pub trait Scope {
-    fn scope() -> depend::Scope;
-}
-
-impl Scope for All {
-    fn scope() -> depend::Scope {
-        depend::Scope::All
-    }
-}
-
-impl Scope for Inner {
-    fn scope() -> depend::Scope {
-        depend::Scope::Inner
-    }
-}
-
-impl Scope for Outer {
-    fn scope() -> depend::Scope {
-        depend::Scope::Outer
-    }
-}
 
 impl<I, S: Scope> Ignore<I, S> {
     /// SAFETY: Since 'Ignore' removes the dependency checks that ensure Rust's invariants, the user must maintain them through some
@@ -87,5 +62,35 @@ unsafe impl<T: Depend, S: Scope> Depend for State<T, S> {
             *dependency = dependency.clone().ignore(S::scope());
         }
         dependencies
+    }
+}
+
+pub mod scope {
+    use super::*;
+
+    pub trait Scope {
+        fn scope() -> depend::Scope;
+    }
+
+    pub struct All;
+    pub struct Inner;
+    pub struct Outer;
+
+    impl Scope for All {
+        fn scope() -> depend::Scope {
+            depend::Scope::All
+        }
+    }
+
+    impl Scope for Inner {
+        fn scope() -> depend::Scope {
+            depend::Scope::Inner
+        }
+    }
+
+    impl Scope for Outer {
+        fn scope() -> depend::Scope {
+            depend::Scope::Outer
+        }
     }
 }

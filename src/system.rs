@@ -255,7 +255,9 @@ pub mod runner {
         fn schedule(&mut self, world: &mut World) -> Result {
             fn next(blocks: &mut [Block], conflict: &mut Conflict) -> Result {
                 if let Some((head, rest)) = blocks.split_first_mut() {
-                    conflict.detect(Scope::Inner, &head.dependencies)?;
+                    conflict
+                        .detect(Scope::Inner, &head.dependencies)
+                        .map_err(Error::Depend)?;
 
                     for tail in rest.iter_mut() {
                         match conflict.detect(Scope::Outer, &tail.dependencies) {

@@ -34,7 +34,7 @@ pub use crate::{
         item::{child::Child, parent::Parent},
         Family,
     },
-    ignore::{Ignore, Scope},
+    ignore::Ignore,
     inject::{Inject, Injector},
     message::{emit::Emit, receive::Receive},
     query::{
