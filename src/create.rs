@@ -200,12 +200,7 @@ impl<T: Template> Inner<T> {
                 last = i;
                 let instances =
                     &self.entity_instances[segment_index..segment_index + segment_count];
-                unsafe {
-                    segment
-                        .store_at(0)
-                        .expect("Segment must have an entity store.")
-                        .set_all(pair.0, instances)
-                };
+                unsafe { segment.entity_store().set_all(pair.0, instances) };
             }
 
             segment_index += segment_count;
@@ -340,8 +335,7 @@ impl<T: Template> Resolve for Outer<T> {
                     [segment_indices.index..segment_indices.index + segment_count];
                 unsafe {
                     segment
-                        .store_at(0)
-                        .expect("Segment must have an entity store.")
+                        .entity_store()
                         .set_all(segment_indices.store, instances)
                 };
             }

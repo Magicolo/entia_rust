@@ -5,7 +5,7 @@ use crate::{
     entity::Entity,
     error,
     inject::{Context, Get, Inject},
-    world::{segment::Row, store::Store, World},
+    world::{segment::Segment, store::Store, World},
     write::Write,
 };
 use std::collections::HashSet;
@@ -22,10 +22,14 @@ pub struct State(defer::State<Inner>);
 
 #[derive(Debug)]
 pub enum Error {
+    WrongSegment,
     InvalidEntity(Entity),
     MissingClone(usize),
+    SegmentIndexOutOfRange(usize),
+    SegmentMustBeClonable(usize, usize),
 }
 
+struct Slot(Vec<Store>);
 struct Inner {
     entities: Write<Entities>,
     buffer: Vec<Entity>,
@@ -36,17 +40,18 @@ struct Defer {
     segment: usize,
     store: usize,
     entities: Vec<Entity>,
-    row: Row,
+    slot: Slot,
 }
 
 error::error!(Error, error::Error::Duplicate);
 
 impl Duplicate<'_> {
-    pub fn one(&mut self, entity: Entity, count: usize) -> Result<&[Entity], Error> {
+    pub fn one(&mut self, entity: impl Into<Entity>, count: usize) -> Result<&[Entity], Error> {
         if count == 0 {
             return Ok(&[]);
         }
 
+        let entity = entity.into();
         let datum = self
             .entities
             .get_datum(entity)
@@ -62,24 +67,14 @@ impl Duplicate<'_> {
                     segment: segment.index(),
                     entities: self.buffer.drain(..).collect(),
                     store: pair.0,
-                    row: Row::clone(
-                        &segment
-                            .row(datum.store_index as usize)
-                            .expect("Index must be in range."),
-                    )
-                    .expect("Segment must be clonable."),
+                    slot: Slot::get(segment, datum.store_index as usize)
+                        .expect("Segment must be able to get slot."),
                 });
             } else {
-                unsafe {
-                    segment
-                        .store_at(0)
-                        .expect("Segment must have an entity store.")
-                        .set_all(pair.0, self.buffer)
-                };
-                for store in segment.stores().skip(1) {
+                unsafe { segment.entity_store().set_all(pair.0, self.buffer) };
+                for store in segment.component_stores() {
                     let source = (store, datum.store_index as usize);
-                    let target = (store, pair.0);
-                    unsafe { Store::clone(source, target, count) }
+                    unsafe { Store::duplicate(source, (store, pair.0), 1) }
                         .expect("Store must be clonable.");
                 }
 
@@ -105,6 +100,42 @@ impl Duplicate<'_> {
         } else {
             Err(Error::MissingClone(segment.index()))
         }
+    }
+}
+
+impl Slot {
+    fn get(segment: &Segment, index: usize) -> Result<Slot, error::Error> {
+        if index >= segment.count() {
+            Err(error::Error::SegmentIndexOutOfRange(index, segment.index()))
+        } else if segment.can_clone() {
+            let sources = segment.component_stores();
+            let mut targets = Vec::with_capacity(sources.len());
+            for store in sources {
+                targets.push(unsafe { store.chunk(index, 1) }?);
+            }
+            Ok(Slot(targets))
+        } else {
+            Err(error::Error::SegmentMustBeClonable(segment.index()))
+        }
+    }
+
+    fn set(self, segment: &Segment, index: usize, count: usize) -> Result<(), error::Error> {
+        if count == 0 {
+            for store in self.0 {
+                unsafe { store.free(1, 1) };
+            }
+        } else {
+            for (target, source) in segment.component_stores().zip(self.0) {
+                // First index copies to unify behavior between the deferred and non-deferred version.
+                // If 'Clone' was used, there would be 1 additionnal 'Clone' and 'Drop' in the deferred version.
+                unsafe { Store::copy((&source, 0), (target, index), 1) };
+                unsafe { Store::duplicate((&source, 0), (target, index + 1), count - 1) }
+                    .expect("Store must be clonable.");
+                // Since the memory at index 0 has been copied over, it must not be dropped.
+                unsafe { source.free(0, 1) };
+            }
+        }
+        Ok(())
     }
 }
 
@@ -160,20 +191,11 @@ impl Resolve for Inner {
         for defer in items {
             let count = defer.entities.len();
             let segment = &mut world.segments[defer.segment];
-
-            unsafe {
-                segment
-                    .store_at(0)
-                    .expect("Segment must have an entity store.")
-                    .set_all(defer.store, &defer.entities)
-            };
-
-            for (i, store) in segment.stores().enumerate().skip(1) {
-                let source = defer.row.store(i).expect("Store must exist.");
-                let source = (source, defer.row.index());
-                let target = (store, defer.store);
-                unsafe { Store::clone(source, target, count) }.expect("Store must be clonable.");
-            }
+            unsafe { segment.entity_store().set_all(defer.store, &defer.entities) };
+            defer
+                .slot
+                .set(segment, defer.store, count)
+                .expect("Segment must be able to set the slot.");
 
             for (i, &entity) in self.buffer.iter().enumerate() {
                 entities

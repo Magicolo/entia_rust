@@ -5,11 +5,7 @@ use crate::{
     entity::Entity,
     error::{Error, Result},
     family::template::{EntityIndices, Family, SegmentIndices},
-    world::{
-        meta::Meta,
-        segment::{Column, Segment},
-        World,
-    },
+    world::{meta::Meta, segment::Segment, store::Store, World},
 };
 use std::{array::IntoIter, collections::HashMap, marker::PhantomData, sync::Arc};
 
@@ -107,8 +103,7 @@ impl<'a> DeclareContext<'a> {
 
     pub fn child<T>(&mut self, scope: impl FnOnce(usize, DeclareContext) -> T) -> T {
         let metas_index = self.segment_metas.len();
-        self.segment_metas
-            .push(vec![self.world.get_or_add_meta::<Entity>()]);
+        self.segment_metas.push(Vec::new());
         scope(metas_index, self.with(metas_index))
     }
 }
@@ -496,14 +491,14 @@ impl<T> From<T> for Add<T> {
 impl<T: Send + Sync + 'static> Template for Add<T> {
     type Input = ();
     type Declare = Arc<Meta>;
-    type State = Column;
+    type State = Arc<Store>;
 
     fn declare(_: Self::Input, mut context: DeclareContext) -> Self::Declare {
         context.meta::<T>()
     }
 
     fn initialize(state: Self::Declare, context: InitializeContext) -> Self::State {
-        context.segment().column(&state).unwrap()
+        context.segment().component_store(&state).unwrap()
     }
 
     fn static_count(_: &Self::State, _: CountContext) -> Result<bool> {
@@ -515,7 +510,7 @@ impl<T: Send + Sync + 'static> Template for Add<T> {
 
     #[inline]
     fn apply(self, state: &Self::State, context: ApplyContext) {
-        unsafe { state.store().set(context.store_index(), self.0) }
+        unsafe { state.set(context.store_index(), self.0) }
     }
 }
 

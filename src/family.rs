@@ -77,11 +77,11 @@ impl<'a> Family<'a> {
     }
 
     #[inline]
-    pub fn ascend(
+    pub fn ascend<T>(
         &self,
-        mut up: impl FnMut(Self) -> bool,
-        mut down: impl FnMut(Self) -> bool,
-    ) -> Option<bool> {
+        mut up: impl FnMut(Self) -> Option<T>,
+        mut down: impl FnMut(Self) -> Option<T>,
+    ) -> Option<T> {
         self.1.ascend(
             self.0,
             |parent| up(Self(parent, self.1)),
@@ -90,11 +90,11 @@ impl<'a> Family<'a> {
     }
 
     #[inline]
-    pub fn descend(
+    pub fn descend<T>(
         &self,
-        mut down: impl FnMut(Self) -> bool,
-        mut up: impl FnMut(Self) -> bool,
-    ) -> Option<bool> {
+        mut down: impl FnMut(Self) -> Option<T>,
+        mut up: impl FnMut(Self) -> Option<T>,
+    ) -> Option<T> {
         self.1.descend(
             self.0,
             |child| down(Self(child, self.1)),
@@ -104,6 +104,7 @@ impl<'a> Family<'a> {
 }
 
 impl Into<Entity> for Family<'_> {
+    #[inline]
     fn into(self) -> Entity {
         self.entity()
     }

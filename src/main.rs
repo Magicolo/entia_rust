@@ -86,15 +86,22 @@ fn main() {
                 }))],
             ));
         })
-        .add(|query: Query<(Entity, Child<Entity>, Parent<Entity>)>| {
-            for (_entity, child, parent) in &query {
-                let _child = child.get(0);
-                let _parent = parent.get(0);
-                for _child in &child {}
-                for _parent in &parent {}
-            }
-            println!("C: {:?}", query.len())
-        })
+        .add(
+            |roots: Query<Family, Has<Target>>, children: Query<&Position>, a: Query<&Entity>| {
+                for family in &roots {
+                    if let Some(child) =
+                        family.descend(|descendant| children.get(descendant), |_| None)
+                    {
+                    }
+                }
+                for child in roots
+                    .into_iter()
+                    .flat_map(|family| family.children())
+                    .filter_map(|child| children.get(child))
+                {}
+                println!("C: {:?}", roots.len())
+            },
+        )
         .add(|query: Query<Entity>, mut destroy: Destroy| query.each(|entity| destroy.one(entity)))
         .schedule()
         .unwrap();

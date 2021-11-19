@@ -169,77 +169,75 @@ impl Conflict {
         index: Option<usize>,
         dependency: Dependency,
     ) -> Result<(), Error> {
-        use Scope::*;
+        use self::{Dependency::*, Error::*, Scope::*};
 
         match (index, dependency) {
-            (_, Dependency::Unknown) => {
+            (_, Unknown) => {
                 self.unknown = true;
                 if scope == Outer {
-                    Err(Error::UnknownConflict(scope))
+                    Err(UnknownConflict(scope))
                 } else {
                     Ok(())
                 }
             }
-            (_, Dependency::At(index, dependency)) => {
-                self.conflict(scope, Some(index), *dependency)
-            }
-            (index, Dependency::Ignore(inner, dependency)) => {
+            (_, At(index, dependency)) => self.conflict(scope, Some(index), *dependency),
+            (index, Ignore(inner, dependency)) => {
                 if scope == inner || inner == All {
                     self.conflict(scope, index, *dependency)
                 } else {
                     Ok(())
                 }
             }
-            (Some(index), Dependency::Read(identifier, name)) => {
+            (Some(index), Read(identifier, name)) => {
                 if has(&self.writes, identifier, index) {
-                    Err(Error::ReadWriteConflict(scope, name, Some(index)))
+                    Err(ReadWriteConflict(scope, name, Some(index)))
                 } else if scope == Outer && has(&self.defers, identifier, index) {
-                    Err(Error::ReadDeferConflict(scope, name, Some(index)))
+                    Err(ReadDeferConflict(scope, name, Some(index)))
                 } else {
                     add(&mut self.reads, identifier, index);
                     Ok(())
                 }
             }
 
-            (Some(index), Dependency::Write(identifier, name)) => {
+            (Some(index), Write(identifier, name)) => {
                 if has(&self.reads, identifier, index) {
-                    Err(Error::ReadWriteConflict(scope, name, Some(index)))
+                    Err(ReadWriteConflict(scope, name, Some(index)))
                 } else if has(&self.writes, identifier, index) {
-                    Err(Error::WriteWriteConflict(scope, name, Some(index)))
+                    Err(WriteWriteConflict(scope, name, Some(index)))
                 } else if scope == Outer && has(&self.defers, identifier, index) {
-                    Err(Error::WriteDeferConflict(scope, name, Some(index)))
+                    Err(WriteDeferConflict(scope, name, Some(index)))
                 } else {
                     add(&mut self.writes, identifier, index);
                     Ok(())
                 }
             }
-            (Some(index), Dependency::Defer(identifier, _)) => {
+            (Some(index), Defer(identifier, _)) => {
                 add(&mut self.defers, identifier, index);
                 Ok(())
             }
-            (None, Dependency::Read(identifier, name)) => {
+            (None, Read(identifier, name)) => {
                 if has_any(&self.writes, identifier) {
-                    Err(Error::ReadWriteConflict(scope, name, None))
+                    Err(ReadWriteConflict(scope, name, None))
                 } else if scope == Outer && has_any(&self.defers, identifier) {
-                    Err(Error::ReadDeferConflict(scope, name, None))
+                    Err(ReadDeferConflict(scope, name, None))
                 } else {
                     add_all(&mut self.reads, identifier);
                     Ok(())
                 }
             }
-            (None, Dependency::Write(identifier, name)) => {
+            (None, Write(identifier, name)) => {
                 if has_any(&self.reads, identifier) {
-                    Err(Error::ReadWriteConflict(scope, name, None))
+                    Err(ReadWriteConflict(scope, name, None))
                 } else if has_any(&self.writes, identifier) {
-                    Err(Error::WriteWriteConflict(scope, name, None))
+                    Err(WriteWriteConflict(scope, name, None))
                 } else if scope == Outer && has_any(&self.defers, identifier) {
-                    Err(Error::WriteDeferConflict(scope, name, None))
+                    Err(WriteDeferConflict(scope, name, None))
                 } else {
                     add_all(&mut self.writes, identifier);
                     Ok(())
                 }
             }
-            (None, Dependency::Defer(identifier, _)) => {
+            (None, Defer(identifier, _)) => {
                 add_all(&mut self.defers, identifier);
                 Ok(())
             }

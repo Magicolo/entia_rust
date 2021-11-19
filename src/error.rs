@@ -4,12 +4,15 @@ use std::result;
 #[derive(Debug)]
 pub enum Error {
     WrongWorld,
+    WrongSegment,
     MutexPoison,
     MissingSystem,
+    MissingEntityStore(usize),
     MissingStore(&'static str, usize),
     MissingMeta(&'static str),
     MissingClone(&'static str),
     SegmentIndexOutOfRange(usize, usize),
+    SegmentMustBeClonable(usize),
     StaticCountMustBeTrue,
     Depend(depend::Error),
     Duplicate(duplicate::Error),

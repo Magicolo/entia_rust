@@ -68,8 +68,8 @@ impl<'a, I: Item, F> Query<'a, I, F> {
         }
     }
 
-    pub fn get(&self, entity: Entity) -> Option<<I::State as At<'_>>::Item> {
-        let datum = self.entities.get_datum(entity)?;
+    pub fn get(&self, entity: impl Into<Entity>) -> Option<<I::State as At<'_>>::Item> {
+        let datum = self.entities.get_datum(entity.into())?;
         let index = self.inner.segments[datum.segment_index as usize]?;
         let (state, _) = &self.inner.states[index];
         Some(state.at(datum.store_index as usize, self.world))
@@ -332,7 +332,7 @@ pub mod filter {
     impl<T: Send + Sync + 'static> Filter for Has<T> {
         fn filter(segment: &Segment, world: &World) -> bool {
             if let Ok(meta) = world.get_meta::<T>() {
-                segment.store(&meta).is_ok()
+                segment.component_types().contains(&meta.identifier)
             } else {
                 false
             }

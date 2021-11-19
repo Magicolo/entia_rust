@@ -1,24 +1,17 @@
-use std::fmt;
-
 use crate::{
     depend::{Depend, Dependency},
     error::Result,
-    query::{
-        filter::Filter,
-        item::{At, Context, Item},
-    },
-    world::{
-        segment::{Column, Segment},
-        World,
-    },
+    query::item::{At, Context, Item},
+    world::{store::Store, World},
 };
+use std::{fmt, sync::Arc};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Entity {
     index: u32,
     generation: u32,
 }
-pub struct State(Column, usize);
+pub struct State(Arc<Store>, usize);
 
 impl Entity {
     pub const NULL: Self = Self {
@@ -63,24 +56,12 @@ impl Default for Entity {
     }
 }
 
-impl Filter for Entity {
-    fn filter(segment: &Segment, world: &World) -> bool {
-        if let Ok(meta) = world.get_meta::<Entity>() {
-            segment.store(&meta).is_ok()
-        } else {
-            false
-        }
-    }
-}
-
 impl Item for Entity {
     type State = State;
 
-    fn initialize(mut context: Context) -> Result<Self::State> {
-        let meta = context.world().get_meta::<Entity>()?;
+    fn initialize(context: Context) -> Result<Self::State> {
         let segment = context.segment();
-        let column = segment.column(&meta)?;
-        Ok(State(column, segment.index()))
+        Ok(State(segment.entity_store(), segment.index()))
     }
 }
 
@@ -89,7 +70,7 @@ impl<'a> At<'a> for State {
 
     #[inline]
     fn at(&self, index: usize, _: &'a World) -> Self::Item {
-        *unsafe { self.0.store().get(index) }
+        *unsafe { self.0.get(index) }
     }
 }
 

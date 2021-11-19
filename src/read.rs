@@ -3,11 +3,11 @@ use crate::{
     error::Result,
     inject::{self, Get, Inject},
     query::item::{self, At, Item},
-    world::{segment::Column, World},
+    world::{store::Store, World},
 };
-use std::marker::PhantomData;
+use std::{marker::PhantomData, sync::Arc};
 
-pub struct Read<T>(Column, usize, PhantomData<T>);
+pub struct Read<T>(Arc<Store>, usize, PhantomData<T>);
 
 impl<T> Read<T> {
     #[inline]
@@ -30,8 +30,10 @@ impl<T: Default + Send + Sync + 'static> Inject for Read<T> {
     type State = Self;
 
     fn initialize(input: Self::Input, mut context: inject::Context) -> Result<Self::State> {
-        let (column, segment) = context.world().get_or_add_resource(input);
-        Ok(Self(column, segment, PhantomData))
+        let store = context
+            .world()
+            .get_or_add_resource_store(|| input.unwrap_or_default());
+        Ok(Self(store, usize::MAX, PhantomData))
     }
 }
 
@@ -40,7 +42,7 @@ impl<'a, T: 'static> Get<'a> for Read<T> {
 
     #[inline]
     fn get(&'a mut self, _: &World) -> Self::Item {
-        unsafe { self.0.store().get(0) }
+        unsafe { self.0.get(0) }
     }
 }
 
@@ -58,8 +60,8 @@ impl<T: Send + Sync + 'static> Item for Read<T> {
     fn initialize(mut context: item::Context) -> Result<Self::State> {
         let meta = context.world().get_meta::<T>()?;
         let segment = context.segment();
-        let column = segment.column(&meta)?;
-        Ok(Self(column, segment.index(), PhantomData))
+        let store = segment.component_store(&meta)?;
+        Ok(Self(store, segment.index(), PhantomData))
     }
 }
 
@@ -68,7 +70,7 @@ impl<'a, T: 'static> At<'a> for Read<T> {
 
     #[inline]
     fn at(&'a self, index: usize, _: &'a World) -> Self::Item {
-        unsafe { self.0.store().get(index) }
+        unsafe { self.0.get(index) }
     }
 }
 
@@ -81,6 +83,6 @@ unsafe impl<T: 'static> Depend for Read<T> {
 impl<T: 'static> AsRef<T> for Read<T> {
     #[inline]
     fn as_ref(&self) -> &T {
-        unsafe { self.0.store().get(0) }
+        unsafe { self.0.get(0) }
     }
 }

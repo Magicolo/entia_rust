@@ -4,8 +4,13 @@ use piston_window::*;
 use std::{collections::VecDeque, error, result::Result, time::Duration};
 
 /*
+BUGS:
+    - Dependencies may work weirdly with 'Entity' as a component. If it cannot be reconciled, prevent 'Entity' as a component.
+
 TODO:
     - Add tests.
+        - The query 'Query<&mut Entity>' should be valid but should not allow modifying the 'entity_store'.
+        - The resource '&mut Entity' should be valid but should not modify any segment store.
     - Review all dependencies.
     - Reorganize 'pub use'.
         - Inject modules should be grouped together.
@@ -13,7 +18,9 @@ TODO:
         - Use subgroups to allow more specific errors (ex: Error::Duplicate(duplicate::Error)).
     - Is it possible to extract a (serializable) template from an entity?
     - Is it possible to copy an entity's components to another entity?
-    - Currently, using 'world.set_meta' will not update current meta users (including segments).
+    - Prevent 'Query<&Entity>' and 'Query<&Family>' since they are confusing and, in the case of '&Family' will result
+    in a suprising failure.
+    - Currently, using 'world.set_meta' will not update current meta users (including segments). This might be a acceptable behavior.
     - How to serialize an entity with all its (serializable) components?
     - Think about 'query::item::child' some more.
     - What about these (might require the 'At' trait to return an 'Option<Self::Item>')?

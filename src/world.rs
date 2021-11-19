@@ -10,6 +10,7 @@ use std::{
     cmp::min,
     collections::{HashMap, HashSet},
     fmt,
+    iter::once,
     marker::PhantomData,
     mem::{needs_drop, replace, size_of, ManuallyDrop},
     ptr::{copy, drop_in_place, slice_from_raw_parts_mut},
@@ -23,9 +24,10 @@ use std::{
 pub struct World {
     identifier: usize,
     version: usize,
+    metas: Vec<Arc<Meta>>,
+    type_to_meta: HashMap<TypeId, usize>,
     pub(crate) segments: Vec<Segment>,
-    pub(crate) metas: Vec<Arc<Meta>>,
-    pub(crate) type_to_meta: HashMap<TypeId, usize>,
+    pub(crate) resources: HashMap<TypeId, Arc<Store>>,
 }
 
 impl World {
@@ -33,9 +35,10 @@ impl World {
         let mut world = Self {
             identifier: Self::reserve(),
             version: 1,
-            segments: Vec::new(),
             metas: Vec::new(),
             type_to_meta: HashMap::new(),
+            segments: Vec::new(),
+            resources: HashMap::new(),
         };
 
         // Ensures that the 'Entity' meta has the lowest identifier of this world's metas and as such, 'Entity' stores will alway
@@ -61,12 +64,6 @@ impl World {
     }
 
     pub fn set_meta(&mut self, meta: Arc<Meta>) {
-        println!(
-            "{} | {} | {}",
-            meta.name,
-            meta.clone.is_some(),
-            meta.format.is_some(),
-        );
         let identifier = meta.identifier;
         match self.type_to_meta.get(&identifier) {
             Some(&index) => self.metas[index] = meta,
@@ -110,7 +107,7 @@ impl World {
             Some(index) => index,
             None => {
                 let index = self.segments.len();
-                let segment = Segment::new(index, 0, types, &self.metas);
+                let segment = Segment::new(Self::reserve(), index, 0, types, &self.metas);
                 self.segments.push(segment);
                 self.version += 1;
                 index
@@ -119,25 +116,36 @@ impl World {
         &mut self.segments[index]
     }
 
-    pub(crate) fn get_or_add_resource<T: Default + Send + Sync + 'static>(
+    pub(crate) fn get_or_add_resource_store<T: Send + Sync + 'static>(
         &mut self,
-        default: Option<T>,
-    ) -> (Column, usize) {
+        default: impl FnOnce() -> T,
+    ) -> Arc<Store> {
         let meta = self.get_or_add_meta::<T>();
-        let segment = self.get_or_add_segment(&[meta.clone()]);
-        let column = segment.column(&meta).expect("Segment must have meta.");
-        if segment.count() == 0 {
-            let (index, _) = segment.reserve(1);
-            segment.resolve();
-            unsafe { column.store().set(index, default.unwrap_or_default()) };
-        }
-        (column, segment.index())
+        let identifier = meta.identifier;
+        let store = match self.resources.get(&identifier) {
+            Some(store) => store.clone(),
+            None => {
+                let store = Arc::new(Store::new(meta, 1));
+                unsafe { store.set(0, default()) };
+                self.resources.insert(identifier, store.clone());
+                store
+            }
+        };
+        store
     }
 
     fn get_segment_index(&self, types: &HashSet<TypeId>) -> Option<usize> {
         self.segments
             .iter()
-            .position(|segment| &segment.types == types)
+            .position(|segment| segment.component_types() == types)
+    }
+}
+
+impl Drop for World {
+    fn drop(&mut self) {
+        for (_, store) in &self.resources {
+            unsafe { store.free(1, 1) };
+        }
     }
 }
 
@@ -153,16 +161,22 @@ pub mod meta {
         pub(crate) free: unsafe fn(*mut (), usize, usize),
         pub(crate) copy: unsafe fn((*const (), usize), (*mut (), usize), usize),
         pub(crate) drop: unsafe fn(*mut (), usize, usize),
-        pub(crate) clone: Option<unsafe fn((*const (), usize), (*mut (), usize), usize)>,
-        pub(crate) format: Option<unsafe fn(*const (), usize) -> String>,
+        pub(crate) cloner: Option<Cloner>,
+        pub(crate) formatter: Option<Formatter>,
     }
 
-    pub struct Cloner<T: ?Sized>(
-        unsafe fn((*const (), usize), (*mut (), usize), usize),
-        PhantomData<T>,
-    );
+    #[derive(Copy, Clone)]
+    pub struct Cloner<T: ?Sized = ()> {
+        pub(crate) clone: unsafe fn((*const (), usize), (*mut (), usize), usize),
+        pub(crate) duplicate: unsafe fn((*const (), usize), (*mut (), usize), usize),
+        _marker: PhantomData<T>,
+    }
 
-    pub struct Formatter<T: ?Sized>(unsafe fn(*const (), usize) -> String, PhantomData<T>);
+    #[derive(Copy, Clone)]
+    pub struct Formatter<T: ?Sized = ()> {
+        pub(crate) format: unsafe fn(*const (), usize) -> String,
+        _marker: PhantomData<T>,
+    }
 
     impl Meta {
         pub fn new<T: Send + Sync + 'static>(
@@ -182,23 +196,27 @@ pub mod meta {
                 },
                 copy: if size_of::<T>() > 0 {
                     |source, target, count| unsafe {
-                        let source = source.0.cast::<T>().add(source.1);
-                        let target = target.0.cast::<T>().add(target.1);
-                        copy(source, target, count);
+                        if count > 0 {
+                            let source = source.0.cast::<T>().add(source.1);
+                            let target = target.0.cast::<T>().add(target.1);
+                            copy(source, target, count);
+                        }
                     }
                 } else {
                     |_, _, _| {}
                 },
                 drop: if needs_drop::<T>() {
                     |pointer, index, count| unsafe {
-                        let pointer = pointer.cast::<T>().add(index);
-                        drop_in_place(slice_from_raw_parts_mut(pointer, count));
+                        if count > 0 {
+                            let pointer = pointer.cast::<T>().add(index);
+                            drop_in_place(slice_from_raw_parts_mut(pointer, count));
+                        }
                     }
                 } else {
                     |_, _, _| {}
                 },
-                clone: cloner.map(|cloner| cloner.0),
-                format: formatter.map(|formatter| formatter.0),
+                cloner: cloner.map(Cloner::discard),
+                formatter: formatter.map(Formatter::discard),
             }
         }
     }
@@ -215,32 +233,63 @@ pub mod meta {
         }
     }
 
+    impl<T> Cloner<T> {
+        pub(crate) fn discard(self) -> Cloner {
+            Cloner {
+                clone: self.clone,
+                duplicate: self.duplicate,
+                _marker: PhantomData,
+            }
+        }
+    }
+
     impl<T: Clone> Cloner<T> {
         pub fn new() -> Self {
-            Self(
-                |source, target, count| unsafe {
-                    let source = source.0.cast::<T>().add(source.1);
-                    let target = target.0.cast::<T>().add(target.1);
-                    // Use 'ptd::write' to prevent the old value from being dropped since it might not be initialized.
-                    for i in 0..count {
-                        let source = &*source.add(i);
-                        target.add(i).write(source.clone());
+            Self {
+                clone: |source, target, count| unsafe {
+                    if count > 0 {
+                        let source = source.0.cast::<T>().add(source.1);
+                        let target = target.0.cast::<T>().add(target.1);
+                        // Use 'ptd::write' to prevent the old value from being dropped since it might not be initialized.
+                        for i in 0..count {
+                            let source = &*source.add(i);
+                            target.add(i).write(source.clone());
+                        }
                     }
                 },
-                PhantomData,
-            )
+                duplicate: |source, target, count| unsafe {
+                    if count > 0 {
+                        let source = &*source.0.cast::<T>().add(source.1);
+                        let target = target.0.cast::<T>().add(target.1);
+                        // Use 'ptd::write' to prevent the old value from being dropped since it might not be initialized.
+                        for i in 0..count {
+                            target.add(i).write(source.clone());
+                        }
+                    }
+                },
+                _marker: PhantomData,
+            }
+        }
+    }
+
+    impl<T> Formatter<T> {
+        pub fn discard(self) -> Formatter {
+            Formatter {
+                format: self.format,
+                _marker: PhantomData,
+            }
         }
     }
 
     impl<T: fmt::Debug> Formatter<T> {
         pub fn new() -> Self {
-            Self(
-                |source, index| unsafe {
+            Self {
+                format: |source, index| unsafe {
                     let source = &*source.cast::<T>().add(index);
                     format!("{:?}", source)
                 },
-                PhantomData,
-            )
+                _marker: PhantomData,
+            }
         }
     }
 
@@ -267,47 +316,69 @@ pub mod segment {
         Clone = 1 << 0,
     }
 
+    // The 'entities' store must be kept separate from the  'components' stores to prevent undesired behavior that may arise
+    // from using queries such as '&mut Entity' or templates such as 'Add<Entity>' as a component with a template.
     pub struct Segment {
+        identifier: usize,
         index: usize,
         count: usize,
         flags: Flags<Flag>,
-        stores: Arc<[Store]>,
-        pub(super) types: HashSet<TypeId>,
+        entity_store: Arc<Store>,
+        component_stores: Vec<Arc<Store>>,
+        component_types: HashSet<TypeId>,
         reserved: AtomicUsize,
         capacity: usize,
     }
 
-    #[derive(Clone)]
-    pub struct Row(usize, Arc<[Store]>);
-    #[derive(Clone)]
-    pub struct Column(usize, Arc<[Store]>);
-
     impl Segment {
         pub(super) fn new(
+            identifier: usize,
             index: usize,
             capacity: usize,
             types: HashSet<TypeId>,
             metas: &[Arc<Meta>],
         ) -> Self {
+            let entity_store = metas
+                .iter()
+                .find_map(|meta| {
+                    if meta.identifier == TypeId::of::<Entity>() {
+                        Some(Arc::new(Store::new(meta.clone(), capacity)))
+                    } else {
+                        None
+                    }
+                })
+                .expect("Entity meta must be included.");
+
             // Iterate over all metas in order to have them consistently ordered.
-            let stores: Arc<[_]> = metas
+            let component_stores: Vec<_> = metas
                 .iter()
                 .filter(|meta| types.contains(&meta.identifier))
-                .map(|meta| Store::new(meta.clone(), capacity))
+                .map(|meta| Arc::new(Store::new(meta.clone(), capacity)))
                 .collect();
             let mut flags = Flag::None.flags();
-            if stores.iter().all(|store| store.meta().clone.is_some()) {
+            if component_stores
+                .iter()
+                .all(|store| store.meta().cloner.is_some())
+            {
                 flags |= Flag::Clone;
             }
+
             Self {
+                identifier,
                 index,
                 count: 0,
                 flags,
-                types,
-                stores,
+                component_types: types,
+                entity_store,
+                component_stores,
                 reserved: 0.into(),
                 capacity: 0,
             }
+        }
+
+        #[inline]
+        pub const fn identifier(&self) -> usize {
+            self.identifier
         }
 
         #[inline]
@@ -326,8 +397,8 @@ pub mod segment {
         }
 
         #[inline]
-        pub fn has_store(&self, identifier: &TypeId) -> bool {
-            self.types.contains(identifier)
+        pub const fn component_types(&self) -> &HashSet<TypeId> {
+            &self.component_types
         }
 
         pub fn remove_at(&mut self, index: usize) -> bool {
@@ -335,7 +406,7 @@ pub mod segment {
                 self.count -= 1;
                 if index == self.count {
                     for store in self.stores() {
-                        unsafe { store.drop(index, 1) };
+                        unsafe { Store::drop(&store, index, 1) };
                     }
                     false
                 } else {
@@ -351,42 +422,32 @@ pub mod segment {
 
         pub fn clear(&mut self) {
             for store in self.stores() {
-                unsafe { store.drop(0, self.count) };
+                unsafe { Store::drop(&store, 0, self.count) };
             }
             self.count = 0;
         }
 
         #[inline]
-        pub fn stores(&self) -> impl ExactSizeIterator<Item = &Store> {
-            self.stores.iter()
+        pub fn entity_store(&self) -> Arc<Store> {
+            self.entity_store.clone()
         }
 
         #[inline]
-        pub fn store_at(&self, index: usize) -> Option<&Store> {
-            self.stores.get(index)
+        pub fn component_stores(&self) -> impl ExactSizeIterator<Item = &Store> {
+            self.component_stores.iter().map(AsRef::as_ref)
         }
 
-        pub fn row(&self, index: usize) -> Result<Row> {
-            if index < self.count {
-                Ok(Row(index, self.stores.clone()))
-            } else {
-                Err(Error::SegmentIndexOutOfRange(index, self.index))
-            }
-        }
-
-        pub fn column(&self, meta: &Meta) -> Result<Column> {
-            let index = self
-                .stores()
-                .position(|store| store.meta().identifier == meta.identifier)
-                .ok_or(Error::MissingStore(meta.name, self.index))?;
-            Ok(Column(index, self.stores.clone()))
-        }
-
-        pub fn store(&self, meta: &Meta) -> Result<&Store> {
-            self.stores
+        pub fn component_store(&self, meta: &Meta) -> Result<Arc<Store>> {
+            self.component_stores
                 .iter()
                 .find(|store| store.meta().identifier == meta.identifier)
+                .cloned()
                 .ok_or(Error::MissingStore(meta.name, self.index))
+        }
+
+        #[inline]
+        pub fn stores(&self) -> impl Iterator<Item = &Store> {
+            once(self.entity_store.as_ref()).chain(self.component_stores())
         }
 
         pub fn reserve(&self, count: usize) -> (usize, usize) {
@@ -401,23 +462,22 @@ pub mod segment {
         pub fn resolve(&mut self) {
             let reserved = self.reserved.get_mut();
             let count = self.count + *reserved;
+            self.count += replace(reserved, 0);
 
             if self.capacity < count {
                 let capacity = next_power_of_2(count as u32 - 1) as usize;
-                for store in self.stores.iter() {
+                for store in self.stores() {
                     unsafe { store.resize(self.capacity, capacity) };
                 }
                 self.capacity = capacity;
             }
-
-            self.count += replace(reserved, 0);
         }
     }
 
     impl Drop for Segment {
         fn drop(&mut self) {
             for store in self.stores() {
-                unsafe { (store.meta().free)(store.data(), self.count, self.capacity) };
+                unsafe { store.free(self.count, self.capacity) };
             }
         }
     }
@@ -427,35 +487,6 @@ pub mod segment {
 
         fn flags(self) -> Flags<Self, Self::Value> {
             Flags::new(self as usize)
-        }
-    }
-
-    impl Column {
-        #[inline]
-        pub fn store(&self) -> &Store {
-            &self.1[self.0]
-        }
-    }
-
-    impl Row {
-        #[inline]
-        pub const fn index(&self) -> usize {
-            self.0
-        }
-
-        #[inline]
-        pub fn store(&self, index: usize) -> Option<&Store> {
-            self.1.get(index)
-        }
-
-        pub fn clone(row: &Self) -> Result<Self> {
-            let mut stores = Vec::with_capacity(row.1.len());
-            for source in row.1.iter() {
-                let target = Store::new(source.0.clone(), 1);
-                unsafe { Store::clone((source, row.0), (&target, 0), 1) }?;
-                stores.push(target);
-            }
-            Ok(Row(0, stores.into()))
         }
     }
 }
@@ -507,13 +538,39 @@ pub mod store {
             debug_assert_eq!(source.0.meta().identifier, target.0.meta().identifier);
             let metas = (source.0.meta(), target.0.meta());
             let error = Error::MissingClone(metas.0.name);
-            let clone = metas.0.clone.or(metas.1.clone).ok_or(error)?;
-            clone(
+            let cloner = metas.0.cloner.or(metas.1.cloner).ok_or(error)?;
+            (cloner.clone)(
                 (source.0.data(), source.1),
                 (target.0.data(), target.1),
                 count,
             );
             Ok(())
+        }
+
+        /// SAFETY: The target must be dropped before calling this function.
+        #[inline]
+        pub unsafe fn duplicate(
+            source: (&Self, usize),
+            target: (&Self, usize),
+            count: usize,
+        ) -> Result {
+            debug_assert_eq!(source.0.meta().identifier, target.0.meta().identifier);
+            let metas = (source.0.meta(), target.0.meta());
+            let error = Error::MissingClone(metas.0.name);
+            let cloner = metas.0.cloner.or(metas.1.cloner).ok_or(error)?;
+            (cloner.duplicate)(
+                (source.0.data(), source.1),
+                (target.0.data(), target.1),
+                count,
+            );
+            Ok(())
+        }
+
+        pub unsafe fn chunk(&self, index: usize, count: usize) -> Result<Self> {
+            debug_assert!(self.meta().cloner.is_some());
+            let store = Self::new(self.0.clone(), count);
+            Self::clone((self, index), (&store, 0), count)?;
+            Ok(store)
         }
 
         /// SAFETY: The 'index' must be within the bounds of the store.
@@ -569,6 +626,11 @@ pub mod store {
         #[inline]
         pub unsafe fn drop(&self, index: usize, count: usize) {
             (self.meta().drop)(self.data(), index, count);
+        }
+
+        #[inline]
+        pub unsafe fn free(&self, count: usize, capacity: usize) {
+            (self.meta().free)(self.data(), count, capacity);
         }
     }
 }

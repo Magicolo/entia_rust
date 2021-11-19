@@ -166,7 +166,7 @@ mod test {
                 }
             })
             .add(motion)
-            .add(|mut on_kill: Emit<_>| on_kill.emit(OnKill(Entity::default())))
+            .add(|mut on_kill: Emit<_>| on_kill.emit(OnKill(Entity::NULL)))
             .add_with((8,), |on_kill: Receive<OnKill>| {
                 for message in on_kill {
                     println!("{:?}", message.0);

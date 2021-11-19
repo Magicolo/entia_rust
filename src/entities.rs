@@ -287,11 +287,11 @@ impl Entities {
         let mut entities = Vec::new();
         self.ascend(
             entity,
-            |parent| {
+            |parent| -> Option<()> {
                 entities.push(parent);
-                true
+                None
             },
-            |_| true,
+            |_| None,
         );
         entities.into_iter()
     }
@@ -300,66 +300,77 @@ impl Entities {
         let mut entities = Vec::new();
         self.descend(
             entity,
-            |child| {
+            |child| -> Option<()> {
                 entities.push(child);
-                true
+                None
             },
-            |_| true,
+            |_| None,
         );
         entities.into_iter()
     }
 
-    pub fn ascend(
+    pub fn ascend<T>(
         &self,
         entity: Entity,
-        mut up: impl FnMut(Entity) -> bool,
-        mut down: impl FnMut(Entity) -> bool,
-    ) -> Option<bool> {
-        fn next(
+        mut up: impl FnMut(Entity) -> Option<T>,
+        mut down: impl FnMut(Entity) -> Option<T>,
+    ) -> Option<T> {
+        fn next<T>(
             entities: &Entities,
             entity: Entity,
-            up: &mut impl FnMut(Entity) -> bool,
-            down: &mut impl FnMut(Entity) -> bool,
-        ) -> bool {
+            up: &mut impl FnMut(Entity) -> Option<T>,
+            down: &mut impl FnMut(Entity) -> Option<T>,
+        ) -> Option<T> {
             if let Some(parent) = entities.parent(entity) {
-                up(parent) && next(entities, parent, up, down) && down(parent)
-            } else {
-                true
+                if let Some(value) = up(parent) {
+                    return Some(value);
+                }
+                if let Some(value) = next(entities, parent, up, down) {
+                    return Some(value);
+                }
+                if let Some(value) = down(parent) {
+                    return Some(value);
+                }
             }
+            None
         }
 
         if self.has(entity) {
-            Some(next(self, entity, &mut up, &mut down))
+            next(self, entity, &mut up, &mut down)
         } else {
             None
         }
     }
 
-    pub fn descend(
+    pub fn descend<T>(
         &self,
         entity: Entity,
-        mut down: impl FnMut(Entity) -> bool,
-        mut up: impl FnMut(Entity) -> bool,
-    ) -> Option<bool> {
+        mut down: impl FnMut(Entity) -> Option<T>,
+        mut up: impl FnMut(Entity) -> Option<T>,
+    ) -> Option<T> {
         #[inline]
-        fn next(
+        fn next<T>(
             entities: &Entities,
             entity: Entity,
-            down: &mut impl FnMut(Entity) -> bool,
-            up: &mut impl FnMut(Entity) -> bool,
-        ) -> bool {
+            down: &mut impl FnMut(Entity) -> Option<T>,
+            up: &mut impl FnMut(Entity) -> Option<T>,
+        ) -> Option<T> {
             for child in entities.children(entity) {
-                if down(child) && next(entities, child, down, up) && up(child) {
-                    continue;
-                } else {
-                    return false;
+                if let Some(value) = down(child) {
+                    return Some(value);
+                }
+                if let Some(value) = next(entities, child, down, up) {
+                    return Some(value);
+                }
+                if let Some(value) = up(child) {
+                    return Some(value);
                 }
             }
-            true
+            None
         }
 
         if self.has(entity) {
-            Some(next(self, entity, &mut down, &mut up))
+            next(self, entity, &mut down, &mut up)
         } else {
             None
         }
@@ -526,10 +537,11 @@ impl Entities {
         }
 
         // An entity cannot adopt an ancestor.
-        if !self
-            .ascend(parent, |parent| parent != child, |_| true)
-            .unwrap_or(false)
-        {
+        if let Some(_) = self.ascend(
+            parent,
+            |parent| if parent == child { Some(()) } else { None },
+            |_| None,
+        ) {
             return None;
         }
 

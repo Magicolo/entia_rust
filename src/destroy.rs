@@ -25,20 +25,20 @@ enum Defer {
 
 impl Destroy<'_> {
     #[inline]
-    pub fn one(&mut self, entity: Entity) {
-        self.0.defer(Defer::One(entity));
+    pub fn one(&mut self, entity: impl Into<Entity>) {
+        self.0.defer(Defer::One(entity.into()));
     }
 
     #[inline]
-    pub fn all(&mut self, entities: impl Iterator<Item = Entity>) {
+    pub fn all<I: Iterator<Item = impl Into<Entity>>>(&mut self, entities: I) {
         for entity in entities {
             self.one(entity);
         }
     }
 
     #[inline]
-    pub fn family(&mut self, entity: Entity) {
-        self.0.defer(Defer::Family(entity));
+    pub fn family(&mut self, entity: impl Into<Entity>) {
+        self.0.defer(Defer::Family(entity.into()));
     }
 }
 
@@ -102,8 +102,7 @@ impl Resolve for Inner {
                     // an entity store since the destroyed entity was in it.
                     let entity = *unsafe {
                         segment
-                            .store_at(0)
-                            .expect("Segment must have an entity store.")
+                            .entity_store()
                             .get::<Entity>(datum.store_index as usize)
                     };
                     entities
