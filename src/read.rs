@@ -38,11 +38,11 @@ impl<T: Default + Send + Sync + 'static> Inject for Read<T> {
 }
 
 impl<'a, T: 'static> Get<'a> for Read<T> {
-    type Item = &'a T;
+    type Item = <Self as At<'a>>::Item;
 
     #[inline]
-    fn get(&'a mut self, _: &World) -> Self::Item {
-        unsafe { self.0.get(0) }
+    fn get(&'a mut self, world: &World) -> Self::Item {
+        Self::at(&At::get(self, world), 0)
     }
 }
 
@@ -66,11 +66,17 @@ impl<T: Send + Sync + 'static> Item for Read<T> {
 }
 
 impl<'a, T: 'static> At<'a> for Read<T> {
+    type State = *const T;
     type Item = &'a T;
 
     #[inline]
-    fn at(&'a self, index: usize, _: &'a World) -> Self::Item {
-        unsafe { self.0.get(index) }
+    fn get(&'a self, _: &'a World) -> Self::State {
+        self.0.data()
+    }
+
+    #[inline]
+    fn at(state: &Self::State, index: usize) -> Self::Item {
+        unsafe { &*state.add(index) }
     }
 }
 

@@ -23,6 +23,8 @@ macro_rules! append {
 
         impl<$($ts,)* $t> Chop<$t> for ($($ts,)* $t,) {
             type Rest = ($($ts,)*);
+
+            #[inline]
             fn chop(self) -> ($t, Self::Rest) {
                 let ($($ps,)* $p,) = self;
                 ($p, ($($ps,)*))

@@ -28,14 +28,20 @@ impl<T> Queue<T> {
     #[inline]
     pub fn enqueue(&mut self, messages: impl Iterator<Item = T>) {
         self.1.extend(messages);
-        while self.0 > 0 && self.1.len() > self.0 {
-            self.dequeue();
-        }
+        self.truncate();
     }
 
     #[inline]
     pub fn dequeue(&mut self) -> Option<T> {
         self.1.pop_front()
+    }
+
+    fn truncate(&mut self) {
+        if self.0 > 0 {
+            while self.1.len() > self.0 {
+                self.dequeue();
+            }
+        }
     }
 }
 

@@ -158,7 +158,6 @@ pub fn inject(input: TokenStream) -> TokenStream {
                     Ok(#state_struct_name(#(#initialize_body,)*))
                 }
 
-                #[inline]
                 fn update(_state: &mut Self::State, mut _context: #context_path) -> #result_path {
                     #(#update_body)*
                     Ok(())
@@ -248,7 +247,6 @@ pub fn depend(input: TokenStream) -> TokenStream {
         let code = quote! {
             #[automatically_derived]
             unsafe impl #impl_generics #depend_path for #ident #type_generics #where_clauses {
-                #[inline]
                 fn depend(&self, _world: & #world_path) -> Vec<#dependency_path> {
                     let mut dependencies = Vec::new();
                     #(#depend_body)*
@@ -377,17 +375,14 @@ pub fn template(input: TokenStream) -> TokenStream {
                 type Declare = (#(#declare_type)*);
                 type State = (#(#state_type)*);
 
-                #[inline]
                 fn declare(_input: Self::Input, mut _context: #context_path::DeclareContext) -> Self::Declare {
                     (#(#declare_body)*)
                 }
 
-                #[inline]
                 fn initialize(_state: Self::Declare, mut _context: #context_path::InitializeContext) -> Self::State {
                     (#(#initialize_body)*)
                 }
 
-                #[inline]
                 fn static_count(_state: &Self::State, mut _context: #context_path::CountContext) -> #result_path<bool> {
                     Ok(#(#static_count_body)* true)
                 }

@@ -29,11 +29,13 @@ pub struct State<I: Item, F> {
 
 pub struct Iterator<'a, 'b, I: Item, F> {
     index: usize,
+    count: usize,
     segment: usize,
+    state: Option<<I::State as At<'a>>::State>,
     query: &'b Query<'a, I, F>,
 }
 
-pub(crate) struct Inner<S, F> {
+pub struct Inner<S, F> {
     pub(crate) segments: Vec<Option<usize>>,
     pub(crate) states: Vec<(S, usize)>,
     _marker: PhantomData<fn(F)>,
@@ -58,12 +60,12 @@ impl<'a, I: Item, F> Query<'a, I, F> {
             .sum()
     }
 
-    #[inline]
     pub fn each(&'a self, mut each: impl FnMut(<I::State as At<'a>>::Item)) {
         for (state, segment) in &self.inner.states {
             let segment = &self.world.segments[*segment];
+            let state = state.get(self.world);
             for i in 0..segment.count() {
-                each(state.at(i, self.world));
+                each(I::State::at(&state, i));
             }
         }
     }
@@ -72,7 +74,8 @@ impl<'a, I: Item, F> Query<'a, I, F> {
         let datum = self.entities.get_datum(entity.into())?;
         let index = self.inner.segments[datum.segment_index as usize]?;
         let (state, _) = &self.inner.states[index];
-        Some(state.at(datum.store_index as usize, self.world))
+        let state = state.get(self.world);
+        Some(<I::State as At<'_>>::at(&state, datum.store_index as usize))
     }
 }
 
@@ -83,6 +86,8 @@ impl<'a, 'b: 'a, I: Item, F> IntoIterator for &'b Query<'a, I, F> {
     fn into_iter(self) -> Self::IntoIter {
         Iterator {
             index: 0,
+            count: 0,
+            state: None,
             segment: 0,
             query: self,
         }
@@ -94,17 +99,34 @@ impl<'a, 'b: 'a, I: Item, F> iter::Iterator for Iterator<'a, 'b, I, F> {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some((item, segment)) = self.query.inner.states.get(self.segment) {
-            let segment = &self.query.world.segments[*segment];
-            if self.index < segment.count() {
-                let item = item.at(self.index, self.query.world);
+        if self.index < self.count {
+            if let Some(state) = &self.state {
+                let item = I::State::at(state, self.index);
                 self.index += 1;
                 return Some(item);
-            } else {
-                self.segment += 1;
-                self.index = 0;
             }
         }
+
+        while let Some((state, segment)) = self.query.inner.states.get(self.segment) {
+            let segment = &self.query.world.segments[*segment];
+            self.segment += 1;
+            match segment.count() {
+                0 => continue,
+                1 => {
+                    let state = state.get(self.query.world);
+                    return Some(I::State::at(&state, 0));
+                }
+                count => {
+                    let state = state.get(self.query.world);
+                    let item = I::State::at(&state, 0);
+                    self.index = 1;
+                    self.state = Some(state);
+                    self.count = count;
+                    return Some(item);
+                }
+            }
+        }
+
         None
     }
 }
@@ -199,15 +221,16 @@ pub mod item {
     pub trait Item {
         type State: for<'a> At<'a> + Depend;
         fn initialize(context: Context) -> Result<Self::State>;
-        #[inline]
         fn update(_: &mut Self::State, _: Context) -> Result {
             Ok(())
         }
     }
 
     pub trait At<'a> {
+        type State;
         type Item;
-        fn at(&'a self, index: usize, world: &'a World) -> Self::Item;
+        fn get(&'a self, world: &'a World) -> Self::State;
+        fn at(state: &Self::State, index: usize) -> Self::Item;
     }
 
     impl<'a> Context<'a> {
@@ -253,7 +276,6 @@ pub mod item {
             Ok(I::initialize(context).ok())
         }
 
-        #[inline]
         fn update(state: &mut Self::State, context: Context) -> Result {
             if let Some(state) = state {
                 I::update(state, context)
@@ -264,11 +286,17 @@ pub mod item {
     }
 
     impl<'a, A: At<'a>> At<'a> for Option<A> {
+        type State = Option<A::State>;
         type Item = Option<A::Item>;
 
         #[inline]
-        fn at(&'a self, index: usize, world: &'a World) -> Self::Item {
-            Some(self.as_ref()?.at(index, world))
+        fn get(&'a self, world: &'a World) -> Self::State {
+            Some(self.as_ref()?.get(world))
+        }
+
+        #[inline]
+        fn at(state: &Self::State, index: usize) -> Self::Item {
+            Some(A::at(state.as_ref()?, index))
         }
     }
 
@@ -280,10 +308,17 @@ pub mod item {
     }
 
     impl<'a, T> At<'a> for PhantomData<T> {
+        type State = <() as At<'a>>::State;
         type Item = <() as At<'a>>::Item;
+
         #[inline]
-        fn at(&'a self, index: usize, world: &'a World) -> Self::Item {
-            ().at(index, world)
+        fn get(&'a self, world: &'a World) -> Self::State {
+            ().get(world)
+        }
+
+        #[inline]
+        fn at(state: &Self::State, index: usize) -> Self::Item {
+            <()>::at(state, index)
         }
     }
 
@@ -303,12 +338,19 @@ pub mod item {
             }
 
             impl<'a, $($t: At<'a>,)*> At<'a> for ($($t,)*) {
+                type State = ($($t::State,)*);
                 type Item = ($($t::Item,)*);
 
                 #[inline]
-                fn at(&'a self, _index: usize, _world: &'a World) -> Self::Item {
+                fn get(&'a self, _world: &'a World) -> Self::State {
                     let ($($p,)*) = self;
-                    ($($p.at(_index, _world),)*)
+                    ($($p.get(_world),)*)
+                }
+
+                #[inline]
+                fn at(_state: &Self::State, _index: usize) -> Self::Item {
+                    let ($($p,)*) = _state;
+                    ($($t::at($p, _index),)*)
                 }
             }
         };

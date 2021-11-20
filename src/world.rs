@@ -47,7 +47,6 @@ impl World {
         world
     }
 
-    #[inline]
     pub fn reserve() -> usize {
         static COUNTER: AtomicUsize = AtomicUsize::new(0);
         COUNTER.fetch_add(1, Ordering::Relaxed)
@@ -188,8 +187,8 @@ pub mod meta {
                 name: type_name::<T>(),
                 size: size_of::<T>(),
                 allocate: |capacity| {
-                    let mut data = ManuallyDrop::new(Vec::<T>::with_capacity(capacity));
-                    data.as_mut_ptr().cast()
+                    let mut pointer = ManuallyDrop::new(Vec::<T>::with_capacity(capacity));
+                    pointer.as_mut_ptr().cast()
                 },
                 free: |pointer, count, capacity| unsafe {
                     Vec::from_raw_parts(pointer.cast::<T>(), count, capacity);
@@ -427,12 +426,10 @@ pub mod segment {
             self.count = 0;
         }
 
-        #[inline]
         pub fn entity_store(&self) -> Arc<Store> {
             self.entity_store.clone()
         }
 
-        #[inline]
         pub fn component_stores(&self) -> impl ExactSizeIterator<Item = &Store> {
             self.component_stores.iter().map(AsRef::as_ref)
         }
@@ -445,7 +442,6 @@ pub mod segment {
                 .ok_or(Error::MissingStore(meta.name, self.index))
         }
 
-        #[inline]
         pub fn stores(&self) -> impl Iterator<Item = &Store> {
             once(self.entity_store.as_ref()).chain(self.component_stores())
         }
@@ -502,7 +498,6 @@ pub mod store {
     unsafe impl Send for Store {}
 
     impl Store {
-        #[inline]
         pub(super) fn new(meta: Arc<Meta>, capacity: usize) -> Self {
             let pointer = (meta.allocate)(capacity);
             Self(meta, pointer.into())
@@ -514,16 +509,17 @@ pub mod store {
         }
 
         #[inline]
-        pub fn data(&self) -> *mut () {
-            unsafe { *self.1.get() }
+        pub fn data<T: 'static>(&self) -> *mut T {
+            debug_assert_eq!(TypeId::of::<T>(), self.meta().identifier);
+            self.pointer().cast()
         }
 
         #[inline]
         pub unsafe fn copy(source: (&Self, usize), target: (&Self, usize), count: usize) {
             debug_assert_eq!(source.0.meta().identifier, target.0.meta().identifier);
             (source.0.meta().copy)(
-                (source.0.data(), source.1),
-                (target.0.data(), target.1),
+                (source.0.pointer(), source.1),
+                (target.0.pointer(), target.1),
                 count,
             );
         }
@@ -540,8 +536,8 @@ pub mod store {
             let error = Error::MissingClone(metas.0.name);
             let cloner = metas.0.cloner.or(metas.1.cloner).ok_or(error)?;
             (cloner.clone)(
-                (source.0.data(), source.1),
-                (target.0.data(), target.1),
+                (source.0.pointer(), source.1),
+                (target.0.pointer(), target.1),
                 count,
             );
             Ok(())
@@ -559,8 +555,8 @@ pub mod store {
             let error = Error::MissingClone(metas.0.name);
             let cloner = metas.0.cloner.or(metas.1.cloner).ok_or(error)?;
             (cloner.duplicate)(
-                (source.0.data(), source.1),
-                (target.0.data(), target.1),
+                (source.0.pointer(), source.1),
+                (target.0.pointer(), target.1),
                 count,
             );
             Ok(())
@@ -576,21 +572,18 @@ pub mod store {
         /// SAFETY: The 'index' must be within the bounds of the store.
         #[inline]
         pub unsafe fn get<T: 'static>(&self, index: usize) -> &mut T {
-            debug_assert_eq!(TypeId::of::<T>(), self.meta().identifier);
-            &mut *self.data().cast::<T>().add(index)
+            &mut *self.data::<T>().add(index)
         }
 
         /// SAFETY: Both 'index' and 'count' must be within the bounds of the store.
         #[inline]
         pub unsafe fn get_all<T: 'static>(&self, index: usize, count: usize) -> &mut [T] {
-            debug_assert_eq!(TypeId::of::<T>(), self.meta().identifier);
-            from_raw_parts_mut(self.data().cast::<T>().add(index), count)
+            from_raw_parts_mut(self.data::<T>().add(index), count)
         }
 
         #[inline]
         pub unsafe fn set<T: 'static>(&self, index: usize, item: T) {
-            debug_assert_eq!(TypeId::of::<T>(), self.meta().identifier);
-            self.data().cast::<T>().add(index).write(item);
+            self.data::<T>().add(index).write(item);
         }
 
         #[inline]
@@ -598,9 +591,8 @@ pub mod store {
         where
             T: Copy,
         {
-            debug_assert_eq!(TypeId::of::<T>(), self.meta().identifier);
             let source = items.as_ptr().cast::<T>();
-            let target = self.data().cast::<T>().add(index);
+            let target = self.data::<T>().add(index);
             source.copy_to_nonoverlapping(target, items.len());
         }
 
@@ -608,29 +600,33 @@ pub mod store {
         #[inline]
         pub unsafe fn squash(&self, source_index: usize, target_index: usize) {
             let meta = self.meta();
-            let data = self.data();
-            (meta.drop)(data, target_index, 1);
-            (meta.copy)((data, source_index), (data, target_index), 1);
-        }
-
-        #[inline]
-        pub unsafe fn resize(&self, old_capacity: usize, new_capacity: usize) {
-            let meta = self.meta();
-            let old_data = self.data();
-            let new_data = (self.meta().allocate)(new_capacity);
-            (meta.copy)((old_data, 0), (new_data, 0), old_capacity);
-            (meta.free)(old_data, 0, old_capacity);
-            *self.1.get() = new_data;
+            let pointer = self.pointer();
+            (meta.drop)(pointer, target_index, 1);
+            (meta.copy)((pointer, source_index), (pointer, target_index), 1);
         }
 
         #[inline]
         pub unsafe fn drop(&self, index: usize, count: usize) {
-            (self.meta().drop)(self.data(), index, count);
+            (self.meta().drop)(self.pointer(), index, count);
         }
 
         #[inline]
         pub unsafe fn free(&self, count: usize, capacity: usize) {
-            (self.meta().free)(self.data(), count, capacity);
+            (self.meta().free)(self.pointer(), count, capacity);
+        }
+
+        pub unsafe fn resize(&self, old_capacity: usize, new_capacity: usize) {
+            let meta = self.meta();
+            let old_pointer = self.pointer();
+            let new_pointer = (self.meta().allocate)(new_capacity);
+            (meta.copy)((old_pointer, 0), (new_pointer, 0), old_capacity);
+            (meta.free)(old_pointer, 0, old_capacity);
+            *self.1.get() = new_pointer;
+        }
+
+        #[inline]
+        fn pointer(&self) -> *mut () {
+            unsafe { *self.1.get() }
         }
     }
 }

@@ -98,14 +98,12 @@ impl Bits {
         self.binary(bits, true, true, |left, right| left ^ !right);
     }
 
-    #[inline]
     fn ensure(&mut self, capacity: usize) {
         while self.capacity() < capacity {
             self.buckets.push(0);
         }
     }
 
-    #[inline]
     fn shrink(&mut self) {
         while let Some(value) = self.buckets.pop() {
             if value > 0 {
@@ -115,7 +113,6 @@ impl Bits {
         }
     }
 
-    #[inline]
     fn binary(&mut self, bits: &Bits, ensure: bool, shrink: bool, merge: fn(u128, u128) -> u128) {
         let count = if ensure {
             self.ensure(bits.capacity());

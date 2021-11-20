@@ -90,7 +90,6 @@ where
 }
 
 impl System {
-    #[inline]
     pub unsafe fn new<'a, T: Send + 'static>(
         identifier: Option<usize>,
         name: String,

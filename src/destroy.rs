@@ -29,7 +29,6 @@ impl Destroy<'_> {
         self.0.defer(Defer::One(entity.into()));
     }
 
-    #[inline]
     pub fn all<I: Iterator<Item = impl Into<Entity>>>(&mut self, entities: I) {
         for entity in entities {
             self.one(entity);

@@ -76,7 +76,7 @@ impl<T: 'static> AsRef<T> for State<T> {
     fn as_ref(&self) -> &T {
         self.inner.as_ref().states[self.index]
             .downcast_ref()
-            .unwrap()
+            .expect("State must be of type 'T'.")
     }
 }
 
@@ -85,7 +85,7 @@ impl<T: 'static> AsMut<T> for State<T> {
     fn as_mut(&mut self) -> &mut T {
         self.inner.as_mut().states[self.index]
             .downcast_mut()
-            .unwrap()
+            .expect("State must be of type 'T'.")
     }
 }
 

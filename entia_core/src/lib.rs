@@ -5,7 +5,6 @@ pub mod change;
 pub mod flags;
 pub mod marker;
 pub mod maybe;
-pub mod prepend;
 pub mod slice;
 pub mod utility;
 
@@ -17,6 +16,5 @@ pub use crate::{
     flags::{Flags, IntoFlags},
     marker::{Indirect, Marker},
     maybe::{Maybe, Wrap},
-    prepend::Prepend,
     slice::Slice,
 };

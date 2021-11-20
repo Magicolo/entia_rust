@@ -27,6 +27,15 @@ impl<I: Inject, S: Scope> Inject for Ignore<I, S> {
     fn initialize(input: Self::Input, context: inject::Context) -> Result<Self::State> {
         Ok(State(I::initialize(input, context)?, PhantomData))
     }
+
+    fn update(State(state, _): &mut Self::State, context: inject::Context) -> Result {
+        I::update(state, context)
+    }
+
+    #[inline]
+    fn resolve(State(state, _): &mut Self::State, context: inject::Context) -> Result {
+        I::resolve(state, context)
+    }
 }
 
 impl<'a, T: Get<'a>, S: Scope> Get<'a> for State<T, S> {
@@ -44,14 +53,24 @@ impl<I: Item, S: Scope> Item for Ignore<I, S> {
     fn initialize(context: item::Context) -> Result<Self::State> {
         Ok(State(I::initialize(context)?, PhantomData))
     }
+
+    fn update(State(state, _): &mut Self::State, context: item::Context) -> Result {
+        I::update(state, context)
+    }
 }
 
 impl<'a, T: At<'a>, S: Scope> At<'a> for State<T, S> {
+    type State = T::State;
     type Item = Ignore<T::Item>;
 
     #[inline]
-    fn at(&'a self, index: usize, world: &'a World) -> Self::Item {
-        Ignore(self.0.at(index, world), PhantomData)
+    fn get(&'a self, world: &'a World) -> Self::State {
+        self.0.get(world)
+    }
+
+    #[inline]
+    fn at(state: &Self::State, index: usize) -> Self::Item {
+        Ignore(T::at(state, index), PhantomData)
     }
 }
 

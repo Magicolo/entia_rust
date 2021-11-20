@@ -119,7 +119,7 @@ impl Slot {
         }
     }
 
-    fn set(self, segment: &Segment, index: usize, count: usize) -> Result<(), error::Error> {
+    fn set(self, segment: &Segment, index: usize, count: usize) {
         if count == 0 {
             for store in self.0 {
                 unsafe { store.free(1, 1) };
@@ -135,7 +135,6 @@ impl Slot {
                 unsafe { source.free(0, 1) };
             }
         }
-        Ok(())
     }
 }
 
@@ -161,6 +160,7 @@ impl Inject for Duplicate<'_> {
 impl<'a> Get<'a> for State {
     type Item = Duplicate<'a>;
 
+    #[inline]
     fn get(&'a mut self, world: &'a World) -> Self::Item {
         let (defer, inner) = self.0.get(world);
         Duplicate {
@@ -192,10 +192,7 @@ impl Resolve for Inner {
             let count = defer.entities.len();
             let segment = &mut world.segments[defer.segment];
             unsafe { segment.entity_store().set_all(defer.store, &defer.entities) };
-            defer
-                .slot
-                .set(segment, defer.store, count)
-                .expect("Segment must be able to set the slot.");
+            defer.slot.set(segment, defer.store, count);
 
             for (i, &entity) in self.buffer.iter().enumerate() {
                 entities

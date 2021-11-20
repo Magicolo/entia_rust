@@ -34,11 +34,13 @@ pub trait Inject {
     fn name() -> String {
         short_type_name::<Self>()
     }
+
     fn initialize(input: Self::Input, context: Context) -> Result<Self::State>;
-    #[inline]
+
     fn update(_: &mut Self::State, _: Context) -> Result {
         Ok(())
     }
+
     #[inline]
     fn resolve(_: &mut Self::State, _: Context) -> Result {
         Ok(())
@@ -94,7 +96,6 @@ macro_rules! inject {
                 Ok(($($t::initialize($p, _context.owned())?,)*))
             }
 
-            #[inline]
             fn update(($($p,)*): &mut Self::State, mut _context: Context) -> Result {
                 $($t::update($p, _context.owned())?;)*
                 Ok(())

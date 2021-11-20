@@ -66,11 +66,17 @@ impl Item for Entity {
 }
 
 impl<'a> At<'a> for State {
+    type State = *const Entity;
     type Item = Entity;
 
     #[inline]
-    fn at(&self, index: usize, _: &'a World) -> Self::Item {
-        *unsafe { self.0.get(index) }
+    fn get(&'a self, _: &'a World) -> Self::State {
+        self.0.data()
+    }
+
+    #[inline]
+    fn at(state: &Self::State, index: usize) -> Self::Item {
+        unsafe { *state.add(index) }
     }
 }
 

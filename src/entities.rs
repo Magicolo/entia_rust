@@ -198,6 +198,7 @@ impl Entities {
         self.data.0.get_mut(index as usize)
     }
 
+    #[inline]
     pub fn has(&self, entity: Entity) -> bool {
         self.get_datum(entity).is_some()
     }
@@ -348,7 +349,6 @@ impl Entities {
         mut down: impl FnMut(Entity) -> Option<T>,
         mut up: impl FnMut(Entity) -> Option<T>,
     ) -> Option<T> {
-        #[inline]
         fn next<T>(
             entities: &Entities,
             entity: Entity,

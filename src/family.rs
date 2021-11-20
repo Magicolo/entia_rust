@@ -137,11 +137,17 @@ impl Item for Family<'_> {
 }
 
 impl<'a> At<'a> for State {
+    type State = (*const Entity, &'a Entities);
     type Item = Family<'a>;
 
     #[inline]
-    fn at(&'a self, index: usize, world: &'a World) -> Self::Item {
-        Family(*self.0.at(index, world), self.1.as_ref())
+    fn get(&'a self, world: &'a World) -> Self::State {
+        (self.0.get(world), self.1.as_ref())
+    }
+
+    #[inline]
+    fn at(state: &Self::State, index: usize) -> Self::Item {
+        Family(unsafe { *state.0.add(index) }, state.1)
     }
 }
 
@@ -209,7 +215,6 @@ pub mod template {
             }
         }
 
-        #[inline]
         pub fn entity(&self) -> Entity {
             let entity_indices = &self.entity_indices[self.entity_index];
             let segment_indices = &self.segment_indices[entity_indices.segment];
@@ -443,7 +448,6 @@ pub mod item {
         }
     }
 
-    #[inline]
     fn get_datum_at<N: Next>(
         mut index: u32,
         mut at: usize,
@@ -458,14 +462,14 @@ pub mod item {
         Some((datum, index))
     }
 
-    #[inline]
     fn get_item<'a, I: Item, F>(
         datum: &Datum,
         inner: &'a query::Inner<I::State, F>,
         world: &'a World,
     ) -> Option<<I::State as At<'a>>::Item> {
         let state = inner.segments[datum.segment_index as usize]?;
-        Some(inner.states[state].0.at(datum.store_index as usize, world))
+        let state = inner.states[state].0.get(world);
+        Some(I::State::at(&state, datum.store_index as usize))
     }
 
     pub mod child {
@@ -525,7 +529,6 @@ pub mod item {
                 })
             }
 
-            #[inline]
             fn update(
                 State {
                     entity,
@@ -545,15 +548,31 @@ pub mod item {
         where
             I::State: 'static,
         {
+            type State = (
+                *const Entity,
+                &'a Entities,
+                &'a query::Inner<I::State, F>,
+                &'a World,
+            );
             type Item = Child<'a, I, F>;
 
             #[inline]
-            fn at(&'a self, index: usize, world: &'a World) -> Self::Item {
-                Child {
-                    index: self.entity.at(index, world).index(),
-                    entities: self.entities.as_ref(),
-                    query: self.query.inner.as_ref(),
+            fn get(&'a self, world: &'a World) -> Self::State {
+                (
+                    self.entity.get(world),
+                    self.entities.as_ref(),
+                    self.query.inner.as_ref(),
                     world,
+                )
+            }
+
+            #[inline]
+            fn at(state: &Self::State, index: usize) -> Self::Item {
+                Child {
+                    index: unsafe { *state.0.add(index) }.index(),
+                    entities: state.1,
+                    query: state.2,
+                    world: state.3,
                 }
             }
         }
@@ -643,7 +662,6 @@ pub mod item {
                 })
             }
 
-            #[inline]
             fn update(
                 State {
                     entity,
@@ -663,15 +681,31 @@ pub mod item {
         where
             I::State: 'static,
         {
+            type State = (
+                *const Entity,
+                &'a Entities,
+                &'a query::Inner<I::State, F>,
+                &'a World,
+            );
             type Item = Parent<'a, I, F>;
 
             #[inline]
-            fn at(&'a self, index: usize, world: &'a World) -> Self::Item {
-                Parent {
-                    index: self.entity.at(index, world).index(),
-                    entities: self.entities.as_ref(),
-                    query: self.query.inner.as_ref(),
+            fn get(&'a self, world: &'a World) -> Self::State {
+                (
+                    self.entity.get(world),
+                    self.entities.as_ref(),
+                    self.query.inner.as_ref(),
                     world,
+                )
+            }
+
+            #[inline]
+            fn at(state: &Self::State, index: usize) -> Self::Item {
+                Parent {
+                    index: unsafe { *state.0.add(index) }.index(),
+                    entities: state.1,
+                    query: state.2,
+                    world: state.3,
                 }
             }
         }
