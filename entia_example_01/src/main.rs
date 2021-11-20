@@ -5,7 +5,7 @@ use std::{collections::VecDeque, error, result::Result, time::Duration};
 
 /*
 BUGS:
-    - Dependencies may work weirdly with 'Entity' as a component. If it cannot be reconciled, prevent 'Entity' as a component.
+    - Some dependencies may work weirdly with 'Entity' as a component. If it cannot be reconciled, prevent 'Entity' as a component.
 
 TODO:
     - Add tests.
@@ -99,8 +99,6 @@ it should be possible to do so by adding a 'reserved: AtomicUsize' to queues.
 
 - Find a way to definitely know which segments overlap between deferred operations and 'Read/Write'. Otherwise,
 the deferred operations should have a 'Defer(Entity)' dependency on all segments.
-
-- Clean up unnecessary #[inline].
 */
 
 // #[derive(Inject)]
