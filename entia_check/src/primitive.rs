@@ -1,5 +1,6 @@
 use crate::generator::{Generator, IntoGenerator, Size, State};
 use std::{
+    convert::TryInto,
     marker::PhantomData,
     ops::{Range, RangeFrom, RangeInclusive, RangeTo, RangeToInclusive},
 };
@@ -32,14 +33,18 @@ impl Generator for Full<bool> {
 }
 
 impl Full<char> {
-    pub const SPECIAL: [char; 3] = ['\0', char::MAX, char::REPLACEMENT_CHARACTER];
+    pub const SPECIAL: [char; 3] = ['\u{0000}', char::MAX, char::REPLACEMENT_CHARACTER];
 }
 
 impl Generator for Full<char> {
     type Item = char;
     #[inline]
     fn generate(&mut self, state: &mut State) -> Self::Item {
-        char::from_u32(('\0' as u32..=char::MAX as u32).generate(state)).unwrap()
+        match state.random.u8(..) {
+            0 => Full::<char>::SPECIAL.clone().generate(state),
+            1..=4 => ('\u{E000}'..=char::MAX).generate(state),
+            _ => ('\u{0000}'..='\u{D7FF}').generate(state),
+        }
     }
 }
 
@@ -47,7 +52,8 @@ impl Generator for Range<char> {
     type Item = char;
     #[inline]
     fn generate(&mut self, state: &mut State) -> Self::Item {
-        char::from_u32((self.start as u32..self.end as u32).generate(state)).unwrap()
+        let (start, end) = (self.start as u32, self.end as u32);
+        (start..end).generate(state).try_into().unwrap()
     }
 }
 
@@ -55,17 +61,19 @@ impl Generator for RangeInclusive<char> {
     type Item = char;
     #[inline]
     fn generate(&mut self, state: &mut State) -> Self::Item {
-        char::from_u32((*self.start() as u32..=*self.end() as u32).generate(state)).unwrap()
+        let (start, end) = (*self.start() as u32, *self.end() as u32);
+        (start..=end).generate(state).try_into().unwrap()
     }
 }
 
 impl Generator for Size<Full<char>> {
     type Item = char;
+    #[inline]
     fn generate(&mut self, state: &mut State) -> Self::Item {
-        if state.random.u8(..) == 0 {
-            Full::<char>::SPECIAL.clone().generate(state)
-        } else {
-            Size('\0'..=char::MAX).generate(state)
+        match state.random.u8(..) {
+            0 => Full::<char>::SPECIAL.clone().generate(state),
+            1..=4 => Size('\u{E000}'..=char::MAX).generate(state),
+            _ => Size('\u{0000}'..='\u{D7FF}').generate(state),
         }
     }
 }
@@ -75,7 +83,7 @@ impl Generator for Size<Range<char>> {
     #[inline]
     fn generate(&mut self, state: &mut State) -> Self::Item {
         let (start, end) = (self.0.start as u32, self.0.end as u32);
-        char::from_u32(Size(start..end).generate(state)).unwrap()
+        Size(start..end).generate(state).try_into().unwrap()
     }
 }
 
@@ -84,7 +92,7 @@ impl Generator for Size<RangeInclusive<char>> {
     #[inline]
     fn generate(&mut self, state: &mut State) -> Self::Item {
         let (start, end) = (*self.0.start() as u32, *self.0.end() as u32);
-        char::from_u32(Size(start..=end).generate(state)).unwrap()
+        Size(start..=end).generate(state).try_into().unwrap()
     }
 }
 
@@ -164,10 +172,9 @@ macro_rules! integer {
             type Item = $t;
             #[inline]
             fn generate(&mut self, state: &mut State) -> Self::Item {
-                if state.random.u8(..) == 0 {
-                    Full::<$t>::SPECIAL.clone().generate(state)
-                } else {
-                    state.random.$t(..)
+                match state.random.u8(..) {
+                    0 => Full::<$t>::SPECIAL.clone().generate(state),
+                    _ => ($t::MIN..=$t::MAX).generate(state),
                 }
             }
         }
@@ -191,10 +198,9 @@ macro_rules! integer {
         impl Generator for Size<Full<$t>> {
             type Item = $t;
             fn generate(&mut self, state: &mut State) -> Self::Item {
-                if state.random.u8(..) == 0 {
-                    Full::<$t>::SPECIAL.clone().generate(state)
-                } else {
-                    Size($t::MIN..=$t::MAX).generate(state)
+                match state.random.u8(..) {
+                    0 => Full::<$t>::SPECIAL.clone().generate(state),
+                    _ => Size($t::MIN..=$t::MAX).generate(state),
                 }
             }
         }
@@ -236,12 +242,10 @@ macro_rules! floating {
 
             #[inline]
             fn generate(&mut self, state: &mut State) -> Self::Item {
-                if state.random.u8(..) == 0 {
-                    Full::<$t>::SPECIAL.clone().generate(state)
-                } else if state.random.bool() {
-                    state.random.$t() * $t::MAX
-                } else {
-                    state.random.$t() * $t::MIN
+                match state.random.u8(..) {
+                    0 | u8::MAX => Full::<$t>::SPECIAL.clone().generate(state),
+                    1..=127 => (0 as $t..$t::MAX).generate(state),
+                    128..=254 => ($t::MIN..0 as $t).generate(state),
                 }
             }
         }
@@ -251,7 +255,6 @@ macro_rules! floating {
             #[inline]
             fn generate(&mut self, state: &mut State) -> Self::Item {
                 let (start, end) = (self.start, self.end);
-                if end - start < $t::EPSILON { panic!("empty range: {}..{}", start, end); }
                 state.random.$t() * (end - start) + start
             }
         }
@@ -275,10 +278,10 @@ macro_rules! floating {
         impl Generator for Size<Full<$t>> {
             type Item = $t;
             fn generate(&mut self, state: &mut State) -> Self::Item {
-                if state.random.u8(..) == 0 {
-                    Full::<$t>::SPECIAL.clone().generate(state)
-                } else {
-                    Size($t::MIN..$t::MAX).generate(state)
+                match state.random.u8(..) {
+                    0 | u8::MAX => Full::<$t>::SPECIAL.clone().generate(state),
+                    1..=127 => Size(0 as $t..$t::MAX).generate(state),
+                    128..=254 => Size($t::MIN..0 as $t).generate(state),
                 }
             }
         }
@@ -288,8 +291,7 @@ macro_rules! floating {
             #[inline]
             fn generate(&mut self, state: &mut State) -> Self::Item {
                 let (start, end) = (self.0.start, self.0.end);
-                if end - start < $t::EPSILON { panic!("empty range: {}..{}", start, end); }
-                let shrink = shrink(start as f64, end as f64, state.size, Some($t::EPSILON as f64));
+                let shrink = shrink(start as f64, end as f64, state.size, None);
                 (shrink.0 as $t..shrink.1 as $t).generate(state)
             }
         }
@@ -316,7 +318,7 @@ macro_rules! floating {
 }
 
 full!(char);
-range!(char, '\0', char::MAX);
+range!(char, '\u{0000}', char::MAX);
 integer!(u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize);
 floating!(f32, f64);
 
@@ -327,7 +329,6 @@ fn shrink(start: f64, end: f64, size: f64, minimum: Option<f64>) -> (f64, f64) {
     let range_shrink = range * (1. - size);
     let start_shrink = start + range_shrink * start_ratio;
     let end_shrink = end - range_shrink * end_ratio;
-
     match minimum {
         Some(minimum) if end_shrink - start_shrink < minimum => {
             if start_ratio > end_ratio {

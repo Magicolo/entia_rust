@@ -6,6 +6,13 @@ fn has_sample() {
 }
 
 #[test]
+fn sample_has_count() {
+    for i in 0..COUNT {
+        assert_eq!(char::generator().sample(i).len(), i);
+    }
+}
+
+#[test]
 #[should_panic]
 fn empty_range() {
     let value = char::generator().sample(1).next().unwrap();
@@ -14,22 +21,22 @@ fn empty_range() {
 
 #[test]
 fn is_ascii() {
-    assert!(ascii().sample(1000).all(|value| value.is_ascii()))
+    assert!(ascii().sample(COUNT).all(|value| value.is_ascii()))
 }
 
 #[test]
 fn is_digit() {
-    assert!(digit().sample(1000).all(|value| value.is_ascii_digit()))
+    assert!(digit().sample(COUNT).all(|value| value.is_ascii_digit()))
 }
 
 #[test]
 fn is_alphabetic() {
     assert!(alphabet()
-        .sample(100)
+        .sample(COUNT)
         .all(|value| value.is_ascii_alphabetic()))
 }
 
 #[test]
 fn full_does_not_panic() {
-    <char>::generator().sample(1000).for_each(|_| {});
+    <char>::generator().sample(COUNT).for_each(|_| {});
 }
