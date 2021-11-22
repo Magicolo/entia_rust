@@ -1,8 +1,12 @@
 #[macro_export]
+macro_rules! count {
+    () => { 0 };
+    ($v:ident $(,$vs:ident)*) => {1 + $crate::count!($($vs),*) };
+}
+
+#[macro_export]
 macro_rules! recurse {
-    ($m:ident) => {
-        $m!();
-    };
+    ($m:ident) => { $m!(); };
     ($m:ident, $p:ident, $t:ident $(,$ps:ident, $ts:ident)*) => {
         $m!($p, $t $(,$ps, $ts)*);
         $crate::recurse!($m $(,$ps, $ts)*);
