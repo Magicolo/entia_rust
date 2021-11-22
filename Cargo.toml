@@ -12,5 +12,8 @@ entia_macro = { path = "./entia_macro" }
 entia_derive = { path = "./entia_derive" }
 rayon = "*"
 
+[dev-dependencies]
+entia_check = { path = "./entia_check" }
+
 [workspace]
 members = ["entia_core", "entia_check", "entia_macro", "entia_derive", "entia_example_01"]

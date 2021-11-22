@@ -31,11 +31,15 @@ impl Generator for Full<bool> {
     }
 }
 
+impl Full<char> {
+    pub const SPECIAL: [char; 3] = ['\0', char::MAX, char::REPLACEMENT_CHARACTER];
+}
+
 impl Generator for Full<char> {
     type Item = char;
     #[inline]
     fn generate(&mut self, state: &mut State) -> Self::Item {
-        char::from_u32(('\0' as u32..char::MAX as u32).generate(state)).unwrap()
+        char::from_u32(('\0' as u32..=char::MAX as u32).generate(state)).unwrap()
     }
 }
 
@@ -59,10 +63,9 @@ impl Generator for Size<Full<char>> {
     type Item = char;
     fn generate(&mut self, state: &mut State) -> Self::Item {
         if state.random.u8(..) == 0 {
-            ['\0', char::MAX, char::REPLACEMENT_CHARACTER].generate(state)
+            Full::<char>::SPECIAL.clone().generate(state)
         } else {
-            let (start, end) = shrink('\0' as u32 as f64, char::MAX as u32 as f64, state.size);
-            char::from_u32((start as u32..end as u32).generate(state)).unwrap()
+            Size('\0'..=char::MAX).generate(state)
         }
     }
 }
@@ -71,12 +74,8 @@ impl Generator for Size<Range<char>> {
     type Item = char;
     #[inline]
     fn generate(&mut self, state: &mut State) -> Self::Item {
-        let (start, end) = shrink(
-            self.0.start as u32 as f64,
-            self.0.end as u32 as f64,
-            state.size,
-        );
-        (char::from_u32(start as u32).unwrap()..char::from_u32(end as u32).unwrap()).generate(state)
+        let (start, end) = (self.0.start as u32, self.0.end as u32);
+        char::from_u32(Size(start..end).generate(state)).unwrap()
     }
 }
 
@@ -84,12 +83,8 @@ impl Generator for Size<RangeInclusive<char>> {
     type Item = char;
     #[inline]
     fn generate(&mut self, state: &mut State) -> Self::Item {
-        let (start, end) = shrink(
-            *self.0.start() as u32 as f64,
-            *self.0.end() as u32 as f64,
-            state.size,
-        );
-        char::from_u32((start as u32..=end as u32).generate(state)).unwrap()
+        let (start, end) = (*self.0.start() as u32, *self.0.end() as u32);
+        char::from_u32(Size(start..=end).generate(state)).unwrap()
     }
 }
 
@@ -161,11 +156,19 @@ macro_rules! range {
 
 macro_rules! integer {
     ($t:ident) => {
+        impl Full<$t> {
+            pub const SPECIAL: [$t; 3] = [0 as $t, $t::MIN, $t::MAX];
+        }
+
         impl Generator for Full<$t> {
             type Item = $t;
             #[inline]
             fn generate(&mut self, state: &mut State) -> Self::Item {
-                state.random.$t(..)
+                if state.random.u8(..) == 0 {
+                    Full::<$t>::SPECIAL.clone().generate(state)
+                } else {
+                    state.random.$t(..)
+                }
             }
         }
 
@@ -189,10 +192,9 @@ macro_rules! integer {
             type Item = $t;
             fn generate(&mut self, state: &mut State) -> Self::Item {
                 if state.random.u8(..) == 0 {
-                    [0, $t::MIN, $t::MAX].generate(state)
+                    Full::<$t>::SPECIAL.clone().generate(state)
                 } else {
-                    let (start, end) = shrink($t::MIN as f64, $t::MAX as f64, state.size);
-                    (start as $t..end as $t).generate(state)
+                    Size($t::MIN..=$t::MAX).generate(state)
                 }
             }
         }
@@ -201,8 +203,9 @@ macro_rules! integer {
             type Item = $t;
             #[inline]
             fn generate(&mut self, state: &mut State) -> Self::Item {
-                let (start, end) = shrink(self.0.start as f64, self.0.end as f64, state.size);
-                (start as $t..end as $t).generate(state)
+                let (start, end) = (self.0.start, self.0.end);
+                let shrink = shrink(start as f64, end as f64, state.size, Some(1.));
+                (shrink.0 as $t..shrink.1 as $t).generate(state)
             }
         }
 
@@ -210,8 +213,9 @@ macro_rules! integer {
             type Item = $t;
             #[inline]
             fn generate(&mut self, state: &mut State) -> Self::Item {
-                let (start, end) = shrink(*self.0.start() as f64, *self.0.end() as f64, state.size);
-                (start as $t..=end as $t).generate(state)
+                let (start, end) = (*self.0.start(), *self.0.end());
+                let shrink = shrink(start as f64, end as f64, state.size, None);
+                (shrink.0 as $t..=shrink.1 as $t).generate(state)
             }
         }
 
@@ -223,12 +227,18 @@ macro_rules! integer {
 
 macro_rules! floating {
     ($t:ident) => {
+        impl Full<$t> {
+            pub const SPECIAL: [$t; 8] = [0 as $t, $t::MIN, $t::MAX, $t::EPSILON, $t::INFINITY, $t::NEG_INFINITY, $t::MIN_POSITIVE, $t::NAN];
+        }
+
         impl Generator for Full<$t> {
             type Item = $t;
 
             #[inline]
             fn generate(&mut self, state: &mut State) -> Self::Item {
-                if state.random.bool() {
+                if state.random.u8(..) == 0 {
+                    Full::<$t>::SPECIAL.clone().generate(state)
+                } else if state.random.bool() {
                     state.random.$t() * $t::MAX
                 } else {
                     state.random.$t() * $t::MIN
@@ -240,7 +250,9 @@ macro_rules! floating {
             type Item = $t;
             #[inline]
             fn generate(&mut self, state: &mut State) -> Self::Item {
-                state.random.$t() * (self.end - self.start) + self.start
+                let (start, end) = (self.start, self.end);
+                if end - start < $t::EPSILON { panic!("empty range: {}..{}", start, end); }
+                state.random.$t() * (end - start) + start
             }
         }
 
@@ -264,10 +276,9 @@ macro_rules! floating {
             type Item = $t;
             fn generate(&mut self, state: &mut State) -> Self::Item {
                 if state.random.u8(..) == 0 {
-                    [0 as $t, $t::MIN, $t::MAX, $t::EPSILON, $t::INFINITY, $t::NEG_INFINITY, $t::MIN_POSITIVE, $t::NAN].generate(state)
+                    Full::<$t>::SPECIAL.clone().generate(state)
                 } else {
-                    let (start, end) = shrink($t::MIN as f64, $t::MAX as f64, state.size);
-                    (start as $t..end as $t).generate(state)
+                    Size($t::MIN..$t::MAX).generate(state)
                 }
             }
         }
@@ -276,8 +287,10 @@ macro_rules! floating {
             type Item = $t;
             #[inline]
             fn generate(&mut self, state: &mut State) -> Self::Item {
-                let (start, end) = shrink(self.0.start as f64, self.0.end as f64, state.size);
-                (start as $t..end as $t).generate(state)
+                let (start, end) = (self.0.start, self.0.end);
+                if end - start < $t::EPSILON { panic!("empty range: {}..{}", start, end); }
+                let shrink = shrink(start as f64, end as f64, state.size, Some($t::EPSILON as f64));
+                (shrink.0 as $t..shrink.1 as $t).generate(state)
             }
         }
 
@@ -307,12 +320,22 @@ range!(char, '\0', char::MAX);
 integer!(u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize);
 floating!(f32, f64);
 
-fn shrink(start: f64, end: f64, ratio: f64) -> (f64, f64) {
+fn shrink(start: f64, end: f64, size: f64, minimum: Option<f64>) -> (f64, f64) {
     let range = end - start;
     let start_ratio = (end.min(0.) - start.min(0.)).abs() / range;
     let end_ratio = (end.max(0.) - start.max(0.)).abs() / range;
-    let range_shrink = range * ratio;
+    let range_shrink = range * (1. - size);
     let start_shrink = start + range_shrink * start_ratio;
     let end_shrink = end - range_shrink * end_ratio;
-    (start_shrink, end_shrink)
+
+    match minimum {
+        Some(minimum) if end_shrink - start_shrink < minimum => {
+            if start_ratio > end_ratio {
+                ((start_shrink - minimum).max(start), end_shrink)
+            } else {
+                (start_shrink, (end_shrink + minimum).min(end))
+            }
+        }
+        _ => (start_shrink, end_shrink),
+    }
 }
