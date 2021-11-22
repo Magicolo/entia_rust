@@ -45,6 +45,62 @@
         {
             "type": "lldb",
             "request": "launch",
+            "name": "Debug unit tests in library 'entia_check'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=entia_check"
+                ],
+                "filter": {
+                    "name": "entia_check",
+                    "kind": "lib"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'entia_check'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=entia_check",
+                    "--package=entia_check"
+                ],
+                "filter": {
+                    "name": "entia_check",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'entia_check'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=entia_check",
+                    "--package=entia_check"
+                ],
+                "filter": {
+                    "name": "entia_check",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
             "name": "Debug executable 'entia_example_01'",
             "cargo": {
                 "args": [

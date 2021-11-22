@@ -14,7 +14,7 @@ impl<T: IntoGenerator> IntoGenerator for Option<T> {
 
     #[inline]
     fn generator() -> Self::Generator {
-        Any((T::generator().map(Some), With::new(|| None)))
+        Any((T::generator().map(Some), With::new(|_| None)))
     }
 }
 

@@ -1,5 +1,5 @@
 use fastrand::Rng;
-use std::{iter::FromIterator, marker::PhantomData, ops::Range};
+use std::{iter::FromIterator, marker::PhantomData, mem::take};
 
 pub trait IntoGenerator {
     type Item;
@@ -34,7 +34,7 @@ pub trait Generator {
     }
 
     #[inline]
-    fn bind<G: Generator, F: Fn(Self::Item) -> G>(self, bind: F) -> Flat<Map<Self, G, F>>
+    fn bind<G: Generator, F: FnMut(Self::Item) -> G>(self, bind: F) -> Flatten<Map<Self, G, F>>
     where
         Self: Sized,
     {
@@ -42,12 +42,25 @@ pub trait Generator {
     }
 
     #[inline]
-    fn flatten(self) -> Flat<Self>
+    fn flatten(self) -> Flatten<Self>
     where
         Self: Sized,
         Self::Item: Generator,
     {
-        Flat(self)
+        Flatten(self)
+    }
+
+    #[inline]
+    fn sample(self, count: usize) -> Sample<Self>
+    where
+        Self: Sized,
+    {
+        Sample {
+            generator: self,
+            index: 0,
+            count,
+            random: Rng::new(),
+        }
     }
 }
 
@@ -58,6 +71,13 @@ pub struct State {
     pub depth: usize,
 }
 
+pub struct Sample<G> {
+    generator: G,
+    random: Rng,
+    index: usize,
+    count: usize,
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub struct Constant<T>(pub T);
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
@@ -65,47 +85,86 @@ pub struct Map<G, T, F = fn(<G as Generator>::Item) -> T>(pub G, pub F, PhantomD
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub struct Adapt<G, F = fn(&mut State)>(pub G, pub F);
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
-pub struct Flat<G>(pub G);
+pub struct Flatten<G>(pub G);
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
-pub struct With<T, F = fn() -> T>(pub F, PhantomData<T>);
+pub struct With<T, F = fn(&mut State) -> T>(pub F, PhantomData<T>);
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub struct Iterate<G, I>(pub I, PhantomData<G>);
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub struct Size<G>(pub G);
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub struct Many<C, G, F>(pub C, pub G, PhantomData<F>);
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub struct Count;
 
-impl<T, F: Fn() -> T> With<T, F> {
+impl<T, F: FnMut(&mut State) -> T> With<T, F> {
     #[inline]
     pub fn new(with: F) -> Self {
         With(with, PhantomData)
     }
 }
 
+impl<G: Generator> Iterator for Sample<G> {
+    type Item = G::Item;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index < self.count {
+            let size = (self.index as f64 / self.count as f64).min(1.);
+            self.index += 1;
+            let mut state = State {
+                random: take(&mut self.random),
+                size,
+                depth: 0,
+            };
+            let item = self.generator.generate(&mut state);
+            self.random = state.random;
+            Some(item)
+        } else {
+            None
+        }
+    }
+}
+
+impl<G: Generator> ExactSizeIterator for Sample<G> {
+    #[inline]
+    fn len(&self) -> usize {
+        self.count - self.index
+    }
+}
+
 impl<G: IntoGenerator, F: FromIterator<G::Item>> IntoGenerator for Iterate<G, F> {
     type Item = F;
-    type Generator = Many<Size<Range<usize>>, G::Generator, Self::Item>;
+    type Generator = Many<Count, G::Generator, Self::Item>;
     #[inline]
     fn generator() -> Self::Generator {
-        Many(Size(0..256), G::generator(), PhantomData)
+        Many(Count, G::generator(), PhantomData)
+    }
+}
+
+impl IntoGenerator for Count {
+    type Item = usize;
+    type Generator = Self;
+    #[inline]
+    fn generator() -> Self::Generator {
+        Self
     }
 }
 
 impl IntoGenerator for String {
     type Item = Self;
-    type Generator = Many<Size<Range<usize>>, <char as IntoGenerator>::Generator, Self::Item>;
+    type Generator = <Iterate<char, Self::Item> as IntoGenerator>::Generator;
     #[inline]
     fn generator() -> Self::Generator {
-        Many(Size(0..256), char::generator(), PhantomData)
+        <Iterate<char, Self::Item> as IntoGenerator>::generator()
     }
 }
 
 impl<G: IntoGenerator> IntoGenerator for Vec<G> {
     type Item = Vec<G::Item>;
-    type Generator = Many<Size<Range<usize>>, G::Generator, Self::Item>;
+    type Generator = <Iterate<G, Self::Item> as IntoGenerator>::Generator;
     #[inline]
     fn generator() -> Self::Generator {
-        Many(Size(0..256), G::generator(), PhantomData)
+        <Iterate<G, Self::Item> as IntoGenerator>::generator()
     }
 }
 
@@ -118,11 +177,11 @@ impl<G: IntoGenerator> IntoGenerator for Box<[G]> {
     }
 }
 
-impl<T, F: FnMut() -> T> Generator for With<T, F> {
+impl<T, F: FnMut(&mut State) -> T> Generator for With<T, F> {
     type Item = T;
     #[inline]
-    fn generate(&mut self, _: &mut State) -> Self::Item {
-        (self.0)()
+    fn generate(&mut self, state: &mut State) -> Self::Item {
+        (self.0)(state)
     }
 }
 
@@ -134,6 +193,14 @@ impl<T: Clone> Generator for Constant<T> {
     }
 }
 
+impl Generator for Count {
+    type Item = usize;
+    #[inline]
+    fn generate(&mut self, state: &mut State) -> Self::Item {
+        Size(0..256 as usize).generate(state)
+    }
+}
+
 impl<G: Generator, T, F: FnMut(G::Item) -> T> Generator for Map<G, T, F> {
     type Item = T;
     #[inline]
@@ -142,7 +209,7 @@ impl<G: Generator, T, F: FnMut(G::Item) -> T> Generator for Map<G, T, F> {
     }
 }
 
-impl<G: Generator<Item = impl Generator>> Generator for Flat<G> {
+impl<G: Generator<Item = impl Generator>> Generator for Flatten<G> {
     type Item = <G::Item as Generator>::Item;
     #[inline]
     fn generate(&mut self, state: &mut State) -> Self::Item {

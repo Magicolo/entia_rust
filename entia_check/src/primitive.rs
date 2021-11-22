@@ -35,7 +35,7 @@ impl Generator for Full<char> {
     type Item = char;
     #[inline]
     fn generate(&mut self, state: &mut State) -> Self::Item {
-        char::from_u32(('\0' as u32..=char::MAX as u32).generate(state)).unwrap()
+        char::from_u32(('\0' as u32..char::MAX as u32).generate(state)).unwrap()
     }
 }
 
@@ -62,8 +62,7 @@ impl Generator for Size<Full<char>> {
             ['\0', char::MAX, char::REPLACEMENT_CHARACTER].generate(state)
         } else {
             let (start, end) = shrink('\0' as u32 as f64, char::MAX as u32 as f64, state.size);
-            (char::from_u32(start as u32).unwrap()..=char::from_u32(end as u32).unwrap())
-                .generate(state)
+            char::from_u32((start as u32..end as u32).generate(state)).unwrap()
         }
     }
 }
@@ -90,8 +89,7 @@ impl Generator for Size<RangeInclusive<char>> {
             *self.0.end() as u32 as f64,
             state.size,
         );
-        (char::from_u32(start as u32).unwrap()..=char::from_u32(end as u32).unwrap())
-            .generate(state)
+        char::from_u32((start as u32..=end as u32).generate(state)).unwrap()
     }
 }
 
