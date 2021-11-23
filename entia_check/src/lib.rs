@@ -27,7 +27,10 @@ pub fn ascii() -> impl Generator<Item = char> {
 
 pub fn string<G: Generator<Item = char>>(mut item: G) -> impl Generator<Item = String> {
     With::new(move |state| {
-        Iterator::map(0..Size(Count).generate(state), |_| item.generate(state)).collect()
+        Iterator::map(0..Size(Count::default()).generate(state), |_| {
+            item.generate(state)
+        })
+        .collect()
     })
 }
 
@@ -42,7 +45,10 @@ pub fn string_with<G: Generator<Item = char>, C: Generator<Item = usize>>(
 
 pub fn vector<G: Generator>(mut item: G) -> impl Generator<Item = Vec<G::Item>> {
     With::new(move |state| {
-        Iterator::map(0..Size(Count).generate(state), |_| item.generate(state)).collect()
+        Iterator::map(0..Size(Count::default()).generate(state), |_| {
+            item.generate(state)
+        })
+        .collect()
     })
 }
 

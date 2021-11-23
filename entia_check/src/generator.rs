@@ -1,5 +1,5 @@
 use fastrand::Rng;
-use std::{iter::FromIterator, marker::PhantomData, mem::take, ops::Range};
+use std::{iter::FromIterator, marker::PhantomData, mem::take};
 
 pub trait IntoGenerator {
     type Item;
@@ -94,11 +94,15 @@ pub struct Iterate<G, I>(pub I, PhantomData<G>);
 pub struct Size<G>(pub G);
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub struct Many<C, G, F>(pub C, pub G, PhantomData<F>);
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
-pub struct Count;
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct Count<const N: usize>;
+const DEFAULT_COUNT: usize = 256;
 
-impl Count {
-    pub const RANGE: Range<usize> = 0..256;
+impl Default for Count<{ DEFAULT_COUNT }> {
+    #[inline]
+    fn default() -> Self {
+        Self
+    }
 }
 
 impl<T, F: FnMut(&mut State) -> T> With<T, F> {
@@ -138,14 +142,14 @@ impl<G: Generator> ExactSizeIterator for Sample<G> {
 
 impl<G: IntoGenerator, F: FromIterator<G::Item>> IntoGenerator for Iterate<G, F> {
     type Item = F;
-    type Generator = Many<Count, G::Generator, Self::Item>;
+    type Generator = Many<Count<DEFAULT_COUNT>, G::Generator, Self::Item>;
     #[inline]
     fn generator() -> Self::Generator {
-        Many(Count, G::generator(), PhantomData)
+        Many(Count::default(), G::generator(), PhantomData)
     }
 }
 
-impl IntoGenerator for Count {
+impl<const N: usize> IntoGenerator for Count<N> {
     type Item = usize;
     type Generator = Self;
     #[inline]
@@ -197,19 +201,19 @@ impl<T: Clone> Generator for Constant<T> {
     }
 }
 
-impl Generator for Count {
+impl<const N: usize> Generator for Count<N> {
     type Item = usize;
     #[inline]
     fn generate(&mut self, state: &mut State) -> Self::Item {
-        Count::RANGE.clone().generate(state)
+        (0..N).clone().generate(state)
     }
 }
 
-impl Generator for Size<Count> {
+impl<const N: usize> Generator for Size<Count<N>> {
     type Item = usize;
     #[inline]
     fn generate(&mut self, state: &mut State) -> Self::Item {
-        Size(Count::RANGE).generate(state)
+        Size(0..N).generate(state)
     }
 }
 
