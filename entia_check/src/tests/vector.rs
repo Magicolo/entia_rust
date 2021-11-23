@@ -1,4 +1,19 @@
 use super::*;
+use crate::generator::Constant;
+
+#[test]
+fn has_constant_count() {
+    for i in 0..COUNT {
+        assert!(
+            vector_with(u8::generator(), Constant(i))
+                .sample(1)
+                .next()
+                .unwrap()
+                .len()
+                == i
+        )
+    }
+}
 
 #[test]
 fn is_ascii() {

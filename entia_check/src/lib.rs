@@ -5,7 +5,7 @@ pub mod primitive;
 
 use self::{
     any::Any,
-    generator::{Count, With},
+    generator::{Count, Size, With},
 };
 pub use generator::{Generator, IntoGenerator};
 
@@ -25,15 +25,33 @@ pub fn ascii() -> impl Generator<Item = char> {
     ))
 }
 
-pub fn string(mut item: impl Generator<Item = char>) -> impl Generator<Item = String> {
+pub fn string<G: Generator<Item = char>>(mut item: G) -> impl Generator<Item = String> {
     With::new(move |state| {
-        Iterator::map(0..Count.generate(state), |_| item.generate(state)).collect()
+        Iterator::map(0..Size(Count).generate(state), |_| item.generate(state)).collect()
+    })
+}
+
+pub fn string_with<G: Generator<Item = char>, C: Generator<Item = usize>>(
+    mut item: G,
+    mut count: C,
+) -> impl Generator<Item = String> {
+    With::new(move |state| {
+        Iterator::map(0..count.generate(state), |_| item.generate(state)).collect()
     })
 }
 
 pub fn vector<G: Generator>(mut item: G) -> impl Generator<Item = Vec<G::Item>> {
     With::new(move |state| {
-        Iterator::map(0..Count.generate(state), |_| item.generate(state)).collect()
+        Iterator::map(0..Size(Count).generate(state), |_| item.generate(state)).collect()
+    })
+}
+
+pub fn vector_with<G: Generator, C: Generator<Item = usize>>(
+    mut item: G,
+    mut count: C,
+) -> impl Generator<Item = Vec<G::Item>> {
+    With::new(move |state| {
+        Iterator::map(0..count.generate(state), |_| item.generate(state)).collect()
     })
 }
 

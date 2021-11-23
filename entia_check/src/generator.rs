@@ -1,5 +1,5 @@
 use fastrand::Rng;
-use std::{iter::FromIterator, marker::PhantomData, mem::take};
+use std::{iter::FromIterator, marker::PhantomData, mem::take, ops::Range};
 
 pub trait IntoGenerator {
     type Item;
@@ -96,6 +96,10 @@ pub struct Size<G>(pub G);
 pub struct Many<C, G, F>(pub C, pub G, PhantomData<F>);
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub struct Count;
+
+impl Count {
+    pub const RANGE: Range<usize> = 0..256;
+}
 
 impl<T, F: FnMut(&mut State) -> T> With<T, F> {
     #[inline]
@@ -197,7 +201,15 @@ impl Generator for Count {
     type Item = usize;
     #[inline]
     fn generate(&mut self, state: &mut State) -> Self::Item {
-        Size(0..256 as usize).generate(state)
+        Count::RANGE.clone().generate(state)
+    }
+}
+
+impl Generator for Size<Count> {
+    type Item = usize;
+    #[inline]
+    fn generate(&mut self, state: &mut State) -> Self::Item {
+        Size(Count::RANGE).generate(state)
     }
 }
 

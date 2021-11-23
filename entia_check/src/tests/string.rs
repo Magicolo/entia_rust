@@ -1,4 +1,20 @@
 use super::*;
+use crate::generator::Constant;
+
+#[test]
+fn has_constant_count() {
+    for i in 0..COUNT {
+        assert!(
+            string_with(char::generator(), Constant(i))
+                .sample(1)
+                .next()
+                .unwrap()
+                .chars()
+                .count()
+                == i
+        )
+    }
+}
 
 #[test]
 fn is_ascii() {
