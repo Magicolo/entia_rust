@@ -1,4 +1,5 @@
 use super::*;
+use generator::Constant;
 
 mod range {
     use super::*;
@@ -17,6 +18,14 @@ mod range {
                 fn sample_has_count() {
                     for i in 0..COUNT {
                         assert_eq!(<$t>::generator().sample(i).len(), i);
+                    }
+                }
+
+                #[test]
+                fn is_constant() {
+                    for value in $t::generator().sample(COUNT) {
+                        if value.is_nan() { continue; }
+                        assert_eq!(Constant(value).sample(1).next().unwrap(), value);
                     }
                 }
 

@@ -1,4 +1,5 @@
 use super::*;
+use generator::Constant;
 
 mod range {
     use super::*;
@@ -25,6 +26,13 @@ mod range {
                 fn empty_range() {
                     let value = <$t>::generator().sample(1).next().unwrap();
                     (value..value).sample(1).next().unwrap();
+                }
+
+                #[test]
+                fn is_constant() {
+                    for value in $t::generator().sample(COUNT) {
+                        assert_eq!(Constant(value).sample(1).next().unwrap(), value);
+                    }
                 }
 
                 #[test]
