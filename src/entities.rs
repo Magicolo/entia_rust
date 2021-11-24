@@ -154,7 +154,7 @@ impl Entities {
         // Note that 'u32::MAX' is used as a sentinel so it must be an invalid entity index.
         let index = self.data.1.fetch_add(remaining, Ordering::Relaxed);
         for i in 0..remaining {
-            entities[count + i] = Entity::new(index as u32 + 1, 0);
+            entities[count + i] = Entity::new((index + i) as u32, 0);
         }
         count
     }

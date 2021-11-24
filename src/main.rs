@@ -4,10 +4,16 @@ fn main() {
     #[derive(Default, Clone)]
     struct Time;
     #[derive(Default, Clone)]
+    struct Physics;
+    #[derive(Default, Clone)]
     struct Position(Vec<usize>);
+    #[derive(Default, Clone)]
+    struct Velocity(Vec<usize>);
     #[derive(Default, Clone)]
     struct Frozen;
     struct Target(Entity);
+    #[derive(Default, Clone)]
+    struct OnKill;
 
     let create = || {
         let mut counter = 0;

@@ -338,7 +338,7 @@ impl<'a> ApplyContext<'a> {
 
         self.entities
             .get_datum_at_mut(entity_instance.index())
-            .unwrap()
+            .expect("Entity index must be in range.")
             .initialize(
                 entity_instance.generation(),
                 store_index as u32,
@@ -560,8 +560,8 @@ impl<T: StaticTemplate, F: FnOnce(Family) -> T> Template for With<T, F> {
     }
 
     #[inline]
-    fn dynamic_count(&self, _: &Self::State, _: CountContext) {
-        unreachable!("A correct usage of this template must only call 'dynamic_count' if 'static_count' returned 'Ok(false)' and the above implementation doesn't allow it.");
+    fn dynamic_count(&self, state: &Self::State, context: CountContext) {
+        T::static_count(state, context).expect("'static_count' must succeed.");
     }
 
     #[inline]

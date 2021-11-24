@@ -1,6 +1,10 @@
 use crate::{error, world::World};
-use entia_core::{utility::short_type_name, Bits};
-use std::{any::TypeId, collections::HashMap, marker::PhantomData};
+use entia_core::utility::short_type_name;
+use std::{
+    any::TypeId,
+    collections::{HashMap, HashSet},
+    marker::PhantomData,
+};
 
 /// SAFETY: This trait is unsafe since a wrong implementation may lead to undefined behavior. Every
 /// implementor must declare all necessary dependencies in order to properly inform a scheduler of what it
@@ -98,7 +102,7 @@ entia_macro::recurse_16!(depend);
 pub enum Has {
     All,
     None,
-    Indices(Bits),
+    Indices(HashSet<usize>),
 }
 
 #[derive(Debug, Default)]
@@ -114,17 +118,10 @@ impl Has {
         match self {
             Self::All => false,
             Self::None => {
-                *self = Has::Indices(Bits::new());
+                *self = Has::Indices(HashSet::new());
                 self.add(index)
             }
-            Self::Indices(bits) => {
-                if bits.has(index) {
-                    false
-                } else {
-                    bits.set(index, true);
-                    true
-                }
-            }
+            Self::Indices(indices) => indices.insert(index),
         }
     }
 
@@ -132,7 +129,7 @@ impl Has {
         match self {
             Self::All => true,
             Self::None => false,
-            Self::Indices(bits) => bits.has(index),
+            Self::Indices(indices) => indices.contains(&index),
         }
     }
 }

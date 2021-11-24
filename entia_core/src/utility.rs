@@ -1,15 +1,15 @@
 use std::{
     any::type_name,
     mem::{forget, MaybeUninit},
+    ptr::{drop_in_place, slice_from_raw_parts_mut},
 };
 
 pub fn array<T, const N: usize>(mut provide: impl FnMut(usize) -> T) -> [T; N] {
     struct Array<T>(*mut T, usize);
     impl<T> Drop for Array<T> {
         fn drop(&mut self) {
-            for i in 0..self.1 {
-                unsafe { self.0.add(i).read() };
-            }
+            // Use the same drop method as 'Vec<T>'.
+            unsafe { drop_in_place(slice_from_raw_parts_mut(self.0, self.1)) };
         }
     }
 
