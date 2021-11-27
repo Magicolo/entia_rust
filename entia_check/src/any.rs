@@ -1,35 +1,9 @@
-use crate::generator::{Generator, IntoGenerator, Map, State, With};
+use crate::generator::{Generator, IntoGenerator, State};
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default, Hash)]
 pub struct Any<T>(pub T);
 #[derive(Copy, Clone, PartialEq, PartialOrd, Debug, Default)]
 pub struct Weight<T>(pub T, pub f64);
-
-impl<T: IntoGenerator> IntoGenerator for Option<T> {
-    type Item = Option<T::Item>;
-    type Generator = Any<(
-        Map<T::Generator, Self::Item, fn(T::Item) -> Self::Item>,
-        With<Self::Item>,
-    )>;
-
-    #[inline]
-    fn generator() -> Self::Generator {
-        Any((T::generator().map(Some), With::new(|_| None)))
-    }
-}
-
-impl<T: IntoGenerator, E: IntoGenerator> IntoGenerator for Result<T, E> {
-    type Item = Result<T::Item, E::Item>;
-    type Generator = Any<(
-        Map<T::Generator, Self::Item, fn(T::Item) -> Self::Item>,
-        Map<E::Generator, Self::Item, fn(E::Item) -> Self::Item>,
-    )>;
-
-    #[inline]
-    fn generator() -> Self::Generator {
-        Any((T::generator().map(Ok), E::generator().map(Err)))
-    }
-}
 
 impl<G: Generator, const N: usize> Generator for Any<[G; N]> {
     type Item = Option<G::Item>;

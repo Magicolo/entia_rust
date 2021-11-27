@@ -370,7 +370,7 @@ pub mod template {
             }
         }
 
-        pub fn roots(&self) -> impl DoubleEndedIterator<Item = Family<'a>> {
+        pub fn roots(&self) -> impl DoubleEndedIterator<Item = Family<'a>> + ExactSizeIterator {
             let families = self.clone();
             families
                 .entity_roots

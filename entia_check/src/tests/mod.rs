@@ -1,15 +1,13 @@
 pub mod character;
-pub mod floating;
-pub mod integer;
-pub mod string;
-pub mod vector;
+pub mod number;
 
 use super::*;
+use spectral::{boolean::*, numeric::*, *};
 
-pub const COUNT: usize = 1000;
+pub const COUNT: usize = 3333;
 
 #[test]
 fn boolean_samples_true_and_false() {
-    assert!(<bool>::generator().sample(COUNT).any(|value| value));
-    assert!(<bool>::generator().sample(COUNT).any(|value| !value));
+    assert_that(&<bool>::generator().sample(COUNT).any(|value| value)).is_true();
+    assert_that(&<bool>::generator().sample(COUNT).any(|value| !value)).is_true();
 }

@@ -41,6 +41,24 @@ impl<G: Generator> Generator for All<Box<[G]>> {
 
 macro_rules! all {
     ($($p:ident, $t:ident),*) => {
+        impl<$($t: IntoGenerator,)*> IntoGenerator for ($($t,)*) {
+            type Item = <Self::Generator as Generator>::Item;
+            type Generator = All<($($t::Generator,)*)>;
+            #[inline]
+            fn generator() -> Self::Generator {
+                All(($($t::generator(),)*))
+            }
+        }
+
+        impl<$($t: Generator,)*> Generator for ($($t,)*) {
+            type Item = ($($t::Item,)*);
+            #[inline]
+            fn generate(&mut self, _state: &mut State) -> Self::Item {
+                let ($($p,)*) = self;
+                ($($p.generate(_state),)*)
+            }
+        }
+
         impl<$($t: Generator,)*> Generator for All<($($t,)*)> {
             type Item = ($($t::Item,)*);
             #[inline]
@@ -53,18 +71,3 @@ macro_rules! all {
 }
 
 entia_macro::recurse_16!(all);
-
-macro_rules! tuple {
-    ($($p:ident, $t:ident),*) => {
-        impl<$($t: IntoGenerator,)*> IntoGenerator for ($($t,)*) {
-            type Item = <Self::Generator as Generator>::Item;
-            type Generator = All<($($t::Generator,)*)>;
-            #[inline]
-            fn generator() -> Self::Generator {
-                All(($($t::generator(),)*))
-            }
-        }
-    };
-}
-
-entia_macro::recurse_16!(tuple);

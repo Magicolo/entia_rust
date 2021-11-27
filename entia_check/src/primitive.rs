@@ -162,6 +162,33 @@ macro_rules! range {
     };
 }
 
+macro_rules! number {
+    ($t:ident) => {
+        impl Generator for Size<Range<$t>> {
+            type Item = $t;
+            #[inline]
+            fn generate(&mut self, state: &mut State) -> Self::Item {
+                let (start, end) = (self.0.start, self.0.end);
+                let shrink = shrink(start as f64, end as f64, state.size, Some(1.));
+                (shrink.0 as $t..shrink.1 as $t).generate(state)
+            }
+        }
+
+        impl Generator for Size<RangeInclusive<$t>> {
+            type Item = $t;
+            #[inline]
+            fn generate(&mut self, state: &mut State) -> Self::Item {
+                let (start, end) = (*self.0.start(), *self.0.end());
+                let shrink = shrink(start as f64, end as f64, state.size, None);
+                (shrink.0 as $t..=shrink.1 as $t).generate(state)
+            }
+        }
+
+        full!($t);
+        range!($t, $t::MIN, $t::MAX);
+    };
+}
+
 macro_rules! integer {
     ($t:ident) => {
         impl Full<$t> {
@@ -197,6 +224,7 @@ macro_rules! integer {
 
         impl Generator for Size<Full<$t>> {
             type Item = $t;
+            #[inline]
             fn generate(&mut self, state: &mut State) -> Self::Item {
                 match state.random.u8(..) {
                     0 => Full::<$t>::SPECIAL.clone().generate(state),
@@ -205,28 +233,7 @@ macro_rules! integer {
             }
         }
 
-        impl Generator for Size<Range<$t>> {
-            type Item = $t;
-            #[inline]
-            fn generate(&mut self, state: &mut State) -> Self::Item {
-                let (start, end) = (self.0.start, self.0.end);
-                let shrink = shrink(start as f64, end as f64, state.size, Some(1.));
-                (shrink.0 as $t..shrink.1 as $t).generate(state)
-            }
-        }
-
-        impl Generator for Size<RangeInclusive<$t>> {
-            type Item = $t;
-            #[inline]
-            fn generate(&mut self, state: &mut State) -> Self::Item {
-                let (start, end) = (*self.0.start(), *self.0.end());
-                let shrink = shrink(start as f64, end as f64, state.size, None);
-                (shrink.0 as $t..=shrink.1 as $t).generate(state)
-            }
-        }
-
-        full!($t);
-        range!($t, $t::MIN, $t::MAX);
+        number!($t);
     };
     ($($ts:ident),*) => { $(integer!($ts);)* };
 }
@@ -243,9 +250,11 @@ macro_rules! floating {
             #[inline]
             fn generate(&mut self, state: &mut State) -> Self::Item {
                 match state.random.u8(..) {
-                    0 | u8::MAX => Full::<$t>::SPECIAL.clone().generate(state),
-                    1..=127 => (0 as $t..$t::MAX).generate(state),
-                    128..=254 => ($t::MIN..0 as $t).generate(state),
+                    0..=1 => Full::<$t>::SPECIAL.clone().generate(state),
+                    2..=64 => (0 as $t..=$t::MAX).map(|value| 1. / value).generate(state),
+                    65..=127 => ($t::MIN..=0 as $t).map(|value| 1. / value).generate(state),
+                    128..=191 => (0 as $t..=$t::MAX).generate(state),
+                    192..=255 => ($t::MIN..=0 as $t).generate(state),
                 }
             }
         }
@@ -255,64 +264,34 @@ macro_rules! floating {
             #[inline]
             fn generate(&mut self, state: &mut State) -> Self::Item {
                 let (start, end) = (self.start, self.end);
+                let range = end - start;
+                if range < $t::EPSILON { panic!("empty range: {}..{}", start, end); }
+                state.random.$t() * (range - $t::EPSILON) + start
+            }
+        }
+
+        impl Generator for RangeInclusive<$t> {
+            type Item = $t;
+            #[inline]
+            fn generate(&mut self, state: &mut State) -> Self::Item {
+                let (start, end) = (*self.start(), *self.end());
                 state.random.$t() * (end - start) + start
-            }
-        }
-
-        impl Generator for RangeFrom<$t> {
-            type Item = $t;
-            #[inline]
-            fn generate(&mut self, state: &mut State) -> Self::Item {
-                (self.start..$t::MAX).generate(state)
-            }
-        }
-
-        impl Generator for RangeTo<$t> {
-            type Item = $t;
-            #[inline]
-            fn generate(&mut self, state: &mut State) -> Self::Item {
-                ($t::MIN..self.end).generate(state)
             }
         }
 
         impl Generator for Size<Full<$t>> {
             type Item = $t;
+            #[inline]
             fn generate(&mut self, state: &mut State) -> Self::Item {
                 match state.random.u8(..) {
                     0 | u8::MAX => Full::<$t>::SPECIAL.clone().generate(state),
-                    1..=127 => Size(0 as $t..$t::MAX).generate(state),
-                    128..=254 => Size($t::MIN..0 as $t).generate(state),
+                    1..=127 => Size(0 as $t..=$t::MAX).generate(state),
+                    128..=254 => Size($t::MIN..=0 as $t).generate(state),
                 }
             }
         }
 
-        impl Generator for Size<Range<$t>> {
-            type Item = $t;
-            #[inline]
-            fn generate(&mut self, state: &mut State) -> Self::Item {
-                let (start, end) = (self.0.start, self.0.end);
-                let shrink = shrink(start as f64, end as f64, state.size, None);
-                (shrink.0 as $t..shrink.1 as $t).generate(state)
-            }
-        }
-
-        impl Generator for Size<RangeFrom<$t>> {
-            type Item = $t;
-            #[inline]
-            fn generate(&mut self, state: &mut State) -> Self::Item {
-                Size(self.0.start..$t::MAX).generate(state)
-            }
-        }
-
-        impl Generator for Size<RangeTo<$t>> {
-            type Item = $t;
-            #[inline]
-            fn generate(&mut self, state: &mut State) -> Self::Item {
-                Size($t::MIN..self.0.end).generate(state)
-            }
-        }
-
-        full!($t);
+        number!($t);
     };
     ($($ts:ident),*) => { $(floating!($ts);)* };
 }
