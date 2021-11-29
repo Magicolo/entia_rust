@@ -1,31 +1,47 @@
+use entia_check::{Generator, IntoGenerator};
+use std::collections::HashSet;
+
 use super::*;
 
 #[test]
 fn has_entity_count() -> Result {
-    let mut world = world();
-    let mut create = world.injector::<Create<_>>()?;
-    let mut query = world.injector::<Query<(Entity, &Position)>>()?;
-    let mut families = world.injector::<Families>()?;
-    let entity = {
-        let mut guard = create.guard(&mut world)?;
-        let mut create = guard.inject();
-        create.one(Add::new(Position(1., 2., 3.))).entity()
-    };
-    {
-        let mut guard = query.guard(&mut world)?;
-        let query = guard.inject();
-        assert!(matches!(query.get(entity), Some(_)));
-        assert_eq!(query.len(), 1);
-        for item in &query {
-            assert_eq!(entity, item.0);
+    let position = <(f64, f64, f64)>::generator().map(|(x, y, z)| Position(x, y, z));
+    let count = 0usize..1000;
+    for (position, count) in (position, count).sample(100) {
+        let mut world = world();
+        let mut create = world.injector::<Create<_>>()?;
+        let mut query = world.injector::<Query<(Entity, &Position)>>()?;
+        let mut families = world.injector::<Families>()?;
+        let entities: HashSet<_> = {
+            let mut guard = create.guard(&mut world)?;
+            let mut create = guard.inject();
+            create
+                .clones(count, Add::new(position.clone()))
+                .roots()
+                .map(|family| family.entity())
+                .collect()
+        };
+        {
+            let mut guard = query.guard(&mut world)?;
+            let query = guard.inject();
+            for &entity in entities.iter() {
+                let item = query.get(entity).unwrap();
+                assert_eq!(entity, item.0);
+                assert_eq!(&position, item.1);
+            }
+            assert_eq!(query.len(), count);
+            for item in &query {
+                assert!(entities.contains(&item.0));
+                assert_eq!(&position, item.1);
+            }
         }
-    }
-    {
-        let mut guard = families.guard(&mut world)?;
-        let families = guard.inject();
-        assert_eq!(families.roots().count(), 1);
-        for root in families.roots() {
-            assert_eq!(entity, root.entity());
+        {
+            let mut guard = families.guard(&mut world)?;
+            let families = guard.inject();
+            assert_eq!(families.roots().count(), count);
+            for root in families.roots() {
+                assert!(entities.contains(&root.entity()));
+            }
         }
     }
     Ok(())

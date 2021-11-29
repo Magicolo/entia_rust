@@ -171,7 +171,7 @@ pub mod runner {
         result: Mutex<Result>,
     }
 
-    #[derive(Default)]
+    #[derive(Default, Clone)]
     struct Block {
         runs: Vec<usize>,
         resolves: Vec<usize>,
@@ -188,6 +188,11 @@ pub mod runner {
                 conflict: Conflict::default(),
                 result: Mutex::new(Ok(())),
             }
+        }
+
+        #[inline]
+        pub fn systems(&self) -> &[System] {
+            &self.systems
         }
 
         pub fn update(&mut self, world: &mut World) -> Result {

@@ -104,12 +104,12 @@ mod range {
     );
     tests!(
         f32,
-        (|low, high| (high as f32 - low as f32).abs() < f32::EPSILON),
+        (|low: f32, high: f32| high - low < f32::EPSILON),
         is_finite
     );
     tests!(
         f64,
-        (|low, high| (high as f64 - low as f64).abs() < f64::EPSILON),
+        (|low: f64, high: f64| high - low < f64::EPSILON),
         is_finite
     );
 }

@@ -266,7 +266,7 @@ macro_rules! floating {
                 let (start, end) = (self.start, self.end);
                 let range = end - start;
                 if range < $t::EPSILON { panic!("empty range: {}..{}", start, end); }
-                state.random.$t() * (range - $t::EPSILON) + start
+                (state.random.$t() - $t::EPSILON) * range + start
             }
         }
 
@@ -275,7 +275,7 @@ macro_rules! floating {
             #[inline]
             fn generate(&mut self, state: &mut State) -> Self::Item {
                 let (start, end) = (*self.start(), *self.end());
-                state.random.$t() * (end - start) + start
+                (state.random.$t() + $t::EPSILON).min(1.) * (end - start) + start
             }
         }
 
