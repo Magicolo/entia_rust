@@ -6,7 +6,10 @@ pub mod primitive;
 use self::any::Any;
 use generator::With;
 
-pub use generator::{Generator, IntoGenerator};
+pub use generator::{
+    shrinker::{IntoShrinker, Shrinker},
+    Generator, IntoGenerator,
+};
 
 #[inline]
 pub fn clone<T: Clone>(value: T) -> impl Generator<Item = T> {
@@ -41,7 +44,7 @@ pub fn digit() -> impl Generator<Item = char> {
 
 #[inline]
 pub fn ascii() -> impl Generator<Item = char> {
-    Any((
+    Any::from((
         letter(),
         digit(),
         Generator::map(0..=0x7Fu8, |value| value as char),

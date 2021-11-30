@@ -1,8 +1,8 @@
 use crate::generator::{Generator, IntoGenerator, State};
 use entia_core::utility::array;
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default, Hash)]
-pub struct All<T>(pub T);
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+pub struct All<T>(T);
 
 impl<G: IntoGenerator, const N: usize> IntoGenerator for [G; N] {
     type Item = [G::Item; N];
@@ -13,11 +13,23 @@ impl<G: IntoGenerator, const N: usize> IntoGenerator for [G; N] {
     }
 }
 
+impl<G: Generator, const N: usize> From<[G; N]> for All<[G; N]> {
+    fn from(generators: [G; N]) -> Self {
+        Self(generators)
+    }
+}
+
 impl<G: Generator, const N: usize> Generator for All<[G; N]> {
     type Item = [G::Item; N];
     #[inline]
     fn generate(&mut self, state: &mut State) -> Self::Item {
         array(|i| self.0[i].generate(state))
+    }
+}
+
+impl<G: Generator> From<Vec<G>> for All<Vec<G>> {
+    fn from(generators: Vec<G>) -> Self {
+        Self(generators)
     }
 }
 
@@ -30,17 +42,14 @@ impl<G: Generator> Generator for All<Vec<G>> {
     }
 }
 
-impl<G: Generator> Generator for All<Box<[G]>> {
-    type Item = Box<[G::Item]>;
-    #[inline]
-    fn generate(&mut self, state: &mut State) -> Self::Item {
-        let map = |generator: &mut G| generator.generate(state);
-        self.0.iter_mut().map(map).collect()
-    }
-}
-
-macro_rules! all {
+macro_rules! tuple {
     ($($p:ident, $t:ident),*) => {
+        impl<$($t: IntoGenerator,)*> From<($($t,)*)> for All<($($t,)*)> {
+            fn from(generators: ($($t,)*)) -> Self {
+                Self(generators)
+            }
+        }
+
         impl<$($t: IntoGenerator,)*> IntoGenerator for ($($t,)*) {
             type Item = <Self::Generator as Generator>::Item;
             type Generator = All<($($t::Generator,)*)>;
@@ -70,4 +79,4 @@ macro_rules! all {
     };
 }
 
-entia_macro::recurse_16!(all);
+entia_macro::recurse_16!(tuple);
