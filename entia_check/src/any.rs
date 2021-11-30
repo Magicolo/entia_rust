@@ -9,7 +9,7 @@ pub struct Any<T>(T, usize);
 pub struct Weight<T>(pub T, pub f64);
 
 macro_rules! collection {
-    ($t:ty, $i:ident, [$($a:tt)?], [$($n:ident)?], [$($w:expr)?]) => {
+    ($t:ty, $i:ident, [$($a:tt)?], [$($n:ident)?]) => {
         impl<T: Generator $(, const $n: usize)?> From<$t> for Any<$t> {
             fn from(generators: $t) -> Self {
                 Self(generators, 0)
@@ -29,9 +29,7 @@ macro_rules! collection {
             type Shrinker = Option<T::Shrinker>;
             #[inline]
             fn shrinker(self) -> Self::Shrinker {
-                let items = self.0;
-                $(let items = $w(items);)?
-                Some(items.into_iter().nth(self.1)?$(.$a)?.shrinker())
+                Some(self.0.into_iter().nth(self.1)?$(.$a)?.shrinker())
             }
         }
     };
@@ -126,16 +124,10 @@ macro_rules! tuple {
     };
 }
 
-collection!([T; N], indexed, [], [N], [std::array::IntoIter::new]);
-collection!(
-    [Weight<T>; N],
-    weighted,
-    [0],
-    [N],
-    [std::array::IntoIter::new]
-);
-collection!(Vec<T>, indexed, [], [], []);
-collection!(Vec<Weight<T>>, weighted, [0], [], []);
+collection!([T; N], indexed, [], [N]);
+collection!([Weight<T>; N], weighted, [0], [N]);
+collection!(Vec<T>, indexed, [], []);
+collection!(Vec<Weight<T>>, weighted, [0], []);
 entia_macro::recurse_16!(tuple);
 
 fn indexed<'a, T>(

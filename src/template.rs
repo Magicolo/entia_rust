@@ -7,7 +7,7 @@ use crate::{
     family::template::{EntityIndices, Family, SegmentIndices},
     world::{meta::Meta, segment::Segment, store::Store, World},
 };
-use std::{array::IntoIter, collections::HashMap, marker::PhantomData, sync::Arc};
+use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
 pub struct DeclareContext<'a> {
     metas_index: usize,
@@ -464,7 +464,8 @@ impl<T: SpawnTemplate, const N: usize> Template for [T; N] {
 
     #[inline]
     fn apply(self, state: &Self::State, mut context: ApplyContext) {
-        IntoIter::new(self).for_each(|value| value.apply(state, context.owned()))
+        self.into_iter()
+            .for_each(|value| value.apply(state, context.owned()))
     }
 }
 

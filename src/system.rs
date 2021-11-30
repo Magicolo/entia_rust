@@ -101,6 +101,12 @@ impl System {
     ) -> Self {
         struct State<T>(Arc<UnsafeCell<T>>);
         unsafe impl<T> Send for State<T> {}
+        impl<T> State<T> {
+            #[inline]
+            pub unsafe fn get<'a>(&self) -> &'a mut T {
+                &mut *self.0.get()
+            }
+        }
 
         // SAFETY: Since this crate controls the execution of the system's functions, it can guarantee
         // that they are not run in parallel which would allow for races.
@@ -117,23 +123,19 @@ impl System {
             identifier,
             run: {
                 let state = State(state.0.clone());
-                Box::new(move |world| unsafe { run(&mut *state.0.get(), &*(world as *const _)) })
+                Box::new(move |world| unsafe { run(state.get(), &*(world as *const _)) })
             },
             update: {
                 let state = State(state.0.clone());
-                Box::new(move |world| unsafe {
-                    update(&mut *state.0.get(), &mut *(world as *mut _))
-                })
+                Box::new(move |world| unsafe { update(state.get(), &mut *(world as *mut _)) })
             },
             resolve: {
                 let state = State(state.0.clone());
-                Box::new(move |world| unsafe {
-                    resolve(&mut *state.0.get(), &mut *(world as *mut _))
-                })
+                Box::new(move |world| unsafe { resolve(state.get(), &mut *(world as *mut _)) })
             },
             depend: {
                 let state = State(state.0.clone());
-                Box::new(move |world| unsafe { depend(&*state.0.get(), &*(world as *const _)) })
+                Box::new(move |world| unsafe { depend(state.get(), &*(world as *const _)) })
             },
         }
     }
