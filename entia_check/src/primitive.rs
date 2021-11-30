@@ -17,18 +17,10 @@ impl<T> Full<T> {
 
 impl IntoGenerator for bool {
     type Item = Self;
-    type Generator = Full<bool>;
+    type Generator = [bool; 2];
     #[inline]
     fn generator() -> Self::Generator {
-        Full::new()
-    }
-}
-
-impl Generator for Full<bool> {
-    type Item = bool;
-    #[inline]
-    fn generate(&mut self, state: &mut State) -> Self::Item {
-        state.random.bool()
+        [true, false]
     }
 }
 
