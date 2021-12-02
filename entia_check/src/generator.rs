@@ -1,13 +1,6 @@
 use self::{
-    adapt::Adapt,
-    array::Array,
-    collect::Collect,
-    flatten::Flatten,
-    map::Map,
-    or::Or,
-    sample::Samples,
-    shrinker::{IntoShrinker, Shrinker},
-    size::Size,
+    adapt::Adapt, array::Array, collect::Collect, flatten::Flatten, map::Map, or::Or,
+    sample::Samples, size::Size,
 };
 use crate::{any::Any, primitive::Full};
 use fastrand::Rng;
@@ -153,6 +146,12 @@ pub trait Generator {
     }
 }
 
+pub trait Shrinker {
+    type Item;
+    type Generator: Generator<Item = Self::Item>;
+    fn shrink(&mut self) -> Option<Self::Generator>;
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct State {
     pub random: Rng,
@@ -259,22 +258,6 @@ pub mod sample {
     }
 }
 
-pub mod shrinker {
-    use super::*;
-
-    pub trait IntoShrinker {
-        type Item;
-        type Shrinker: Shrinker<Item = Self::Item>;
-        fn shrinker(self) -> Self::Shrinker;
-    }
-
-    pub trait Shrinker {
-        type Item;
-        type Generator: Generator<Item = Self::Item>;
-        fn shrink(&mut self) -> Option<Self::Generator>;
-    }
-}
-
 pub mod size {
     use super::*;
 
@@ -300,14 +283,6 @@ pub mod size {
         #[inline]
         pub fn new(generator: G) -> Self {
             Size(generator)
-        }
-    }
-
-    impl<S: IntoShrinker> IntoShrinker for Size<S> {
-        type Item = S::Item;
-        type Shrinker = S::Shrinker;
-        fn shrinker(self) -> Self::Shrinker {
-            self.0.shrinker()
         }
     }
 
@@ -340,14 +315,6 @@ pub mod array {
         }
     }
 
-    impl<S: IntoShrinker, const N: usize> IntoShrinker for Array<S, N> {
-        type Item = [S::Item; N];
-        type Shrinker = Array<S::Shrinker, N>;
-        fn shrinker(self) -> Self::Shrinker {
-            Array(self.0.shrinker())
-        }
-    }
-
     impl<S: Shrinker, const N: usize> Shrinker for Array<S, N> {
         type Item = [S::Item; N];
         type Generator = Array<S::Generator, N>;
@@ -363,14 +330,6 @@ pub mod array {
                 #[inline]
                 fn generate(&mut self, state: &mut State) -> Self::Item {
                     self[(0..self.len()).generate(state)].clone()
-                }
-            }
-
-            impl<T: Clone $(, const $n: usize)?> IntoShrinker for $t {
-                type Item = T;
-                type Shrinker = Self;
-                fn shrinker(self) -> Self::Shrinker {
-                    self
                 }
             }
 
@@ -405,22 +364,6 @@ pub mod function {
         #[inline]
         fn generate(&mut self, state: &mut State) -> Self::Item {
             self(state)
-        }
-    }
-
-    impl<T> IntoShrinker for fn() -> T {
-        type Item = T;
-        type Shrinker = Self;
-        fn shrinker(self) -> Self::Shrinker {
-            self
-        }
-    }
-
-    impl<T> IntoShrinker for fn(&mut State) -> T {
-        type Item = T;
-        type Shrinker = Self;
-        fn shrinker(self) -> Self::Shrinker {
-            self
         }
     }
 
@@ -464,14 +407,6 @@ pub mod option {
         }
     }
 
-    impl<S: IntoShrinker> IntoShrinker for Option<S> {
-        type Item = S::Item;
-        type Shrinker = Option<S::Shrinker>;
-        fn shrinker(self) -> Self::Shrinker {
-            Some(self?.shrinker())
-        }
-    }
-
     impl<S: Shrinker> Shrinker for Option<S> {
         type Item = S::Item;
         type Generator = S::Generator;
@@ -496,17 +431,6 @@ pub mod or {
             match self {
                 Or::Left(left) => left.generate(state),
                 Or::Right(right) => right.generate(state),
-            }
-        }
-    }
-
-    impl<L: IntoShrinker, R: IntoShrinker<Item = L::Item>> IntoShrinker for Or<L, R> {
-        type Item = L::Item;
-        type Shrinker = Or<L::Shrinker, R::Shrinker>;
-        fn shrinker(self) -> Self::Shrinker {
-            match self {
-                Or::Left(left) => Or::Left(left.shrinker()),
-                Or::Right(right) => Or::Right(right.shrinker()),
             }
         }
     }
@@ -550,20 +474,6 @@ pub mod adapt {
         }
     }
 
-    impl<
-            S: IntoShrinker,
-            T,
-            B: FnMut(&mut State) -> T + Clone,
-            A: FnMut(&mut State, T) + Clone,
-        > IntoShrinker for Adapt<S, T, B, A>
-    {
-        type Item = S::Item;
-        type Shrinker = Adapt<S::Shrinker, T, B, A>;
-        fn shrinker(self) -> Self::Shrinker {
-            Adapt(self.0.shrinker(), self.1, self.2, PhantomData)
-        }
-    }
-
     impl<S: Shrinker, T, B: FnMut(&mut State) -> T + Clone, A: FnMut(&mut State, T) + Clone>
         Shrinker for Adapt<S, T, B, A>
     {
@@ -593,14 +503,6 @@ pub mod map {
         #[inline]
         fn generate(&mut self, state: &mut State) -> Self::Item {
             self.1(self.0.generate(state))
-        }
-    }
-
-    impl<S: IntoShrinker, T, F: FnMut(S::Item) -> T + Clone> IntoShrinker for Map<S, T, F> {
-        type Item = T;
-        type Shrinker = Map<S::Shrinker, T, F>;
-        fn shrinker(self) -> Self::Shrinker {
-            Map(self.0.shrinker(), self.1, PhantomData)
         }
     }
 
@@ -636,16 +538,6 @@ pub mod flatten {
         }
     }
 
-    impl<I: IntoShrinker, O: IntoShrinker<Item = <I::Shrinker as Shrinker>::Generator>> IntoShrinker
-        for Flatten<I, O>
-    {
-        type Item = I::Item;
-        type Shrinker = Flatten<I::Shrinker, O::Shrinker>;
-        fn shrinker(self) -> Self::Shrinker {
-            Flatten(self.0.shrinker(), self.1.map(|inner| inner.shrinker()))
-        }
-    }
-
     impl<I: Shrinker, O: Shrinker<Item = I::Generator>> Shrinker for Flatten<I, O> {
         type Item = I::Item;
         type Generator = Or<Flatten<I::Generator, O::Generator>, I::Generator>;
@@ -678,16 +570,6 @@ pub mod collect {
         #[inline]
         fn generate(&mut self, state: &mut State) -> Self::Item {
             Iterator::map(0..self.1.generate(state), |_| self.0.generate(state)).collect()
-        }
-    }
-
-    impl<S: IntoShrinker, C: IntoShrinker<Item = usize>, F: FromIterator<S::Item>> IntoShrinker
-        for Collect<S, C, F>
-    {
-        type Item = F;
-        type Shrinker = Collect<S::Shrinker, C::Shrinker, F>;
-        fn shrinker(self) -> Self::Shrinker {
-            Collect(self.0.shrinker(), self.1.shrinker(), PhantomData)
         }
     }
 

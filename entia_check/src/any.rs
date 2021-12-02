@@ -1,7 +1,4 @@
-use crate::generator::{
-    shrinker::{IntoShrinker, Shrinker},
-    Generator, IntoGenerator, State,
-};
+use crate::generator::{Generator, IntoGenerator, Shrinker, State};
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct Any<T>(T, usize);
@@ -24,12 +21,12 @@ macro_rules! collection {
             }
         }
 
-        impl<T: IntoShrinker $(, const $n: usize)?> IntoShrinker for Any<$t> {
+        impl<T: Shrinker $(, const $n: usize)?> Shrinker for Any<$t> {
             type Item = T::Item;
-            type Shrinker = Option<T::Shrinker>;
+            type Generator = T::Generator;
             #[inline]
-            fn shrinker(self) -> Self::Shrinker {
-                Some(self.0.into_iter().nth(self.1)?$(.$a)?.shrinker())
+            fn shrink(&mut self) -> Option<T::Generator> {
+                (&mut self.0).into_iter().nth(self.1)?$(.$a)?.shrink()
             }
         }
     };
@@ -98,17 +95,6 @@ macro_rules! tuple {
                 }
             }
 
-            impl<$t: IntoShrinker, $($ts: IntoShrinker<Item = $t::Item>,)*> IntoShrinker for One<$t, $($ts,)*> {
-                type Item = $t::Item;
-                type Shrinker = One<$t::Shrinker, $($ts::Shrinker,)*>;
-                fn shrinker(self) -> Self::Shrinker {
-                    match self {
-                        One::$t($p) => One::$t($p.shrinker()),
-                        $(One::$ts($ps) => One::$ts($ps.shrinker()),)*
-                    }
-                }
-            }
-
             impl<$t: Shrinker, $($ts: Shrinker<Item = $t::Item>,)*> Shrinker for One<$t, $($ts,)*> {
                 type Item = $t::Item;
                 type Generator = One<$t::Generator, $($ts::Generator,)*>;
@@ -120,14 +106,14 @@ macro_rules! tuple {
                 }
             }
 
-            impl<$t: IntoShrinker, $($ts: IntoShrinker<Item = $t::Item>,)*> IntoShrinker for Any<($t, $($ts,)*)> {
+            impl<$t: Shrinker, $($ts: Shrinker<Item = $t::Item>,)*> Shrinker for Any<($t, $($ts,)*)> {
                 type Item = $t::Item;
-                type Shrinker = One<$t::Shrinker, $($ts::Shrinker,)*>;
-                fn shrinker(self) -> Self::Shrinker {
-                    let ($p, $($ps,)*) = self.0;
+                type Generator = One<$t::Generator, $($ts::Generator,)*>;
+                fn shrink(&mut self) -> Option<Self::Generator> {
+                    let ($p, $($ps,)*) = &mut self.0;
                     let mut _index = self.1;
-                    if _index == 0 { return One::$t($p.shrinker()); }
-                    $(_index -= 1; if _index == 0 { return One::$ts($ps.shrinker()); })*
+                    if _index == 0 { return Some(One::$t($p.shrink()?)); }
+                    $(_index -= 1; if _index == 0 { return Some(One::$ts($ps.shrink()?)); })*
                     unreachable!();
                 }
             }

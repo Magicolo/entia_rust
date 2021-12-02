@@ -1,7 +1,4 @@
-use crate::generator::{
-    shrinker::{IntoShrinker, Shrinker},
-    Generator, IntoGenerator, State,
-};
+use crate::generator::{Generator, IntoGenerator, Shrinker, State};
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct All<T>(T);
@@ -31,14 +28,6 @@ impl<G: Generator, const N: usize> Generator for All<[G; N]> {
             index += 1;
             item
         })
-    }
-}
-
-impl<S: IntoShrinker, const N: usize> IntoShrinker for All<[S; N]> {
-    type Item = [S::Item; N];
-    type Shrinker = All<[S::Shrinker; N]>;
-    fn shrinker(self) -> Self::Shrinker {
-        All(self.0.map(|shrinker| shrinker.shrinker()))
     }
 }
 
@@ -74,18 +63,11 @@ impl<G: Generator> Generator for All<Vec<G>> {
     }
 }
 
-impl<S: IntoShrinker> IntoShrinker for All<Vec<S>> {
-    type Item = Vec<S::Item>;
-    type Shrinker = All<Vec<S::Shrinker>>;
-    fn shrinker(self) -> Self::Shrinker {
-        All(self.0.into_iter().map(IntoShrinker::shrinker).collect())
-    }
-}
-
 impl<S: Shrinker> Shrinker for All<Vec<S>> {
     type Item = Vec<S::Item>;
     type Generator = All<Vec<S::Generator>>;
     fn shrink(&mut self) -> Option<Self::Generator> {
+        // TODO: Try to remove irrelevant generators...
         let mut generators = Vec::with_capacity(self.0.len());
         for shrinker in &mut self.0 {
             generators.push(shrinker.shrink()?);
@@ -111,16 +93,6 @@ macro_rules! tuple {
             fn generate(&mut self, _state: &mut State) -> Self::Item {
                 let ($($p,)*) = self;
                 ($($p.generate(_state),)*)
-            }
-        }
-
-        impl<$($t: IntoShrinker,)*> IntoShrinker for ($($t,)*) {
-            type Item = ($($t::Item,)*);
-            type Shrinker = ($($t::Shrinker,)*);
-            #[inline]
-            fn shrinker(self) -> Self::Shrinker {
-                let ($($p,)*) = self;
-                ($($p.shrinker(),)*)
             }
         }
 

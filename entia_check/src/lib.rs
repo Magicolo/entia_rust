@@ -6,10 +6,7 @@ pub mod primitive;
 use self::any::Any;
 use generator::With;
 
-pub use generator::{
-    shrinker::{IntoShrinker, Shrinker},
-    Generator, IntoGenerator,
-};
+pub use generator::{Generator, IntoGenerator, Shrinker};
 
 #[inline]
 pub fn clone<T: Clone>(value: T) -> impl Generator<Item = T> {

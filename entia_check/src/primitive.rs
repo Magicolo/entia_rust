@@ -1,8 +1,4 @@
-use crate::generator::{
-    shrinker::{IntoShrinker, Shrinker},
-    size::Size,
-    Generator, IntoGenerator, State,
-};
+use crate::generator::{size::Size, Generator, IntoGenerator, Shrinker, State};
 use std::{
     convert::TryInto,
     marker::PhantomData,
