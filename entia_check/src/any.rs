@@ -98,15 +98,14 @@ macro_rules! tuple {
                 }
             }
 
-            impl<$t: IntoShrinker, $($ts: IntoShrinker<Item = $t::Item>,)*> IntoShrinker for Any<($t, $($ts,)*)> {
+            impl<$t: IntoShrinker, $($ts: IntoShrinker<Item = $t::Item>,)*> IntoShrinker for One<$t, $($ts,)*> {
                 type Item = $t::Item;
                 type Shrinker = One<$t::Shrinker, $($ts::Shrinker,)*>;
                 fn shrinker(self) -> Self::Shrinker {
-                    let ($p, $($ps,)*) = self.0;
-                    let mut _index = self.1;
-                    if _index == 0 { return One::$t($p.shrinker()); }
-                    $(_index -= 1; if _index == 0 { return One::$ts($ps.shrinker()); })*
-                    unreachable!();
+                    match self {
+                        One::$t($p) => One::$t($p.shrinker()),
+                        $(One::$ts($ps) => One::$ts($ps.shrinker()),)*
+                    }
                 }
             }
 
@@ -118,6 +117,18 @@ macro_rules! tuple {
                         One::$t($p) => Some(One::$t($p.shrink()?)),
                         $(One::$ts($ps) => Some(One::$ts($ps.shrink()?)),)*
                     }
+                }
+            }
+
+            impl<$t: IntoShrinker, $($ts: IntoShrinker<Item = $t::Item>,)*> IntoShrinker for Any<($t, $($ts,)*)> {
+                type Item = $t::Item;
+                type Shrinker = One<$t::Shrinker, $($ts::Shrinker,)*>;
+                fn shrinker(self) -> Self::Shrinker {
+                    let ($p, $($ps,)*) = self.0;
+                    let mut _index = self.1;
+                    if _index == 0 { return One::$t($p.shrinker()); }
+                    $(_index -= 1; if _index == 0 { return One::$ts($ps.shrinker()); })*
+                    unreachable!();
                 }
             }
         }

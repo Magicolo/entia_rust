@@ -1,30 +1,4 @@
-use std::{
-    any::type_name,
-    mem::{forget, MaybeUninit},
-    ptr::{drop_in_place, slice_from_raw_parts_mut},
-};
-
-pub fn array<T, const N: usize>(mut provide: impl FnMut(usize) -> T) -> [T; N] {
-    struct Array<T>(*mut T, usize);
-    impl<T> Drop for Array<T> {
-        fn drop(&mut self) {
-            // Use the same drop method as 'Vec<T>'.
-            unsafe { drop_in_place(slice_from_raw_parts_mut(self.0, self.1)) };
-        }
-    }
-
-    let mut items: MaybeUninit<[T; N]> = MaybeUninit::uninit();
-    let mut array = Array(items.as_mut_ptr().cast::<T>(), 0);
-
-    for i in 0..N {
-        let item = provide(i);
-        unsafe { array.0.add(i).write(item) };
-        array.1 += 1;
-    }
-
-    forget(array);
-    unsafe { items.assume_init() }
-}
+use std::any::type_name;
 
 pub fn get_mut2<T>(slice: &mut [T], indices: (usize, usize)) -> Option<(&mut T, &mut T)> {
     if indices.0 == indices.1 || indices.0 >= slice.len() || indices.1 >= slice.len() {
