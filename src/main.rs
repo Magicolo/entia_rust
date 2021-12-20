@@ -93,14 +93,16 @@ fn main() {
             ));
         })
         .add(
-            |roots: Query<Family, Has<Target>>, children: Query<&Position>, a: Query<&Entity>| {
+            |roots: Query<Family, Has<Target>>,
+             children: Query<&Position>,
+             _query: Query<&Entity>| {
                 for family in &roots {
-                    if let Some(child) =
+                    if let Some(_child) =
                         family.descend(|descendant| children.get(descendant), |_| None)
                     {
                     }
                 }
-                for child in roots
+                for _child in roots
                     .into_iter()
                     .flat_map(|family| family.children())
                     .filter_map(|child| children.get(child))

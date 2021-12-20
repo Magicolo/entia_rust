@@ -136,11 +136,6 @@ struct Time {
 
 #[derive(Template)]
 struct Player(Add<Position>, Add<Render>, Add<Controller>);
-impl Player {
-    pub fn new(position: Position, render: Render) -> Self {
-        Self(position.into(), render.into(), Controller.into())
-    }
-}
 
 fn main() {
     run().unwrap();
@@ -157,28 +152,26 @@ fn run() -> Result<(), Box<dyn error::Error>> {
         .exit_on_esc(true)
         .build()?;
 
-    let mut initialize = world
-        .scheduler()
-        .add(|mut create: Create<_>| {
-            create.all((0..10).map(|i| {
-                Player::new(
-                    Position(i, -i),
-                    Render {
-                        color: [0.1 * i as f32, 0.1, 0.8, 1.],
-                        visible: true,
-                    },
-                )
-            }));
-        })
-        // .add(
-        //     |query: Query<Entity>, extract: Extract, create: Create<_>| {
-        //         for entity in &query {
-        //             let template/*: SomeClonableEntityRepresentation */ = extract.template(entity);
-        //             create.one(template);
-        //         }
-        //     },
-        // )
-        .schedule()?;
+    // Initialize players.
+    world.run(|mut create: Create<_>| {
+        create.all((0..10).map(|i| {
+            Player(
+                Position(i, -i).into(),
+                Render {
+                    color: [0.1 * i as f32, 0.1, 0.8, 1.],
+                    visible: true,
+                }
+                .into(),
+                Controller.into(),
+            )
+        }));
+    })?;
+    //     |query: Query<Entity>, extract: Extract, create: Create<_>| {
+    //         for entity in &query {
+    //             let template/*: SomeClonableEntityRepresentation */ = extract.template(entity);
+    //             create.one(template);
+    //         }
+    //     },
 
     let mut inputs = world.injector::<Emit<Input>>()?;
     let mut time = world.injector::<&mut Time>()?;
@@ -189,7 +182,6 @@ fn run() -> Result<(), Box<dyn error::Error>> {
         .add(apply_input_to_position)
         .schedule()?;
 
-    initialize.run(&mut world)?;
     while let Some(event) = window.next() {
         match event {
             Event::Input(
