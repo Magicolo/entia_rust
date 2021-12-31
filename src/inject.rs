@@ -78,50 +78,6 @@ impl<'a> Context<'a> {
     }
 }
 
-impl<T> Inject for PhantomData<T> {
-    type Input = <() as Inject>::Input;
-    type State = <() as Inject>::State;
-    fn initialize(input: Self::Input, context: Context) -> Result<Self::State> {
-        <()>::initialize(input, context)
-    }
-}
-
-macro_rules! inject {
-    ($($p:ident, $t:ident),*) => {
-        impl<$($t: Inject,)*> Inject for ($($t,)*) {
-            type Input = ($($t::Input,)*);
-            type State = ($($t::State,)*);
-
-            fn initialize(($($p,)*): Self::Input, mut _context: Context) -> Result<Self::State> {
-                Ok(($($t::initialize($p, _context.owned())?,)*))
-            }
-
-            fn update(($($p,)*): &mut Self::State, mut _context: Context) -> Result {
-                $($t::update($p, _context.owned())?;)*
-                Ok(())
-            }
-
-            #[inline]
-            fn resolve(($($p,)*): &mut Self::State, mut _context: Context) -> Result {
-                $($t::resolve($p, _context.owned())?;)*
-                Ok(())
-            }
-        }
-
-        impl<'a, $($t: Get<'a>,)*> Get<'a> for ($($t,)*) {
-            type Item = ($($t::Item,)*);
-
-            #[inline]
-            fn get(&'a mut self, _world: &'a World) -> Self::Item {
-                let ($($p,)*) = self;
-                ($($p.get(_world),)*)
-            }
-        }
-    };
-}
-
-entia_macro::recurse_16!(inject);
-
 impl World {
     pub fn injector<I: Inject>(&mut self) -> Result<Injector<I>>
     where
@@ -171,6 +127,14 @@ impl<I: Inject> Injector<I> {
         }
     }
 
+    pub fn resolve(&mut self, world: &mut World) -> Result {
+        if self.world != world.identifier() {
+            Err(Error::WrongWorld)
+        } else {
+            I::resolve(&mut self.state, Context::new(self.identifier, world))
+        }
+    }
+
     pub fn guard<'a>(&'a mut self, world: &'a mut World) -> Result<Guard<'a, I>> {
         self.update(world)?;
         Ok(Guard {
@@ -179,9 +143,20 @@ impl<I: Inject> Injector<I> {
             world,
         })
     }
+
+    pub fn run<T, F: FnMut(<I::State as Get<'_>>::Item) -> T>(
+        &mut self,
+        world: &mut World,
+        mut run: F,
+    ) -> Result<T> {
+        self.update(world)?;
+        let value = run(self.state.get(world));
+        self.resolve(world)?;
+        Ok(value)
+    }
 }
 
-impl<'a, I: Inject> Guard<'a, I> {
+impl<I: Inject> Guard<'_, I> {
     pub fn inject(&mut self) -> <I::State as Get<'_>>::Item {
         self.state.get(self.world)
     }
@@ -193,3 +168,53 @@ impl<I: Inject> Drop for Guard<'_, I> {
         I::resolve(self.state, Context::new(self.identifier, self.world)).unwrap();
     }
 }
+
+impl<T> Inject for PhantomData<T> {
+    type Input = <() as Inject>::Input;
+    type State = <() as Inject>::State;
+    fn initialize(input: Self::Input, context: Context) -> Result<Self::State> {
+        <()>::initialize(input, context)
+    }
+    fn update(state: &mut Self::State, context: Context) -> Result {
+        <()>::update(state, context)
+    }
+    fn resolve(state: &mut Self::State, context: Context) -> Result {
+        <()>::resolve(state, context)
+    }
+}
+
+macro_rules! inject {
+    ($($p:ident, $t:ident),*) => {
+        impl<$($t: Inject,)*> Inject for ($($t,)*) {
+            type Input = ($($t::Input,)*);
+            type State = ($($t::State,)*);
+
+            fn initialize(($($p,)*): Self::Input, mut _context: Context) -> Result<Self::State> {
+                Ok(($($t::initialize($p, _context.owned())?,)*))
+            }
+
+            fn update(($($p,)*): &mut Self::State, mut _context: Context) -> Result {
+                $($t::update($p, _context.owned())?;)*
+                Ok(())
+            }
+
+            #[inline]
+            fn resolve(($($p,)*): &mut Self::State, mut _context: Context) -> Result {
+                $($t::resolve($p, _context.owned())?;)*
+                Ok(())
+            }
+        }
+
+        impl<'a, $($t: Get<'a>,)*> Get<'a> for ($($t,)*) {
+            type Item = ($($t::Item,)*);
+
+            #[inline]
+            fn get(&'a mut self, _world: &'a World) -> Self::Item {
+                let ($($p,)*) = self;
+                ($($p.get(_world),)*)
+            }
+        }
+    };
+}
+
+entia_macro::recurse_16!(inject);

@@ -1,9 +1,9 @@
-use crate::generator::{Generator, IntoGenerator, Shrinker, State};
+use crate::generator::{FullGenerator, Generator, State};
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 pub struct All<T>(T);
 
-impl<G: IntoGenerator, const N: usize> IntoGenerator for [G; N] {
+impl<G: FullGenerator, const N: usize> FullGenerator for [G; N] {
     type Item = [G::Item; N];
     type Generator = All<[G::Generator; N]>;
     #[inline]
@@ -20,6 +20,8 @@ impl<G: Generator, const N: usize> From<[G; N]> for All<[G; N]> {
 
 impl<G: Generator, const N: usize> Generator for All<[G; N]> {
     type Item = [G::Item; N];
+    type Shrink = All<[G::Shrink; N]>;
+
     #[inline]
     fn generate(&mut self, state: &mut State) -> Self::Item {
         let mut index = 0;
@@ -29,12 +31,14 @@ impl<G: Generator, const N: usize> Generator for All<[G; N]> {
             item
         })
     }
-}
 
-impl<S: Shrinker, const N: usize> Shrinker for All<[S; N]> {
-    type Item = [S::Item; N];
-    type Generator = All<[S::Generator; N]>;
-    fn shrink(&mut self) -> Option<Self::Generator> {
+    fn shrink(&mut self) -> Option<Self::Shrink> {
+        // TODO: Is there a way to abort shrinking as soon as a 'None' is produced?
+        // let generators = [None; N];
+        // for i in 0..N {
+        //     generators[i] = Some(self.0[i].shrink()?);
+        // }
+
         let mut index = 0;
         let generators = [(); N].map(|_| {
             let generator = self.0[index].shrink();
@@ -56,17 +60,15 @@ impl<G: Generator> From<Vec<G>> for All<Vec<G>> {
 
 impl<G: Generator> Generator for All<Vec<G>> {
     type Item = Vec<G::Item>;
+    type Shrink = All<Vec<G::Shrink>>;
+
     #[inline]
     fn generate(&mut self, state: &mut State) -> Self::Item {
         let map = |generator: &mut G| generator.generate(state);
         self.0.iter_mut().map(map).collect()
     }
-}
 
-impl<S: Shrinker> Shrinker for All<Vec<S>> {
-    type Item = Vec<S::Item>;
-    type Generator = All<Vec<S::Generator>>;
-    fn shrink(&mut self) -> Option<Self::Generator> {
+    fn shrink(&mut self) -> Option<Self::Shrink> {
         // TODO: Try to remove irrelevant generators...
         let mut generators = Vec::with_capacity(self.0.len());
         for shrinker in &mut self.0 {
@@ -78,7 +80,7 @@ impl<S: Shrinker> Shrinker for All<Vec<S>> {
 
 macro_rules! tuple {
     ($($p:ident, $t:ident),*) => {
-        impl<$($t: IntoGenerator,)*> IntoGenerator for ($($t,)*) {
+        impl<$($t: FullGenerator,)*> FullGenerator for ($($t,)*) {
             type Item = <Self::Generator as Generator>::Item;
             type Generator = ($($t::Generator,)*);
             #[inline]
@@ -89,18 +91,15 @@ macro_rules! tuple {
 
         impl<$($t: Generator,)*> Generator for ($($t,)*) {
             type Item = ($($t::Item,)*);
+            type Shrink = ($($t::Shrink,)*);
+
             #[inline]
             fn generate(&mut self, _state: &mut State) -> Self::Item {
                 let ($($p,)*) = self;
                 ($($p.generate(_state),)*)
             }
-        }
 
-        impl<$($t: Shrinker,)*> Shrinker for ($($t,)*) {
-            type Item = ($($t::Item,)*);
-            type Generator = ($($t::Generator,)*);
-            #[inline]
-            fn shrink(&mut self) -> Option<Self::Generator> {
+            fn shrink(&mut self) -> Option<Self::Shrink> {
                 let ($($p,)*) = self;
                 Some(($($p.shrink()?,)*))
             }

@@ -4,23 +4,16 @@ pub mod generator;
 pub mod primitive;
 
 use self::any::Any;
-use generator::With;
-
-pub use generator::{Generator, IntoGenerator, Shrinker};
+pub use generator::{FullGenerator, Generator, IntoGenerator};
 
 #[inline]
 pub fn clone<T: Clone>(value: T) -> impl Generator<Item = T> {
-    With::new(value, |_, value| Some(value.clone()))
+    ().map(move |_| value.clone())
 }
 
 #[inline]
 pub fn default<T: Default>() -> impl Generator<Item = T> {
-    With::new((), |_, _| Some(T::default()))
-}
-
-#[inline]
-pub fn next<I: IntoIterator>(iterator: I) -> impl Generator<Item = Option<I::Item>> {
-    With::new(iterator.into_iter(), |_, iterator| Some(iterator.next()))
+    ().map(|_| T::default())
 }
 
 #[inline]
@@ -44,7 +37,7 @@ pub fn ascii() -> impl Generator<Item = char> {
     Any::from((
         letter(),
         digit(),
-        Generator::map(0..=0x7Fu8, |value| value as char),
+        (0..=0x7Fu8).generator().map(|value| value as char),
     ))
 }
 

@@ -168,12 +168,6 @@ where
             }
             inner.segments.push(None);
         }
-
-        for (state, segment) in inner.states.iter_mut() {
-            let context = Context::new(context.identifier(), *segment, context.world());
-            I::update(state, context)?;
-        }
-
         Ok(())
     }
 }
@@ -221,9 +215,6 @@ pub mod item {
     pub trait Item {
         type State: for<'a> At<'a> + Depend;
         fn initialize(context: Context) -> Result<Self::State>;
-        fn update(_: &mut Self::State, _: Context) -> Result {
-            Ok(())
-        }
     }
 
     pub trait At<'a> {
@@ -275,14 +266,6 @@ pub mod item {
         fn initialize(context: Context) -> Result<Self::State> {
             Ok(I::initialize(context).ok())
         }
-
-        fn update(state: &mut Self::State, context: Context) -> Result {
-            if let Some(state) = state {
-                I::update(state, context)
-            } else {
-                Ok(())
-            }
-        }
     }
 
     impl<'a, A: At<'a>> At<'a> for Option<A> {
@@ -329,11 +312,6 @@ pub mod item {
 
                 fn initialize(mut _context: Context) -> Result<Self::State> {
                     Ok(($($t::initialize(_context.owned())?,)*))
-                }
-
-                fn update(($($p,)*): &mut Self::State, mut _context: Context) -> Result {
-                    $($t::update($p, _context.owned())?;)*
-                    Ok(())
                 }
             }
 

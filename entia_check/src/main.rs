@@ -12,7 +12,11 @@ fn main() {
             continue;
         }
 
-        for value in (low..high).sample(10000).filter(|value| value.is_finite()) {
+        for value in (low..high)
+            .generator()
+            .sample(10000)
+            .filter(|value| value.is_finite())
+        {
             assert!(value >= low && value <= high);
         }
     }

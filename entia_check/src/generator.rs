@@ -1,30 +1,43 @@
 use self::{
-    adapt::Adapt, array::Array, collect::Collect, flatten::Flatten, map::Map, or::Or,
-    sample::Samples, size::Size,
+    adapt::Adapt, array::Array, collect::Collect, filter::Filter, filter_map::FilterMap,
+    flatten::Flatten, map::Map, or::Or, sample::Samples, size::Size,
 };
-use crate::{any::Any, primitive::Full};
+use crate::{
+    any::Any,
+    primitive::{Full, Range},
+};
 use fastrand::Rng;
 use std::{
     collections::VecDeque,
     iter::FromIterator,
     marker::PhantomData,
     mem::take,
-    ops::Range,
     ops::{Deref, DerefMut},
 };
 
-pub trait IntoGenerator {
+pub trait FullGenerator {
     type Item;
     type Generator: Generator<Item = Self::Item>;
     fn generator() -> Self::Generator;
 }
 
+// TODO: Replace 'Generator' implementations that operate directly on values (such as 'Vec<T>' and '[T; N]') with 'IntoGenerator'
+// implementations?
+pub trait IntoGenerator {
+    type Item;
+    type Generator: Generator<Item = Self::Item>;
+    fn generator(self) -> Self::Generator;
+}
+
 pub trait Generator {
     type Item;
+    type Shrink: Generator<Item = Self::Item>;
     fn generate(&mut self, state: &mut State) -> Self::Item;
+    // TODO: Can 'shrink' take '&self'?
+    fn shrink(&mut self) -> Option<Self::Shrink>;
 
     #[inline]
-    fn adapt<T, B: FnMut(&mut State) -> T, A: FnMut(&mut State, T)>(
+    fn adapt<T, B: FnMut(&mut State) -> T + Clone, A: FnMut(&mut State, T) + Clone>(
         self,
         before: B,
         after: A,
@@ -36,7 +49,7 @@ pub trait Generator {
     }
 
     #[inline]
-    fn map<T, F: FnMut(Self::Item) -> T>(self, map: F) -> Map<Self, T, F>
+    fn map<T, F: FnMut(Self::Item) -> T + Clone>(self, map: F) -> Map<Self, T, F>
     where
         Self: Sized,
     {
@@ -44,49 +57,34 @@ pub trait Generator {
     }
 
     #[inline]
-    fn filter<F: FnMut(&Self::Item) -> bool>(
+    fn filter<F: FnMut(&Self::Item) -> bool + Clone>(
         self,
+        iterations: Option<usize>,
         filter: F,
-    ) -> With<(Self, F, usize), Option<Self::Item>>
+    ) -> Filter<Self, F>
     where
         Self: Sized,
     {
-        With::new((self, filter, 256), |state, (generator, filter, count)| {
-            let value = generator.generate(state);
-            if filter(&value) {
-                Some(Some(value))
-            } else if *count == 0 {
-                Some(None)
-            } else {
-                *count -= 1;
-                None
-            }
-        })
+        Filter::new(self, filter, iterations.unwrap_or(256))
     }
 
     #[inline]
-    fn filter_map<T, F: FnMut(Self::Item) -> Option<T>>(
+    fn filter_map<T, F: FnMut(Self::Item) -> Option<T> + Clone>(
         self,
+        iterations: Option<usize>,
         map: F,
-    ) -> With<(Self, F, usize), Option<T>>
+    ) -> FilterMap<Self, T, F>
     where
         Self: Sized,
     {
-        With::new((self, map, 256), |state, (generator, map, count)| {
-            let value = generator.generate(state);
-            if let Some(value) = map(value) {
-                Some(Some(value))
-            } else if *count == 0 {
-                Some(None)
-            } else {
-                *count -= 1;
-                None
-            }
-        })
+        FilterMap::new(self, map, iterations.unwrap_or(256))
     }
 
     #[inline]
-    fn bind<G: Generator, F: FnMut(Self::Item) -> G>(self, bind: F) -> Flatten<G, Map<Self, G, F>>
+    fn bind<G: Generator, F: FnMut(Self::Item) -> G + Clone>(
+        self,
+        bind: F,
+    ) -> Flatten<Map<Self, G, F>>
     where
         Self: Sized,
     {
@@ -94,7 +92,7 @@ pub trait Generator {
     }
 
     #[inline]
-    fn flatten(self) -> Flatten<Self::Item, Self>
+    fn flatten(self) -> Flatten<Self>
     where
         Self: Sized,
         Self::Item: Generator,
@@ -115,7 +113,7 @@ pub trait Generator {
     where
         Self: Sized,
     {
-        self.collect_with((0..256).size())
+        self.collect_with((0..256 as usize).generator().size())
     }
 
     #[inline]
@@ -146,12 +144,6 @@ pub trait Generator {
     }
 }
 
-pub trait Shrinker {
-    type Item;
-    type Generator: Generator<Item = Self::Item>;
-    fn shrink(&mut self) -> Option<Self::Generator>;
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct State {
     pub random: Rng,
@@ -161,17 +153,15 @@ pub struct State {
     pub iterations: usize,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default, Hash)]
-pub struct With<S, T, F = fn(&mut State, &mut S) -> Option<T>>(S, F, PhantomData<T>);
-
-impl<S, T, F: FnMut(&mut State, &mut S) -> Option<T>> With<S, T, F> {
-    #[inline]
-    pub fn new(state: S, with: F) -> Self {
-        Self(state, with, PhantomData)
+impl<G: Generator> IntoGenerator for G {
+    type Item = G::Item;
+    type Generator = G;
+    fn generator(self) -> Self::Generator {
+        self
     }
 }
 
-impl IntoGenerator for String {
+impl FullGenerator for String {
     type Item = Self;
     type Generator = Collect<Size<Full<char>>, Size<Range<usize>>, Self::Item>;
     #[inline]
@@ -180,25 +170,12 @@ impl IntoGenerator for String {
     }
 }
 
-impl<G: IntoGenerator> IntoGenerator for Vec<G> {
+impl<G: FullGenerator> FullGenerator for Vec<G> {
     type Item = Vec<G::Item>;
     type Generator = Collect<G::Generator, Size<Range<usize>>, Self::Item>;
     #[inline]
     fn generator() -> Self::Generator {
         G::generator().collect()
-    }
-}
-
-impl<S, T, F: FnMut(&mut State, &mut S) -> Option<T>> Generator for With<S, T, F> {
-    type Item = T;
-
-    fn generate(&mut self, state: &mut State) -> Self::Item {
-        loop {
-            match self.1(state, &mut self.0) {
-                Some(value) => return value,
-                None => {}
-            }
-        }
     }
 }
 
@@ -285,14 +262,6 @@ pub mod size {
             Size(generator)
         }
     }
-
-    impl<S: Shrinker> Shrinker for Size<S> {
-        type Item = S::Item;
-        type Generator = S::Generator;
-        fn shrink(&mut self) -> Option<Self::Generator> {
-            self.0.shrink()
-        }
-    }
 }
 
 pub mod array {
@@ -302,6 +271,9 @@ pub mod array {
     pub struct Array<G, const N: usize>(G);
 
     impl<G: Generator, const N: usize> Array<G, N> {
+        // The compiler fails to detect the usage of this function and wrongly produces a warning.
+        #[allow(dead_code)]
+        #[inline]
         pub fn new(generator: G) -> Self {
             Self(generator)
         }
@@ -309,16 +281,13 @@ pub mod array {
 
     impl<G: Generator, const N: usize> Generator for Array<G, N> {
         type Item = [G::Item; N];
+        type Shrink = Array<G::Shrink, N>;
         #[inline]
         fn generate(&mut self, state: &mut State) -> Self::Item {
             [(); N].map(|_| self.0.generate(state))
         }
-    }
 
-    impl<S: Shrinker, const N: usize> Shrinker for Array<S, N> {
-        type Item = [S::Item; N];
-        type Generator = Array<S::Generator, N>;
-        fn shrink(&mut self) -> Option<Self::Generator> {
+        fn shrink(&mut self) -> Option<Self::Shrink> {
             Some(Array(self.0.shrink()?))
         }
     }
@@ -327,16 +296,14 @@ pub mod array {
         ($t:ty, [$($n:ident)?]) => {
             impl<T: Clone $(, const $n: usize)?> Generator for $t {
                 type Item = T;
+                type Shrink = Self;
                 #[inline]
                 fn generate(&mut self, state: &mut State) -> Self::Item {
-                    self[(0..self.len()).generate(state)].clone()
+                    self[state.random.usize(0..self.len())].clone()
                 }
-            }
 
-            impl<T: Clone $(, const $n: usize)?> Shrinker for $t {
-                type Item = T;
-                type Generator = Self;
-                fn shrink(&mut self) -> Option<Self::Generator> {
+                #[inline]
+                fn shrink(&mut self) -> Option<Self::Shrink> {
                     Some(Clone::clone(self))
                 }
             }
@@ -353,32 +320,26 @@ pub mod function {
 
     impl<T> Generator for fn() -> T {
         type Item = T;
+        type Shrink = Self;
         #[inline]
         fn generate(&mut self, _: &mut State) -> Self::Item {
             self()
+        }
+        #[inline]
+        fn shrink(&mut self) -> Option<Self::Shrink> {
+            Some(*self)
         }
     }
 
     impl<T> Generator for fn(&mut State) -> T {
         type Item = T;
+        type Shrink = Self;
         #[inline]
         fn generate(&mut self, state: &mut State) -> Self::Item {
             self(state)
         }
-    }
-
-    impl<T> Shrinker for fn() -> T {
-        type Item = T;
-        type Generator = Self;
-        fn shrink(&mut self) -> Option<Self::Generator> {
-            Some(*self)
-        }
-    }
-
-    impl<T> Shrinker for fn(&mut State) -> T {
-        type Item = T;
-        type Generator = Self;
-        fn shrink(&mut self) -> Option<Self::Generator> {
+        #[inline]
+        fn shrink(&mut self) -> Option<Self::Shrink> {
             Some(*self)
         }
     }
@@ -387,7 +348,7 @@ pub mod function {
 pub mod option {
     use super::*;
 
-    impl<G: IntoGenerator> IntoGenerator for Option<G> {
+    impl<G: FullGenerator> FullGenerator for Option<G> {
         type Item = Option<G::Item>;
         type Generator = Any<(Map<G::Generator, Self::Item>, fn() -> Self::Item)>;
 
@@ -401,17 +362,14 @@ pub mod option {
 
     impl<G: Generator> Generator for Option<G> {
         type Item = Option<G::Item>;
+        type Shrink = Option<G::Shrink>;
         #[inline]
         fn generate(&mut self, state: &mut State) -> Self::Item {
             Some(self.as_mut()?.generate(state))
         }
-    }
-
-    impl<S: Shrinker> Shrinker for Option<S> {
-        type Item = S::Item;
-        type Generator = S::Generator;
-        fn shrink(&mut self) -> Option<Self::Generator> {
-            self.as_mut()?.shrink()
+        #[inline]
+        fn shrink(&mut self) -> Option<Self::Shrink> {
+            self.as_mut().map(G::shrink)
         }
     }
 }
@@ -427,18 +385,16 @@ pub mod or {
 
     impl<L: Generator, R: Generator<Item = L::Item>> Generator for Or<L, R> {
         type Item = L::Item;
+        type Shrink = Or<L::Shrink, R::Shrink>;
+        #[inline]
         fn generate(&mut self, state: &mut State) -> Self::Item {
             match self {
                 Or::Left(left) => left.generate(state),
                 Or::Right(right) => right.generate(state),
             }
         }
-    }
-
-    impl<L: Shrinker, R: Shrinker<Item = L::Item>> Shrinker for Or<L, R> {
-        type Item = L::Item;
-        type Generator = Or<L::Generator, R::Generator>;
-        fn shrink(&mut self) -> Option<Self::Generator> {
+        #[inline]
+        fn shrink(&mut self) -> Option<Self::Shrink> {
             match self {
                 Or::Left(left) => Some(Or::Left(left.shrink()?)),
                 Or::Right(right) => Some(Or::Right(right.shrink()?)),
@@ -453,17 +409,20 @@ pub mod adapt {
     #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default, Hash)]
     pub struct Adapt<G, T, B = fn(&mut State) -> T, A = fn(&mut State, T)>(G, B, A, PhantomData<T>);
 
-    impl<G: Generator, T, B: FnMut(&mut State) -> T, A: FnMut(&mut State, T)> Adapt<G, T, B, A> {
+    impl<G: Generator, T, B: FnMut(&mut State) -> T + Clone, A: FnMut(&mut State, T) + Clone>
+        Adapt<G, T, B, A>
+    {
         #[inline]
         pub fn new(generator: G, before: B, after: A) -> Self {
             Self(generator, before, after, PhantomData)
         }
     }
 
-    impl<G: Generator, T, B: FnMut(&mut State) -> T, A: FnMut(&mut State, T)> Generator
-        for Adapt<G, T, B, A>
+    impl<G: Generator, T, B: FnMut(&mut State) -> T + Clone, A: FnMut(&mut State, T) + Clone>
+        Generator for Adapt<G, T, B, A>
     {
         type Item = G::Item;
+        type Shrink = Adapt<G::Shrink, T, B, A>;
 
         #[inline]
         fn generate(&mut self, state: &mut State) -> Self::Item {
@@ -472,14 +431,8 @@ pub mod adapt {
             self.2(state, value);
             item
         }
-    }
 
-    impl<S: Shrinker, T, B: FnMut(&mut State) -> T + Clone, A: FnMut(&mut State, T) + Clone>
-        Shrinker for Adapt<S, T, B, A>
-    {
-        type Item = S::Item;
-        type Generator = Adapt<S::Generator, T, B, A>;
-        fn shrink(&mut self) -> Option<Self::Generator> {
+        fn shrink(&mut self) -> Option<Self::Shrink> {
             Some(self.0.shrink()?.adapt(self.1.clone(), self.2.clone()))
         }
     }
@@ -491,25 +444,21 @@ pub mod map {
     #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default, Hash)]
     pub struct Map<G, T, F = fn(<G as Generator>::Item) -> T>(G, F, PhantomData<T>);
 
-    impl<G: Generator, T, F: FnMut(G::Item) -> T> Map<G, T, F> {
+    impl<G: Generator, T, F: FnMut(G::Item) -> T + Clone> Map<G, T, F> {
         #[inline]
         pub fn new(generator: G, map: F) -> Self {
             Self(generator, map, PhantomData)
         }
     }
 
-    impl<G: Generator, T, F: FnMut(G::Item) -> T> Generator for Map<G, T, F> {
+    impl<G: Generator, T, F: FnMut(G::Item) -> T + Clone> Generator for Map<G, T, F> {
         type Item = T;
+        type Shrink = Map<G::Shrink, T, F>;
         #[inline]
         fn generate(&mut self, state: &mut State) -> Self::Item {
             self.1(self.0.generate(state))
         }
-    }
-
-    impl<S: Shrinker, T, F: FnMut(S::Item) -> T + Clone> Shrinker for Map<S, T, F> {
-        type Item = T;
-        type Generator = Map<S::Generator, T, F>;
-        fn shrink(&mut self) -> Option<Self::Generator> {
+        fn shrink(&mut self) -> Option<Self::Shrink> {
             Some(Map(self.0.shrink()?, self.1.clone(), PhantomData))
         }
     }
@@ -519,16 +468,18 @@ pub mod flatten {
     use super::*;
 
     #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default, Hash)]
-    pub struct Flatten<I, O>(O, Option<I>);
+    pub struct Flatten<G: Generator>(G, Option<G::Item>);
 
-    impl<I: Generator, O: Generator<Item = I>> Flatten<I, O> {
-        pub fn new(generator: O) -> Self {
+    impl<G: Generator<Item = impl Generator>> Flatten<G> {
+        pub fn new(generator: G) -> Self {
             Self(generator, None)
         }
     }
 
-    impl<I: Generator, O: Generator<Item = I>> Generator for Flatten<I, O> {
-        type Item = I::Item;
+    impl<G: Generator<Item = impl Generator>> Generator for Flatten<G> {
+        type Item = <G::Item as Generator>::Item;
+        type Shrink = Or<Flatten<G::Shrink>, <<G as Generator>::Item as Generator>::Shrink>;
+
         #[inline]
         fn generate(&mut self, state: &mut State) -> Self::Item {
             let mut generator = self.0.generate(state);
@@ -536,15 +487,11 @@ pub mod flatten {
             self.1 = Some(generator);
             item
         }
-    }
 
-    impl<I: Shrinker, O: Shrinker<Item = I::Generator>> Shrinker for Flatten<I, O> {
-        type Item = I::Item;
-        type Generator = Or<Flatten<I::Generator, O::Generator>, I::Generator>;
-        fn shrink(&mut self) -> Option<Self::Generator> {
+        fn shrink(&mut self) -> Option<Self::Shrink> {
             match self.0.shrink() {
                 Some(generator) => Some(Or::Left(generator.flatten())),
-                None => self.1.shrink().map(Or::Right),
+                None => self.1.shrink()?.map(Or::Right),
             }
         }
     }
@@ -567,18 +514,12 @@ pub mod collect {
         for Collect<G, C, F>
     {
         type Item = F;
+        type Shrink = Collect<G::Shrink, C::Shrink, F>;
         #[inline]
         fn generate(&mut self, state: &mut State) -> Self::Item {
             Iterator::map(0..self.1.generate(state), |_| self.0.generate(state)).collect()
         }
-    }
-
-    impl<S: Shrinker, C: Shrinker<Item = usize>, F: FromIterator<S::Item>> Shrinker
-        for Collect<S, C, F>
-    {
-        type Item = F;
-        type Generator = Collect<S::Generator, C::Generator, F>;
-        fn shrink(&mut self) -> Option<Self::Generator> {
+        fn shrink(&mut self) -> Option<Self::Shrink> {
             Some(Collect(self.0.shrink()?, self.1.shrink()?, PhantomData))
         }
     }
@@ -588,16 +529,79 @@ pub mod filter {
     use super::*;
 
     #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default, Hash)]
-    pub struct Filter<G, F = fn(<G as Generator>::Item) -> bool>(G, F);
+    pub struct Filter<G, F = fn(&<G as Generator>::Item) -> bool>(G, F, usize);
 
-    // TODO: complete
+    impl<G: Generator, F: FnMut(&G::Item) -> bool + Clone> Filter<G, F> {
+        // The compiler fails to detect the usage of this function and wrongly produces a warning.
+        #[allow(dead_code)]
+        #[inline]
+        pub fn new(generator: G, filter: F, iterations: usize) -> Self {
+            Self(generator, filter, iterations)
+        }
+    }
+
+    impl<G: Generator, F: FnMut(&G::Item) -> bool + Clone> Generator for Filter<G, F> {
+        type Item = Option<G::Item>;
+        type Shrink = Filter<G::Shrink, F>;
+
+        #[inline]
+        fn generate(&mut self, state: &mut State) -> Self::Item {
+            for _ in 0..self.2 {
+                let item = self.0.generate(state);
+                if self.1(&item) {
+                    return Some(item);
+                }
+            }
+            None
+        }
+
+        fn shrink(&mut self) -> Option<Self::Shrink> {
+            Some(Filter(self.0.shrink()?, self.1.clone(), self.2))
+        }
+    }
 }
 
 pub mod filter_map {
     use super::*;
 
     #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default, Hash)]
-    pub struct FilterMap<G, T, F = fn(<G as Generator>::Item) -> Option<T>>(G, F, PhantomData<T>);
+    pub struct FilterMap<G, T, F = fn(<G as Generator>::Item) -> Option<T>>(
+        G,
+        F,
+        usize,
+        PhantomData<T>,
+    );
 
-    // TODO: complete
+    impl<G: Generator, T, F: FnMut(G::Item) -> Option<T> + Clone> FilterMap<G, T, F> {
+        // The compiler fails to detect the usage of this function and wrongly produces a warning.
+        #[allow(dead_code)]
+        #[inline]
+        pub fn new(generator: G, map: F, iterations: usize) -> Self {
+            Self(generator, map, iterations, PhantomData)
+        }
+    }
+
+    impl<G: Generator, T, F: FnMut(G::Item) -> Option<T> + Clone> Generator for FilterMap<G, T, F> {
+        type Item = Option<T>;
+        type Shrink = FilterMap<G::Shrink, T, F>;
+
+        #[inline]
+        fn generate(&mut self, state: &mut State) -> Self::Item {
+            for _ in 0..self.2 {
+                if let Some(item) = self.1(self.0.generate(state)) {
+                    return Some(item);
+                }
+            }
+            None
+        }
+
+        fn shrink(&mut self) -> Option<Self::Shrink> {
+            Some(FilterMap(
+                self.0.shrink()?,
+                self.1.clone(),
+                self.2,
+                PhantomData,
+            ))
+        }
+    }
 }

@@ -30,10 +30,7 @@ pub use crate::{
     duplicate::Duplicate,
     entity::Entity,
     families::{adopt::Adopt, reject::Reject, Families},
-    family::{
-        item::{child::Child, parent::Parent},
-        Family,
-    },
+    family::Family,
     ignore::Ignore,
     inject::{Inject, Injector},
     message::{emit::Emit, receive::Receive},

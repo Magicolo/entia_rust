@@ -1,4 +1,4 @@
-use entia_check::{Generator, IntoGenerator};
+use entia_check::{FullGenerator, Generator};
 use std::collections::HashSet;
 
 use super::*;

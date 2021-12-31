@@ -191,26 +191,19 @@ fn run() -> Result<(), Box<dyn error::Error>> {
                     ..
                 }),
                 _,
-            ) => {
-                let mut guard = inputs.guard(&mut world)?;
-                let mut inputs = guard.inject();
-                let press = state == ButtonState::Press;
-                match key {
-                    Key::Left => inputs.emit(Input::Left(press)),
-                    Key::Right => inputs.emit(Input::Right(press)),
-                    Key::Down => inputs.emit(Input::Down(press)),
-                    Key::Up => inputs.emit(Input::Up(press)),
-                    _ => {}
-                }
-            }
+            ) => inputs.run(&mut world, |mut inputs| match key {
+                Key::Left => inputs.emit(Input::Left(state == ButtonState::Press)),
+                Key::Right => inputs.emit(Input::Right(state == ButtonState::Press)),
+                Key::Down => inputs.emit(Input::Down(state == ButtonState::Press)),
+                Key::Up => inputs.emit(Input::Up(state == ButtonState::Press)),
+                _ => {}
+            })?,
             Event::Loop(Loop::Update(UpdateArgs { dt })) => {
-                {
-                    let mut guard = time.guard(&mut world)?;
-                    let time = guard.inject();
+                time.run(&mut world, |time| {
                     time.frames += 1;
                     time.delta = Duration::from_secs_f64(dt);
                     time.total += time.delta;
-                }
+                })?;
                 runner.run(&mut world)?
             }
             event => window
@@ -219,22 +212,23 @@ fn run() -> Result<(), Box<dyn error::Error>> {
 
                     let cell_size = [SIZE[0] / CELLS[0], SIZE[1] / CELLS[1]];
                     let square = rectangle::square(0., 0., cell_size[1]);
-                    let mut guard = render.guard(&mut world)?;
-                    for (position, render) in &guard.inject() {
-                        if render.visible {
-                            let x = position.0.rem_euclid(CELLS[0] as isize) as f64 * cell_size[0];
-                            let y =
-                                (-position.1).rem_euclid(CELLS[1] as isize) as f64 * cell_size[1];
-                            let transform = context.transform.trans(x, y);
-                            Rectangle::new(render.color).draw(
-                                square,
-                                &context.draw_state,
-                                transform,
-                                graphics,
-                            );
+                    render.run(&mut world, |render| {
+                        for (position, render) in &render {
+                            if render.visible {
+                                let x =
+                                    position.0.rem_euclid(CELLS[0] as isize) as f64 * cell_size[0];
+                                let y = (-position.1).rem_euclid(CELLS[1] as isize) as f64
+                                    * cell_size[1];
+                                let transform = context.transform.trans(x, y);
+                                Rectangle::new(render.color).draw(
+                                    square,
+                                    &context.draw_state,
+                                    transform,
+                                    graphics,
+                                );
+                            }
                         }
-                    }
-                    Ok(())
+                    })
                 })
                 .unwrap_or(Ok(()))?,
         }

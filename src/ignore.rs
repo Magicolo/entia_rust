@@ -53,10 +53,6 @@ impl<I: Item, S: Scope> Item for Ignore<I, S> {
     fn initialize(context: item::Context) -> Result<Self::State> {
         Ok(State(I::initialize(context)?, PhantomData))
     }
-
-    fn update(State(state, _): &mut Self::State, context: item::Context) -> Result {
-        I::update(state, context)
-    }
 }
 
 impl<'a, T: At<'a>, S: Scope> At<'a> for State<T, S> {

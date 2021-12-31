@@ -155,7 +155,6 @@ pub mod meta {
     pub struct Meta {
         pub(crate) identifier: TypeId,
         pub(crate) name: &'static str,
-        pub(crate) size: usize,
         pub(crate) allocate: fn(usize) -> *mut (),
         pub(crate) free: unsafe fn(*mut (), usize, usize),
         pub(crate) copy: unsafe fn((*const (), usize), (*mut (), usize), usize),
@@ -185,7 +184,6 @@ pub mod meta {
             Self {
                 identifier: TypeId::of::<T>(),
                 name: type_name::<T>(),
-                size: size_of::<T>(),
                 allocate: |capacity| {
                     let mut pointer = ManuallyDrop::new(Vec::<T>::with_capacity(capacity));
                     pointer.as_mut_ptr().cast()
