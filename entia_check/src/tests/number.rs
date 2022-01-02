@@ -35,6 +35,20 @@ mod range {
                 }
 
                 #[test]
+                fn is_positive() {
+                    for value in positive::<$t>().sample(COUNT) {
+                        assert_that(&value).is_greater_than_or_equal_to(0 as $t);
+                    }
+                }
+
+                #[test]
+                fn is_negative() {
+                    for value in negative::<$t>().sample(COUNT) {
+                        assert_that(&value).is_less_than(0 as $t);
+                    }
+                }
+
+                #[test]
                 fn is_in_range() {
                     for pair in <($t, $t)>::generator().sample(COUNT) $(.filter(|(low, high)| low.$f() && high.$f()))? {
                         let (low, high) = (pair.0.min(pair.1), pair.0.max(pair.1));

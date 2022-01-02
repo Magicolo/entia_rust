@@ -113,7 +113,7 @@ pub trait Generator {
     where
         Self: Sized,
     {
-        self.collect_with((0..256 as usize).generator().size())
+        self.collect_with((0..256 as usize).generator())
     }
 
     #[inline]
@@ -131,12 +131,13 @@ pub trait Generator {
     fn size(self) -> Size<Self>
     where
         Self: Sized,
+        Size<Self>: Generator,
     {
         Size::new(self)
     }
 
     #[inline]
-    fn sample(self, count: usize) -> Samples<Self>
+    fn sample(&mut self, count: usize) -> Samples<Self>
     where
         Self: Sized,
     {
@@ -182,17 +183,17 @@ impl<G: FullGenerator> FullGenerator for Vec<G> {
 pub mod sample {
     use super::*;
 
-    #[derive(Debug, Clone)]
-    pub struct Samples<G> {
-        generator: G,
+    #[derive(Debug)]
+    pub struct Samples<'a, G> {
+        generator: &'a mut G,
         random: Rng,
         indices: VecDeque<usize>,
         index: usize,
         count: usize,
     }
 
-    impl<G> Samples<G> {
-        pub fn new(generator: G, count: usize) -> Self {
+    impl<'a, G> Samples<'a, G> {
+        pub fn new(generator: &'a mut G, count: usize) -> Self {
             Self {
                 generator,
                 random: Rng::new(),
@@ -203,7 +204,7 @@ pub mod sample {
         }
     }
 
-    impl<G: Generator> Iterator for Samples<G> {
+    impl<G: Generator> Iterator for Samples<'_, G> {
         type Item = G::Item;
 
         fn next(&mut self) -> Option<Self::Item> {
@@ -227,7 +228,7 @@ pub mod sample {
         }
     }
 
-    impl<G: Generator> ExactSizeIterator for Samples<G> {
+    impl<G: Generator> ExactSizeIterator for Samples<'_, G> {
         #[inline]
         fn len(&self) -> usize {
             self.count - self.index
@@ -297,6 +298,7 @@ pub mod array {
             impl<T: Clone $(, const $n: usize)?> Generator for $t {
                 type Item = T;
                 type Shrink = Self;
+
                 #[inline]
                 fn generate(&mut self, state: &mut State) -> Self::Item {
                     self[state.random.usize(0..self.len())].clone()

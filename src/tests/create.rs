@@ -1,4 +1,4 @@
-use entia_check::{FullGenerator, Generator};
+use entia_check::{FullGenerator, Generator, IntoGenerator};
 use std::collections::HashSet;
 
 use super::*;
@@ -6,7 +6,7 @@ use super::*;
 #[test]
 fn has_entity_count() -> Result {
     let position = <(f64, f64, f64)>::generator().map(|(x, y, z)| Position(x, y, z));
-    let count = 0usize..1000;
+    let count = (0usize..1000).generator();
     for (position, count) in (position, count).sample(100) {
         let mut world = world();
         let mut create = world.injector::<Create<_>>()?;

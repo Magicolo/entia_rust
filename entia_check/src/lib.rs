@@ -4,7 +4,8 @@ pub mod generator;
 pub mod primitive;
 
 use self::any::Any;
-pub use generator::{FullGenerator, Generator, IntoGenerator};
+pub use generator::{size::Size, FullGenerator, Generator, IntoGenerator};
+use std::ops;
 
 #[inline]
 pub fn clone<T: Clone>(value: T) -> impl Generator<Item = T> {
@@ -14,6 +15,22 @@ pub fn clone<T: Clone>(value: T) -> impl Generator<Item = T> {
 #[inline]
 pub fn default<T: Default>() -> impl Generator<Item = T> {
     ().map(|_| T::default())
+}
+
+#[inline]
+pub fn positive<T: Default>() -> impl Generator<Item = T>
+where
+    ops::RangeFrom<T>: IntoGenerator<Item = T>,
+{
+    (T::default()..).generator()
+}
+
+#[inline]
+pub fn negative<T: Default>() -> impl Generator<Item = T>
+where
+    ops::RangeTo<T>: IntoGenerator<Item = T>,
+{
+    (..T::default()).generator()
 }
 
 #[inline]
