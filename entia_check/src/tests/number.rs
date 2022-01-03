@@ -4,7 +4,7 @@ mod range {
     use super::*;
 
     macro_rules! tests {
-        ($t:ident, ($c:expr) $(,$f:ident)?) => {
+        ($t:ident, [$c:expr], [$($f:ident)?], [$($p:ident)?]) => {
             mod $t {
                 use super::*;
 
@@ -31,20 +31,6 @@ mod range {
                 fn is_constant() {
                     for value in $t::generator().sample(COUNT) $(.filter(|value| value.$f()))? {
                         assert_that(&[value].sample(1).next().unwrap()).is_equal_to(value);
-                    }
-                }
-
-                #[test]
-                fn is_positive() {
-                    for value in positive::<$t>().sample(COUNT) {
-                        assert_that(&value).is_greater_than_or_equal_to(0 as $t);
-                    }
-                }
-
-                #[test]
-                fn is_negative() {
-                    for value in negative::<$t>().sample(COUNT) {
-                        assert_that(&value).is_less_than(0 as $t);
                     }
                 }
 
@@ -92,38 +78,44 @@ mod range {
 
                 #[test]
                 fn is_in_range_to_inclusive() {
-                    for high in <$t>::generator().sample(COUNT) {
+                    for high in <$t>::generator().sample(COUNT) $(.filter(|value| value.$f()))? {
                         for value in (..=high).generator().sample(COUNT) $(.filter(|value| value.$f()))? {
                             assert_that(&value).is_less_than_or_equal_to(high);
                         }
                     }
                 }
+
+                #[test]
+                fn is_positive() {
+                    for value in positive::<$t>().sample(COUNT) {
+                        assert_that(&value).is_greater_than_or_equal_to(0 as $t);
+                    }
+                }
+
+                $(#[cfg($p)])?
+                #[test]
+                fn is_negative() {
+                    for value in negative::<$t>().sample(COUNT) {
+                        assert_that(&value).is_less_than(0 as $t);
+                    }
+                }
             }
         };
-        ($($t:ident),*, ($c:expr)) => { $(tests!($t, ($c));)* };
     }
 
-    tests!(
-        u8,
-        u16,
-        u32,
-        u64,
-        u128,
-        i8,
-        i16,
-        i32,
-        i64,
-        i128,
-        (|low, high| low == high)
-    );
-    tests!(
-        f32,
-        (|low: f32, high: f32| high - low < f32::EPSILON),
-        is_finite
-    );
-    tests!(
-        f64,
-        (|low: f64, high: f64| high - low < f64::EPSILON),
-        is_finite
-    );
+    macro_rules! tests_signed {
+        ($($t:ident),*) => { $(tests!($t, [|low, high| low == high], [], []);)* };
+    }
+
+    macro_rules! tests_unsigned {
+        ($($t:ident),*) => { $(tests!($t, [|low, high| low == high], [], [POSITIVE]);)* };
+    }
+
+    macro_rules! tests_floating {
+        ($($t:ident),*) => { $(tests!($t, [|low: $t, high: $t| high - low < $t::EPSILON], [is_finite], []);)* };
+    }
+
+    tests_signed!(i8, i16, i32, i64, i128);
+    tests_unsigned!(u8, u16, u32, u64, u128);
+    tests_floating!(f32, f64);
 }

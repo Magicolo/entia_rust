@@ -15,6 +15,16 @@ pub struct Range<T> {
     last: T,
 }
 
+impl<T> ops::RangeBounds<T> for Range<T> {
+    fn start_bound(&self) -> Bound<&T> {
+        Bound::Included(&self.start)
+    }
+
+    fn end_bound(&self) -> Bound<&T> {
+        Bound::Included(&self.end)
+    }
+}
+
 impl FullGenerator for bool {
     type Item = Self;
     type Generator = [bool; 2];
@@ -77,22 +87,35 @@ macro_rules! range {
     };
 }
 
-fn shrink(start: f64, end: f64, size: f64) -> (f64, f64) {
-    let range = end - start;
-    let start_ratio = (end.min(0.) - start.min(0.)).abs() / range;
-    let end_ratio = (end.max(0.) - start.max(0.)).abs() / range;
-    let range_shrink = range * (1. - size);
-    let start_shrink = start + range_shrink * start_ratio;
-    let end_shrink = end - range_shrink * end_ratio;
-    (start_shrink.min(end), end_shrink.max(start))
+macro_rules! shrinked {
+    ($t:ident) => {
+        impl Range<$t> {
+            pub(super) fn shrinked(&self, size: f64) -> Self {
+                let start = self.start as f64;
+                let end = self.end as f64;
+                let range = end - start;
+                let start_ratio = (end.min(0.) - start.min(0.)).abs() / range;
+                let end_ratio = (end.max(0.) - start.max(0.)).abs() / range;
+                let range_shrink = range * (1. - size);
+                let start_shrink = start + range_shrink * start_ratio;
+                let end_shrink = end - range_shrink * end_ratio;
+                let shrink = Self {
+                    start: (start_shrink.min(end_shrink) as $t)
+                        .min(self.end)
+                        .max(self.start),
+                    end: (end_shrink.max(start_shrink) as $t)
+                        .max(self.start)
+                        .min(self.end),
+                    last: self.last,
+                };
+                shrink
+            }
+        }
+    };
 }
 
 mod character {
     use super::*;
-
-    impl Full<char> {
-        const SPECIAL: [char; 3] = ['\u{0000}', char::MAX, char::REPLACEMENT_CHARACTER];
-    }
 
     impl Range<char> {
         // TODO: Return a 'Result' instead of 'Option'.
@@ -105,7 +128,9 @@ mod character {
             let end = match range.end_bound() {
                 Bound::Included(&bound) => bound,
                 Bound::Excluded(&bound) => (bound as u32).checked_sub(1)?.try_into().ok()?,
-                Bound::Unbounded => '\u{D7FF}',
+                Bound::Unbounded if start <= '\u{D7FF}' => '\u{D7FF}',
+                Bound::Unbounded if start >= '\u{E000}' => char::MAX,
+                Bound::Unbounded => return None,
             };
             if end < start {
                 None
@@ -126,6 +151,10 @@ mod character {
                 last: self.last as u32,
             }
         }
+    }
+
+    impl Full<char> {
+        const SPECIAL: [char; 3] = ['\u{0000}', char::MAX, char::REPLACEMENT_CHARACTER];
     }
 
     impl Generator for Range<char> {
@@ -262,6 +291,7 @@ mod number {
             }
 
             impl Range<$t> {
+                // TODO: Return a 'Result' instead of 'Option'.
                 pub fn new(range: impl ops::RangeBounds<$t>) -> Option<Self> {
                     let start = match range.start_bound() {
                         Bound::Included(&bound) => bound,
@@ -283,17 +313,8 @@ mod number {
                         })
                     }
                 }
-
-                #[inline]
-                pub(super) fn shrinked(&self, size: f64) -> Self {
-                    let shrink = shrink(self.start as f64, self.end as f64, size);
-                    Self {
-                        start: shrink.0 as $t,
-                        end: shrink.1 as $t,
-                        last: self.last,
-                    }
-                }
             }
+            shrinked!($t);
 
             impl From<Full<$t>> for Range<$t> {
                 #[inline]
@@ -394,54 +415,49 @@ mod number {
     }
 
     macro_rules! floating {
-        ($t:ident) => {
+        ($t:ident, $e:expr) => {
             impl Full<$t> {
-                const SPECIAL: [$t; 10] = [0 as $t, Range::<$t>::MIN, Range::<$t>::MAX, $t::MIN, $t::MAX, $t::EPSILON, $t::INFINITY, $t::NEG_INFINITY, $t::MIN_POSITIVE, $t::NAN];
+                const SPECIAL: [$t; 8] = [0 as $t, $t::MIN, $t::MAX, $t::EPSILON, $t::INFINITY, $t::NEG_INFINITY, $t::MIN_POSITIVE, $t::NAN];
             }
 
             impl Range<$t> {
-                const MIN: $t = -1 as $t / $t::EPSILON;
-                const MAX: $t = 1 as $t / $t::EPSILON;
-
+                // TODO: Return a 'Result' instead of 'Option'.
                 pub fn new(range: impl ops::RangeBounds<$t>) -> Option<Self> {
                     let start = match range.start_bound() {
-                        Bound::Included(&bound) => bound,
-                        Bound::Excluded(&bound) => bound + $t::EPSILON,
-                        Bound::Unbounded => Self::MIN,
+                        Bound::Included(&bound) => (bound, false),
+                        Bound::Excluded(&bound) => (bound, true),
+                        Bound::Unbounded => ($t::MIN, false),
                     };
                     let end = match range.end_bound() {
-                        Bound::Included(&bound) => bound,
-                        Bound::Excluded(&bound) => bound - $t::EPSILON,
-                        Bound::Unbounded => Self::MAX,
+                        Bound::Included(&bound) => (bound, false),
+                        Bound::Excluded(&bound) => (bound, true),
+                        Bound::Unbounded => ($t::MAX, false),
                     };
-                    if end < start {
+
+                    if end.0 < start.0 {
+                        None
+                    } else if (start.1 || end.1) && start.0 == end.0 {
                         None
                     } else {
+                        let epsilon = (end.0 - start.0) * $e;
+                        let start = if start.1 { start.0 + epsilon } else { start.0 };
+                        let end = if end.1 { end.0 - epsilon } else { end.0 };
                         Some(Self {
-                            start,
-                            end,
+                            start: start.min(end),
+                            end: end.max(start),
                             last: start,
                         })
                     }
                 }
-
-                #[inline]
-                pub(super) fn shrinked(&self, size: f64) -> Self {
-                    let shrink = shrink(self.start as f64, self.end as f64, size);
-                    Self {
-                        start: shrink.0 as $t,
-                        end: shrink.1 as $t,
-                        last: self.last,
-                    }
-                }
             }
+            shrinked!($t);
 
             impl From<Full<$t>> for Range<$t> {
                 #[inline]
                 fn from(full: Full<$t>) -> Self {
                     Self {
-                        start: Self::MIN,
-                        end: Self::MAX,
+                        start: $t::MIN,
+                        end: $t::MAX,
                         last: full.0,
                     }
                 }
@@ -453,7 +469,9 @@ mod number {
 
                 #[inline]
                 fn generate(&mut self, state: &mut State) -> Self::Item {
-                    self.last = (state.random.$t() + $t::EPSILON).min(1 as $t) * (self.end - self.start) + self.start;
+                    let ratio = state.random.$t();
+                    let range = self.end - self.start;
+                    self.last = (range * ratio + self.start).max(self.start).min(self.end);
                     self.last
                 }
 
@@ -498,7 +516,7 @@ mod number {
                 fn generate(&mut self, state: &mut State) -> Self::Item {
                     #[inline]
                     fn range(last: $t) -> Range::<$t> {
-                        Range { start: Range::<$t>::MIN, end: Range::<$t>::MAX, last }
+                        Range { start: $t::MIN, end: $t::MAX, last }
                     }
 
                     self.0 = match state.random.u8(..) {
@@ -521,7 +539,7 @@ mod number {
                 fn generate(&mut self, state: &mut State) -> Self::Item {
                     #[inline]
                     fn range(last: $t, size: f64) -> Range::<$t> {
-                        Range { start: Range::<$t>::MIN, end: Range::<$t>::MAX, last }.shrinked(size.powi(size_of::<$t>() as i32))
+                        Range { start: $t::MIN, end: $t::MAX, last }.shrinked(size.powi(size_of::<$t>() as i32))
                     }
 
                     self.0 = match state.random.u8(..) {
@@ -543,5 +561,6 @@ mod number {
     }
 
     integer!(u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize);
-    floating!(f32, f64);
+    floating!(f32, 3.45266984e-4);
+    floating!(f64, 1.4901161193847656e-8);
 }

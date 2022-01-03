@@ -5,7 +5,7 @@ pub mod primitive;
 
 use self::any::Any;
 pub use generator::{size::Size, FullGenerator, Generator, IntoGenerator};
-use std::ops;
+use std::ops::{self, Neg};
 
 #[inline]
 pub fn clone<T: Clone>(value: T) -> impl Generator<Item = T> {
@@ -26,7 +26,7 @@ where
 }
 
 #[inline]
-pub fn negative<T: Default>() -> impl Generator<Item = T>
+pub fn negative<T: Neg + Default>() -> impl Generator<Item = T>
 where
     ops::RangeTo<T>: IntoGenerator<Item = T>,
 {

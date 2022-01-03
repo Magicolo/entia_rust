@@ -1,4 +1,9 @@
 #[macro_export]
+macro_rules! ignore {
+    ($($i:tt)*) => {};
+}
+
+#[macro_export]
 macro_rules! count {
     () => { 0 };
     ($v:ident $(,$vs:ident)*) => {1 + $crate::count!($($vs),*) };
