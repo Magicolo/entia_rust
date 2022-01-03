@@ -6,7 +6,6 @@ pub struct All<T>(T);
 impl<G: FullGenerator, const N: usize> FullGenerator for [G; N] {
     type Item = [G::Item; N];
     type Generator = All<[G::Generator; N]>;
-    #[inline]
     fn generator() -> Self::Generator {
         All([(); N].map(|_| G::generator()))
     }

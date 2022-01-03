@@ -1,16 +1,6 @@
-use entia_check::*;
+use entia_check::{primitive::Full, *};
 
 fn main() {
-    const COUNT: usize = 5000;
-    type T = f32;
-
-    for high in <T>::generator().sample(COUNT).filter(|a| a.is_finite()) {
-        for value in (..=high)
-            .generator()
-            .sample(COUNT)
-            .filter(|a| a.is_finite())
-        {
-            assert!(value <= high);
-        }
-    }
+    let items: Vec<_> = Full::<u16>::default().sample(100).collect();
+    println!("{:?}", items);
 }

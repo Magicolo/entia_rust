@@ -520,7 +520,8 @@ mod number {
                     }
 
                     self.0 = match state.random.u8(..) {
-                        0..=253 => range(self.0).generate(state),
+                        0..=126 => range(self.0).generate(state),
+                        127..=253 => range(self.0).map(|value| 1 as $t / value).generate(state),
                         254..=255 => Full::<$t>::SPECIAL.clone().generate(state),
                     };
                     self.0
@@ -539,11 +540,12 @@ mod number {
                 fn generate(&mut self, state: &mut State) -> Self::Item {
                     #[inline]
                     fn range(last: $t, size: f64) -> Range::<$t> {
-                        Range { start: $t::MIN, end: $t::MAX, last }.shrinked(size.powi(size_of::<$t>() as i32))
+                        Range { start: -1 as $t / $t::EPSILON, end: 1 as $t / $t::EPSILON, last }.shrinked(size.powi(size_of::<$t>() as i32))
                     }
 
                     self.0 = match state.random.u8(..) {
-                        0..=253 => range(self.0, state.size).generate(state),
+                        0..=126 => range(self.0, state.size).generate(state),
+                        127..=253 => range(self.0, state.size).map(|value| 1 as $t / value).generate(state),
                         254..=255 => Full::<$t>::SPECIAL.clone().generate(state),
                     };
                     self.0
@@ -557,7 +559,6 @@ mod number {
 
             range!($t);
         };
-        ($($ts:ident),*) => { $(floating!($ts);)* };
     }
 
     integer!(u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize);

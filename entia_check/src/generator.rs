@@ -154,14 +154,6 @@ pub struct State {
     pub iterations: usize,
 }
 
-impl<G: Generator> IntoGenerator for G {
-    type Item = G::Item;
-    type Generator = G;
-    fn generator(self) -> Self::Generator {
-        self
-    }
-}
-
 impl FullGenerator for String {
     type Item = Self;
     type Generator = Collect<Size<Full<char>>, Size<Range<usize>>, Self::Item>;
