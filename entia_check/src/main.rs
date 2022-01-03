@@ -1,6 +1,6 @@
-use entia_check::{primitive::Full, *};
+use entia_check::*;
 
 fn main() {
-    let items: Vec<_> = Full::<u16>::default().sample(100).collect();
+    let items: Vec<_> = usize::generator().sample(100).collect();
     println!("{:?}", items);
 }

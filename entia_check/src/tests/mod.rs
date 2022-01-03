@@ -4,7 +4,7 @@ pub mod number;
 use super::*;
 use spectral::{boolean::*, numeric::*, *};
 
-pub const COUNT: usize = 1000;
+pub const COUNT: usize = 256;
 
 #[test]
 fn boolean_samples_true_and_false() {
