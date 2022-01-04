@@ -32,20 +32,9 @@ impl<G: Generator, const N: usize> Generator for All<[G; N]> {
     }
 
     fn shrink(&mut self) -> Option<Self::Shrink> {
-        // TODO: Is there a way to abort shrinking as soon as a 'None' is produced?
-        // let generators = [None; N];
-        // for i in 0..N {
-        //     generators[i] = Some(self.0[i].shrink()?);
-        // }
-
-        let mut index = 0;
-        let generators = [(); N].map(|_| {
-            let generator = self.0[index].shrink();
-            index += 1;
-            generator
-        });
-        for generator in &generators {
-            generator.as_ref()?;
+        let mut generators = [(); N].map(|_| None);
+        for i in 0..N {
+            generators[i] = Some(self.0[i].shrink()?);
         }
         Some(All(generators.map(Option::unwrap)))
     }
@@ -78,6 +67,22 @@ impl<G: Generator> Generator for All<Vec<G>> {
 }
 
 macro_rules! tuple {
+    () => {
+        impl FullGenerator for () {
+            type Item = <Self::Generator as Generator>::Item;
+            type Generator = ();
+            #[inline]
+            fn generator() -> Self::Generator { () }
+        }
+
+        impl Generator for () {
+            type Item = ();
+            type Shrink = ();
+            #[inline]
+            fn generate(&mut self, _state: &mut State) -> Self::Item { () }
+            fn shrink(&mut self) -> Option<Self::Shrink> { None }
+        }
+    };
     ($($p:ident, $t:ident),*) => {
         impl<$($t: FullGenerator,)*> FullGenerator for ($($t,)*) {
             type Item = <Self::Generator as Generator>::Item;

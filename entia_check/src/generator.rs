@@ -8,10 +8,8 @@ use crate::{
 };
 use fastrand::Rng;
 use std::{
-    collections::VecDeque,
     iter::FromIterator,
     marker::PhantomData,
-    mem::take,
     ops::{Deref, DerefMut},
 };
 
@@ -141,7 +139,7 @@ pub trait Generator {
     where
         Self: Sized,
     {
-        Samples::new(self, count)
+        Samples::new(self, State::new(count))
     }
 }
 
@@ -150,8 +148,42 @@ pub struct State {
     pub random: Rng,
     pub size: f64,
     pub depth: usize,
-    pub iteration: usize,
-    pub iterations: usize,
+    pub index: usize,
+    pub count: usize,
+}
+
+impl State {
+    pub fn new(count: usize) -> Self {
+        Self {
+            random: Rng::new(),
+            size: 0.,
+            depth: 0,
+            index: 0,
+            count,
+        }
+    }
+}
+
+impl Iterator for State {
+    type Item = Self;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index < self.count {
+            // 10% of states will have size 1.
+            self.size = (self.index as f64 / self.count as f64 * 1.1).min(1.);
+            self.index += 1;
+            Some(self.clone())
+        } else {
+            None
+        }
+    }
+}
+
+impl ExactSizeIterator for State {
+    #[inline]
+    fn len(&self) -> usize {
+        self.count - self.index
+    }
 }
 
 impl FullGenerator for String {
@@ -178,21 +210,12 @@ pub mod sample {
     #[derive(Debug)]
     pub struct Samples<'a, G> {
         generator: &'a mut G,
-        random: Rng,
-        indices: VecDeque<usize>,
-        index: usize,
-        count: usize,
+        state: State,
     }
 
     impl<'a, G> Samples<'a, G> {
-        pub fn new(generator: &'a mut G, count: usize) -> Self {
-            Self {
-                generator,
-                random: Rng::new(),
-                indices: VecDeque::new(),
-                index: 0,
-                count,
-            }
+        pub fn new(generator: &'a mut G, state: State) -> Self {
+            Self { generator, state }
         }
     }
 
@@ -200,30 +223,15 @@ pub mod sample {
         type Item = G::Item;
 
         fn next(&mut self) -> Option<Self::Item> {
-            if self.index < self.count {
-                let size = (self.index as f64 / self.count as f64).min(1.);
-                let mut state = State {
-                    random: take(&mut self.random),
-                    size,
-                    depth: 0,
-                    iteration: self.index,
-                    iterations: self.count,
-                };
-                let item = self.generator.generate(&mut state);
-                self.index += 1;
-                self.random = state.random;
-                self.indices.clear();
-                Some(item)
-            } else {
-                None
-            }
+            self.state = self.state.next()?;
+            Some(self.generator.generate(&mut self.state))
         }
     }
 
     impl<G: Generator> ExactSizeIterator for Samples<'_, G> {
         #[inline]
         fn len(&self) -> usize {
-            self.count - self.index
+            self.state.len()
         }
     }
 }
@@ -509,10 +517,12 @@ pub mod collect {
     {
         type Item = F;
         type Shrink = Collect<G::Shrink, C::Shrink, F>;
+
         #[inline]
         fn generate(&mut self, state: &mut State) -> Self::Item {
             Iterator::map(0..self.1.generate(state), |_| self.0.generate(state)).collect()
         }
+
         fn shrink(&mut self) -> Option<Self::Shrink> {
             Some(Collect(self.0.shrink()?, self.1.shrink()?, PhantomData))
         }

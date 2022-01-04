@@ -204,7 +204,6 @@ impl<'a> CountContext<'a> {
             segment: segment_index,
             offset: segment_indices.count,
             parent: self.entity_parent,
-            previous_sibling: *self.entity_previous,
             next_sibling: None,
         });
 

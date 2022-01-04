@@ -225,7 +225,7 @@ mod character {
                     .generate(state)
                     .try_into()
                     .unwrap(),
-                255 => Full::<char>::SPECIAL.clone().generate(state),
+                255 => (&Full::<char>::SPECIAL).generate(state),
             };
             self.0
         }
@@ -268,7 +268,7 @@ mod character {
                     .generate(state)
                     .try_into()
                     .unwrap(),
-                255 => Full::<char>::SPECIAL.clone().generate(state),
+                255 => (&Full::<char>::SPECIAL).generate(state),
             };
             self.0
         }
@@ -341,6 +341,25 @@ mod number {
                     if self.start == self.end {
                         None
                     } else if self.last < $t::default() {
+                        /*
+                        TODO:
+                        struct Shrink {
+                            range: Range<$t>,
+                            current: $t,
+                        }
+
+                        generate(&mut self) -> self.current
+
+                        { 0..10, 10 }
+                        { 0..5, x }, { 0..8, x }, { 0..9, 9 }
+                        { 0..5, x }, { 0..7, x }, { 0..8, x }
+
+                        { -10..10, 6 }, { -10..10, 8 }, { -10..10, 9 }
+                        { 0..6, x }, { 0..8, x }, {  }
+                         */
+                        // TODO:
+                        // - Take the middle point between 'last' and 'end.min(0)' and move gradually back towards 'last'.
+                        // - This strategy shrinks in a greedy way and reverts...
                         Some(Range {
                             start: self.last,
                             end: self.end,
@@ -379,7 +398,7 @@ mod number {
                 fn generate(&mut self, state: &mut State) -> Self::Item {
                     self.0 = match state.random.u8(..) {
                         0..=254 => Range::from(*self).generate(state),
-                        255 => Full::<$t>::SPECIAL.clone().generate(state),
+                        255 => (&Full::<$t>::SPECIAL).generate(state),
                     };
                     self.0
                 }
@@ -398,7 +417,7 @@ mod number {
                 fn generate(&mut self, state: &mut State) -> Self::Item {
                     self.0 = match state.random.u8(..) {
                         0..=254 => Range::from(**self).shrinked(state.size.powi(size_of::<$t>() as i32)).generate(state),
-                        255 => Full::<$t>::SPECIAL.clone().generate(state),
+                        255 => (&Full::<$t>::SPECIAL).generate(state),
                     };
                     self.0
                 }
@@ -522,7 +541,7 @@ mod number {
                     self.0 = match state.random.u8(..) {
                         0..=126 => range(self.0).generate(state),
                         127..=253 => range(self.0).map(|value| 1 as $t / value).generate(state),
-                        254..=255 => Full::<$t>::SPECIAL.clone().generate(state),
+                        254..=255 => (&Full::<$t>::SPECIAL).generate(state),
                     };
                     self.0
                 }
@@ -546,7 +565,7 @@ mod number {
                     self.0 = match state.random.u8(..) {
                         0..=126 => range(self.0, state.size).generate(state),
                         127..=253 => range(self.0, state.size).map(|value| 1 as $t / value).generate(state),
-                        254..=255 => Full::<$t>::SPECIAL.clone().generate(state),
+                        254..=255 => (&Full::<$t>::SPECIAL).generate(state),
                     };
                     self.0
                 }

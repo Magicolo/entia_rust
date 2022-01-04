@@ -12,18 +12,16 @@ fn has_entity_count() -> Result {
         let mut create = world.injector::<Create<_>>()?;
         let mut query = world.injector::<Query<(Entity, &Position)>>()?;
         let mut families = world.injector::<Families>()?;
-        let entities: HashSet<_> = {
-            let mut guard = create.guard(&mut world)?;
-            let mut create = guard.inject();
+
+        let entities: HashSet<_> = create.run(&mut world, |mut create| {
             create
                 .clones(count, Add::new(position.clone()))
                 .roots()
                 .map(|family| family.entity())
                 .collect()
-        };
-        {
-            let mut guard = query.guard(&mut world)?;
-            let query = guard.inject();
+        })?;
+
+        query.run(&mut world, |query| {
             for &entity in entities.iter() {
                 let item = query.get(entity).unwrap();
                 assert_eq!(entity, item.0);
@@ -34,15 +32,14 @@ fn has_entity_count() -> Result {
                 assert!(entities.contains(&item.0));
                 assert_eq!(&position, item.1);
             }
-        }
-        {
-            let mut guard = families.guard(&mut world)?;
-            let families = guard.inject();
+        })?;
+
+        families.run(&mut world, |families| {
             assert_eq!(families.roots().count(), count);
             for root in families.roots() {
                 assert!(entities.contains(&root.entity()));
             }
-        }
+        })?;
     }
     Ok(())
 }
