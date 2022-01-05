@@ -7,17 +7,14 @@ use self::any::Any;
 pub use generator::{size::Size, FullGenerator, Generator, IntoGenerator};
 use std::ops::{self, Neg};
 
-#[inline]
 pub fn clone<T: Clone>(value: T) -> impl Generator<Item = T> {
     ().map(move |_| value.clone())
 }
 
-#[inline]
 pub fn default<T: Default>() -> impl Generator<Item = T> {
     ().map(|_| T::default())
 }
 
-#[inline]
 pub fn positive<T: Default>() -> impl Generator<Item = T>
 where
     ops::RangeFrom<T>: IntoGenerator<Item = T>,
@@ -25,7 +22,6 @@ where
     (T::default()..).generator()
 }
 
-#[inline]
 pub fn negative<T: Neg + Default>() -> impl Generator<Item = T>
 where
     ops::RangeTo<T>: IntoGenerator<Item = T>,
@@ -33,7 +29,6 @@ where
     (..T::default()).generator()
 }
 
-#[inline]
 pub fn letter() -> impl Generator<Item = char> {
     const LETTERS: [char; 52] = [
         'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r',
@@ -43,13 +38,11 @@ pub fn letter() -> impl Generator<Item = char> {
     &LETTERS
 }
 
-#[inline]
 pub fn digit() -> impl Generator<Item = char> {
     const DIGITS: [char; 10] = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
     &DIGITS
 }
 
-#[inline]
 pub fn ascii() -> impl Generator<Item = char> {
     Any::from((
         letter(),
