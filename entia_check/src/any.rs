@@ -124,11 +124,11 @@ macro_rules! tuple {
                     let ($p, $($ps,)*) = &self.0;
                     match state {
                         One::$t(state) => Some(One::$t(match $p.shrink(state) {
-                            Some(shrink) => Or::Right(shrink),
+                            Some(generator) => Or::Right(generator),
                             None => Or::Left($p.clone()),
                         })),
                         $(One::$ts(state) => Some(One::$ts(match $ps.shrink(state) {
-                            Some(shrink) => Or::Right(shrink),
+                            Some(generator) => Or::Right(generator),
                             None => Or::Left($ps.clone()),
                         })),)*
                     }
@@ -154,11 +154,11 @@ macro_rules! tuple {
                     let ($p, $($ps,)*) = &self.0;
                     match state {
                         One::$t(state) => Some(One::$t(match $p.0.shrink(state) {
-                            Some(shrink) => Or::Right(shrink),
+                            Some(generator) => Or::Right(generator),
                             None => Or::Left($p.0.clone()),
                         })),
                         $(One::$ts(state) => Some(One::$ts(match $ps.0.shrink(state) {
-                            Some(shrink) => Or::Right(shrink),
+                            Some(generator) => Or::Right(generator),
                             None => Or::Left($ps.0.clone()),
                         })),)*
                     }
