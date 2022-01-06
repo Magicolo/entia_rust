@@ -130,6 +130,7 @@ macro_rules! tuple {
 
             fn shrink(&self, ($($t,)*): &mut Self::State) -> Option<Self::Shrink> {
                 let ($($p,)*) = self;
+                // TODO: Shrink one element at a time. 'Shrink' type will be '(Or<$t, $t::Shrink>, ...)'.
                 Some(($($p.shrink($t)?,)*))
             }
         }

@@ -1,6 +1,6 @@
 use self::{
     array::Array, collect::Collect, constant::Constant, filter::Filter, filter_map::FilterMap,
-    flatten::Flatten, map::Map, or::Or, sample::Samples, size::Size, wrap::Wrap,
+    flatten::Flatten, map::Map, or::Or, sample::Sample, size::Size, wrap::Wrap,
 };
 use crate::{
     all::All,
@@ -123,11 +123,38 @@ pub trait Generator: Clone {
         Size::new(self)
     }
 
-    fn sample(&mut self, count: usize) -> Samples<Self>
+    fn sample(&mut self, count: usize) -> Sample<Self>
     where
         Self: Sized,
     {
-        Samples::new(self, State::new(count))
+        Sample::new(self, State::new(count))
+    }
+
+    fn check<F: Fn(&Self::Item) -> bool>(&self, count: usize, check: F) -> Result<(), Self::Item> {
+        fn shrink<G: Generator, F: Fn(&G::Item) -> bool>(
+            generator: &G,
+            mut pair: (G::Item, G::State),
+            state: State,
+            check: F,
+        ) -> G::Item {
+            while let Some(generator) = generator.shrink(&mut pair.1) {
+                let pair = generator.generate(&mut state.clone());
+                if !check(&pair.0) {
+                    return shrink(&generator, pair, state, check);
+                }
+            }
+            pair.0
+        }
+
+        // TODO: Parallelize checking!
+        for mut state in State::new(count) {
+            let old = state.clone();
+            let pair = self.generate(&mut state);
+            if !check(&pair.0) {
+                return Err(shrink(self, pair, old, check));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -194,18 +221,18 @@ pub mod sample {
     use super::*;
 
     #[derive(Debug)]
-    pub struct Samples<'a, G> {
+    pub struct Sample<'a, G> {
         generator: &'a mut G,
         state: State,
     }
 
-    impl<'a, G> Samples<'a, G> {
+    impl<'a, G> Sample<'a, G> {
         pub fn new(generator: &'a mut G, state: State) -> Self {
             Self { generator, state }
         }
     }
 
-    impl<G: Generator> Iterator for Samples<'_, G> {
+    impl<G: Generator> Iterator for Sample<'_, G> {
         type Item = G::Item;
 
         fn next(&mut self) -> Option<Self::Item> {
@@ -214,7 +241,7 @@ pub mod sample {
         }
     }
 
-    impl<G: Generator> ExactSizeIterator for Samples<'_, G> {
+    impl<G: Generator> ExactSizeIterator for Sample<'_, G> {
         #[inline]
         fn len(&self) -> usize {
             self.state.len()
@@ -261,6 +288,13 @@ pub mod constant {
         #[inline]
         pub fn new(value: T) -> Self {
             Self(value)
+        }
+    }
+
+    impl<T: Clone> From<T> for Constant<T> {
+        #[inline]
+        fn from(value: T) -> Self {
+            Self::new(value)
         }
     }
 
