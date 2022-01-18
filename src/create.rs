@@ -113,7 +113,7 @@ impl<T: Template> Create<'_, T> {
                 &inner.segment_indices,
             );
         } else {
-            defer.defer(inner.defer(index));
+            defer.one(inner.defer(index));
         }
 
         inner.families()
@@ -168,7 +168,7 @@ impl<T: Template> Create<'_, T> {
                 &inner.segment_indices,
             );
         } else {
-            defer.defer(inner.defer(index));
+            defer.one(inner.defer(index));
         }
 
         inner.families()

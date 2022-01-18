@@ -63,7 +63,7 @@ impl Duplicate<'_> {
             let ready = self.entities.reserve(self.buffer);
             let pair = segment.reserve(count);
             if ready < count || pair.1 < count {
-                self.defer.defer(Defer {
+                self.defer.one(Defer {
                     segment: segment.index(),
                     entities: self.buffer.drain(..).collect(),
                     store: pair.0,

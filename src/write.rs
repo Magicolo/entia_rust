@@ -38,11 +38,11 @@ impl<T: Default + Send + Sync + 'static> Inject for Write<T> {
 }
 
 impl<'a, T: 'static> Get<'a> for Write<T> {
-    type Item = <Self as At<'a>>::Item;
+    type Item = <Self as At<'a>>::Mut;
 
     #[inline]
     fn get(&'a mut self, world: &World) -> Self::Item {
-        Self::at(&At::get(self, world), 0)
+        Self::at_mut(&mut At::get(self, world), 0)
     }
 }
 
@@ -67,7 +67,8 @@ impl<T: Send + Sync + 'static> Item for Write<T> {
 
 impl<'a, T: 'static> At<'a> for Write<T> {
     type State = *mut T;
-    type Item = &'a mut T;
+    type Ref = &'a T;
+    type Mut = &'a mut T;
 
     #[inline]
     fn get(&'a self, _: &'a World) -> Self::State {
@@ -75,7 +76,12 @@ impl<'a, T: 'static> At<'a> for Write<T> {
     }
 
     #[inline]
-    fn at(state: &Self::State, index: usize) -> Self::Item {
+    fn at(state: &Self::State, index: usize) -> Self::Ref {
+        unsafe { &*state.add(index) }
+    }
+
+    #[inline]
+    fn at_mut(state: &mut Self::State, index: usize) -> Self::Mut {
         unsafe { &mut *state.add(index) }
     }
 }

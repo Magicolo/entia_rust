@@ -38,11 +38,11 @@ impl<T: Default + Send + Sync + 'static> Inject for Read<T> {
 }
 
 impl<'a, T: 'static> Get<'a> for Read<T> {
-    type Item = <Self as At<'a>>::Item;
+    type Item = <Self as At<'a>>::Mut;
 
     #[inline]
     fn get(&'a mut self, world: &World) -> Self::Item {
-        Self::at(&At::get(self, world), 0)
+        Self::at(&mut At::get(self, world), 0)
     }
 }
 
@@ -67,7 +67,8 @@ impl<T: Send + Sync + 'static> Item for Read<T> {
 
 impl<'a, T: 'static> At<'a> for Read<T> {
     type State = *const T;
-    type Item = &'a T;
+    type Ref = &'a T;
+    type Mut = Self::Ref;
 
     #[inline]
     fn get(&'a self, _: &'a World) -> Self::State {
@@ -75,8 +76,13 @@ impl<'a, T: 'static> At<'a> for Read<T> {
     }
 
     #[inline]
-    fn at(state: &Self::State, index: usize) -> Self::Item {
+    fn at(state: &Self::State, index: usize) -> Self::Ref {
         unsafe { &*state.add(index) }
+    }
+
+    #[inline]
+    fn at_mut(state: &mut Self::State, index: usize) -> Self::Mut {
+        Self::at(state, index)
     }
 }
 

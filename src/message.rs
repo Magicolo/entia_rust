@@ -1,5 +1,3 @@
-use std::collections::VecDeque;
-
 use crate::{
     depend::{Depend, Dependency},
     error::Result,
@@ -7,6 +5,7 @@ use crate::{
     world::World,
     write::Write,
 };
+use std::{collections::VecDeque, iter::FusedIterator};
 
 struct Queue<T>(usize, VecDeque<T>);
 struct Inner<T> {
@@ -53,8 +52,13 @@ pub mod emit {
 
     impl<T> Emit<'_, T> {
         #[inline]
-        pub fn emit(&mut self, message: T) {
-            self.0.push(message);
+        pub fn emit(&mut self, message: impl Into<T>) {
+            self.0.push(message.into());
+        }
+
+        #[inline]
+        pub fn clear(&mut self) {
+            self.0.clear()
         }
     }
 
@@ -95,17 +99,61 @@ pub mod emit {
 pub mod receive {
     use super::*;
 
-    pub struct Receive<'a, T>(&'a mut Queue<T>);
+    pub struct Receive<'a, T>(&'a mut VecDeque<T>);
     pub struct State<T>(usize, Write<Inner<T>>);
 
-    impl<T> Iterator for Receive<'_, T> {
+    impl<T> Receive<'_, T> {
+        #[inline]
+        pub fn len(&self) -> usize {
+            self.0.len()
+        }
+
+        #[inline]
+        pub fn clear(&mut self) {
+            self.0.clear()
+        }
+
+        #[inline]
+        pub fn next(&mut self) -> Option<T> {
+            self.0.pop_front()
+        }
+
+        #[inline]
+        pub fn next_back(&mut self) -> Option<T> {
+            self.0.pop_back()
+        }
+    }
+
+    impl<T> Iterator for &mut Receive<'_, T> {
         type Item = T;
 
         #[inline]
         fn next(&mut self) -> Option<Self::Item> {
-            self.0.dequeue()
+            Receive::next(self)
+        }
+
+        #[inline]
+        fn size_hint(&self) -> (usize, Option<usize>) {
+            let len = Receive::len(self);
+            (len, Some(len))
         }
     }
+
+    impl<T> DoubleEndedIterator for &mut Receive<'_, T> {
+        #[inline]
+        fn next_back(&mut self) -> Option<Self::Item> {
+            Receive::next_back(self)
+        }
+    }
+
+    impl<T> ExactSizeIterator for &mut Receive<'_, T> {
+        #[inline]
+        fn len(&self) -> usize {
+            Receive::len(self)
+        }
+    }
+
+    impl<T> FusedIterator for &mut Receive<'_, T> {}
 
     impl<T: Send + Sync + 'static> Inject for Receive<'_, T> {
         type Input = usize;
@@ -128,7 +176,7 @@ pub mod receive {
 
         #[inline]
         fn get(&'a mut self, _: &World) -> Self::Item {
-            Receive(&mut self.1.as_mut().queues[self.0])
+            Receive(&mut self.1.as_mut().queues[self.0].1)
         }
     }
 

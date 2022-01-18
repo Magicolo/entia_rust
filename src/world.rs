@@ -21,6 +21,20 @@ use std::{
     },
 };
 
+// Such a 'Link' would allow to compute which components have been added or removed.
+/*
+- Add 'Added/Removed<T>' query filters. The filters would hold a 'Bits' that represent the indices:
+    fn dynamic_filter(state: &mut Self::State, index: usize) -> bool {
+        state.bits.set(index, false) ????
+    }
+    - Will be equivalent to receiving a 'OnAdd<T>' message and 'query.get(onAdd.entity)'.
+*/
+// enum Link {
+//     None,
+//     Add { meta: usize, segment: usize },
+//     Remove { meta: usize, segment: usize },
+// }
+
 pub struct World {
     identifier: usize,
     version: usize,
@@ -62,17 +76,25 @@ impl World {
         self.version
     }
 
-    pub fn set_meta(&mut self, meta: Arc<Meta>) {
+    pub fn set_meta(&mut self, mut meta: Meta) -> Arc<Meta> {
         let identifier = meta.identifier;
-        match self.type_to_meta.get(&identifier) {
-            Some(&index) => self.metas[index] = meta,
+        let meta = match self.type_to_meta.get(&identifier) {
+            Some(&index) => {
+                meta.index = index;
+                let meta = Arc::new(meta);
+                self.metas[index] = meta.clone();
+                meta
+            }
             None => {
-                let index = self.metas.len();
-                self.metas.push(meta);
-                self.type_to_meta.insert(identifier, index);
+                meta.index = self.metas.len();
+                let meta = Arc::new(meta);
+                self.metas.push(meta.clone());
+                self.type_to_meta.insert(meta.identifier, meta.index);
+                meta
             }
         };
         self.version += 1;
+        meta
     }
 
     pub fn get_meta<T: Send + Sync + 'static>(&self) -> Result<Arc<Meta>> {
@@ -87,11 +109,7 @@ impl World {
     pub fn get_or_add_meta<T: Send + Sync + 'static>(&mut self) -> Arc<Meta> {
         match self.get_meta::<T>() {
             Ok(meta) => meta,
-            Err(_) => {
-                let meta = Arc::new(Meta::new::<T>(None, None));
-                self.set_meta(meta.clone());
-                meta
-            }
+            Err(_) => self.set_meta(Meta::new::<T>(None, None, None)),
         }
     }
 
@@ -153,6 +171,7 @@ pub mod meta {
 
     #[derive(Clone)]
     pub struct Meta {
+        pub(crate) index: usize,
         pub(crate) identifier: TypeId,
         pub(crate) name: &'static str,
         pub(crate) allocate: fn(usize) -> *mut (),
@@ -161,27 +180,44 @@ pub mod meta {
         pub(crate) drop: unsafe fn(*mut (), usize, usize),
         pub(crate) cloner: Option<Cloner>,
         pub(crate) formatter: Option<Formatter>,
+        pub(crate) serializer: Option<Serializer>,
     }
 
-    #[derive(Copy, Clone)]
+    #[derive(Clone)]
     pub struct Cloner<T: ?Sized = ()> {
-        pub(crate) clone: unsafe fn((*const (), usize), (*mut (), usize), usize),
-        pub(crate) duplicate: unsafe fn((*const (), usize), (*mut (), usize), usize),
+        pub(crate) clone:
+            unsafe fn(source: (*const (), usize), target: (*mut (), usize), count: usize),
+        pub(crate) duplicate:
+            unsafe fn(source: (*const (), usize), target: (*mut (), usize), count: usize),
+        _marker: PhantomData<T>,
+    }
+
+    #[derive(Clone)]
+    pub struct Formatter<T: ?Sized = ()> {
+        pub(crate) format: unsafe fn(source: *const (), index: usize) -> String,
         _marker: PhantomData<T>,
     }
 
     #[derive(Copy, Clone)]
-    pub struct Formatter<T: ?Sized = ()> {
-        pub(crate) format: unsafe fn(*const (), usize) -> String,
+    pub struct Serializer<T: ?Sized = ()> {
+        // TODO: 'target' will most likely some kind of 'Writer'.
+        pub(crate) serialize:
+            unsafe fn(source: (*const (), usize), target: &mut String, count: usize),
+        // TODO: 'source' will most likely some kind of 'Reader'.
+        pub(crate) deserialize: unsafe fn(source: &str, target: (*mut (), usize), count: usize),
         _marker: PhantomData<T>,
     }
 
     impl Meta {
+        // To increase safe usage of 'Meta' and 'Store', type 'T' is required to be 'Send' and 'Sync', therefore it is
+        // impossible to hold an instance of 'Meta' that is not 'Send' and 'Sync'.
         pub fn new<T: Send + Sync + 'static>(
             cloner: Option<Cloner<T>>,
             formatter: Option<Formatter<T>>,
+            serializer: Option<Serializer<T>>,
         ) -> Self {
             Self {
+                index: usize::MAX,
                 identifier: TypeId::of::<T>(),
                 name: type_name::<T>(),
                 allocate: |capacity| {
@@ -214,6 +250,7 @@ pub mod meta {
                 },
                 cloner: cloner.map(Cloner::discard),
                 formatter: formatter.map(Formatter::discard),
+                serializer: serializer.map(Serializer::discard),
             }
         }
     }
@@ -227,6 +264,14 @@ pub mod meta {
     impl<T: fmt::Debug> Maybe<Formatter<T>> for Wrap<Formatter<T>> {
         fn maybe(self) -> Option<Formatter<T>> {
             Some(Formatter::new())
+        }
+    }
+
+    // TODO: Implement 'serialize' and 'deserialize'.
+    impl<T> Maybe<Serializer<T>> for Wrap<Serializer<T>> {
+        fn maybe(self) -> Option<Serializer<T>> {
+            None
+            // Some(Serializer::new())
         }
     }
 
@@ -247,7 +292,8 @@ pub mod meta {
                     if count > 0 {
                         let source = source.0.cast::<T>().add(source.1);
                         let target = target.0.cast::<T>().add(target.1);
-                        // Use 'ptd::write' to prevent the old value from being dropped since it might not be initialized.
+                        // Use 'ptd::write' to prevent the old value from being dropped since it is expected to be already
+                        // dropped or uninitialized.
                         for i in 0..count {
                             let source = &*source.add(i);
                             target.add(i).write(source.clone());
@@ -258,7 +304,8 @@ pub mod meta {
                     if count > 0 {
                         let source = &*source.0.cast::<T>().add(source.1);
                         let target = target.0.cast::<T>().add(target.1);
-                        // Use 'ptd::write' to prevent the old value from being dropped since it might not be initialized.
+                        // Use 'ptd::write' to prevent the old value from being dropped since it is expected to be already
+                        // dropped or uninitialized.
                         for i in 0..count {
                             target.add(i).write(source.clone());
                         }
@@ -290,6 +337,21 @@ pub mod meta {
         }
     }
 
+    impl<T> Serializer<T> {
+        pub fn discard(self) -> Serializer {
+            Serializer {
+                serialize: self.serialize,
+                deserialize: self.deserialize,
+                _marker: PhantomData,
+            }
+        }
+
+        // TODO: This will probably require some constraint on 'T'.
+        pub fn new() -> Self {
+            todo!()
+        }
+    }
+
     #[macro_export]
     macro_rules! metas {
         ($world:expr $(,$types:ty)*) => {{
@@ -298,6 +360,7 @@ pub mod meta {
                 $world.set_meta($crate::world::meta::Meta::new(
                     $crate::core::Wrap::<$crate::world::meta::Cloner<$types>>::default().maybe(),
                     $crate::core::Wrap::<$crate::world::meta::Formatter<$types>>::default().maybe(),
+                    $crate::core::Wrap::<$crate::world::meta::Serializer<$types>>::default().maybe(),
                 ).into());
             )*
         }};
@@ -490,12 +553,13 @@ pub mod store {
 
     pub struct Store(pub(super) Arc<Meta>, UnsafeCell<*mut ()>);
 
-    // SAFETY: 'Sync' and 'Send' can be implemented for 'Store' because the only way to get a 'Meta' for some type is through a
-    // 'World' which ensures that the type is 'Send' and 'Sync'.
+    // SAFETY: 'Sync' and 'Send' can be implemented for 'Store' because this crate ensures its proper usage. Other users
+    // of this type must fulfill the safety requirements of its unsafe methods.
     unsafe impl Sync for Store {}
     unsafe impl Send for Store {}
 
     impl Store {
+        #[inline]
         pub(super) fn new(meta: Arc<Meta>, capacity: usize) -> Self {
             let pointer = (meta.allocate)(capacity);
             Self(meta, pointer.into())
@@ -532,7 +596,12 @@ pub mod store {
             debug_assert_eq!(source.0.meta().identifier, target.0.meta().identifier);
             let metas = (source.0.meta(), target.0.meta());
             let error = Error::MissingClone(metas.0.name);
-            let cloner = metas.0.cloner.or(metas.1.cloner).ok_or(error)?;
+            let cloner = metas
+                .0
+                .cloner
+                .as_ref()
+                .or(metas.1.cloner.as_ref())
+                .ok_or(error)?;
             (cloner.clone)(
                 (source.0.pointer(), source.1),
                 (target.0.pointer(), target.1),
@@ -551,7 +620,12 @@ pub mod store {
             debug_assert_eq!(source.0.meta().identifier, target.0.meta().identifier);
             let metas = (source.0.meta(), target.0.meta());
             let error = Error::MissingClone(metas.0.name);
-            let cloner = metas.0.cloner.or(metas.1.cloner).ok_or(error)?;
+            let cloner = metas
+                .0
+                .cloner
+                .as_ref()
+                .or(metas.1.cloner.as_ref())
+                .ok_or(error)?;
             (cloner.duplicate)(
                 (source.0.pointer(), source.1),
                 (target.0.pointer(), target.1),
@@ -560,6 +634,7 @@ pub mod store {
             Ok(())
         }
 
+        #[inline]
         pub unsafe fn chunk(&self, index: usize, count: usize) -> Result<Self> {
             debug_assert!(self.meta().cloner.is_some());
             let store = Self::new(self.0.clone(), count);
@@ -613,6 +688,7 @@ pub mod store {
             (self.meta().free)(self.pointer(), count, capacity);
         }
 
+        #[inline]
         pub unsafe fn resize(&self, old_capacity: usize, new_capacity: usize) {
             let meta = self.meta();
             let old_pointer = self.pointer();

@@ -1,4 +1,7 @@
-use crate::generator::{or::Or, FullGenerator, Generator, State};
+use crate::{
+    generator::{or::Or, FullGenerator, Generator, State},
+    recurse,
+};
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct All<T>(T);
@@ -57,6 +60,7 @@ impl<G: Generator> From<Vec<G>> for All<Vec<G>> {
 impl<G: Generator> Generator for All<Vec<G>> {
     type Item = Vec<G::Item>;
     type State = (Vec<G::State>, usize, usize);
+    // TODO: This produces an infinite type: 'All<Vec<Or<Or<Or<G, G::Shrink>, G::Shrink>, G::Shrink>>>'
     type Shrink = All<Vec<Or<G, G::Shrink>>>;
 
     fn generate(&self, state: &mut State) -> (Self::Item, Self::State) {
@@ -69,7 +73,7 @@ impl<G: Generator> Generator for All<Vec<G>> {
     }
 
     fn shrink(&self, state: &mut Self::State) -> Option<Self::Shrink> {
-        // Try to remove irrelevant items.
+        // Try to remove irrelevant generators.
         if state.1 < self.0.len() {
             let mut generators = self.0.iter().cloned().map(Or::Left).collect::<Vec<_>>();
             generators.remove(state.1);
@@ -137,4 +141,4 @@ macro_rules! tuple {
     };
 }
 
-entia_macro::recurse_16!(tuple);
+recurse!(tuple);

@@ -4,10 +4,19 @@ use piston_window::*;
 use std::{collections::VecDeque, error, result::Result, time::Duration};
 
 /*
+STATIC AND DYNAMIC COMPONENTS:
+    - The 'Item' trait will need an 'static_at' and a 'dynamic_at' where the difference will be that a 'dynamic_at' returns an 'Option<T>'.
+    - A query will know to use the 'static_at' or the 'dynamic_at' when iterating by checking if all the stores it uses are 'static'.
+        - This can be checked in 'update' if a new 'dynamic' component increases the 'world.version'.
+    - There might be a way to make this quite granular by allowing individual stores to change from 'static' to 'dynamic' and back.
+
+
 BUGS:
     - Some dependencies may work weirdly with 'Entity' as a component. If it cannot be reconciled, prevent 'Entity' as a component.
 
 TODO:
+    - Add a way to iterate a query in parallel.
+        - A 'mut' access to query items should be allowed since the 'ChunkIterator' will prevent aliasing a shared pointer.
     - Add tests.
         - The query 'Query<&mut Entity>' should be valid but should not allow modifying the 'entity_store'.
         - The resource '&mut Entity' should be valid but should not modify any segment store.
@@ -237,13 +246,16 @@ fn run() -> Result<(), Box<dyn error::Error>> {
     Ok(())
 }
 
-fn apply_input_to_position(inputs: Receive<Input>, query: Query<&mut Position, Has<Controller>>) {
-    for input in inputs {
+fn apply_input_to_position(
+    mut inputs: Receive<Input>,
+    mut query: Query<&mut Position, Has<Controller>>,
+) {
+    for input in &mut inputs {
         match input {
-            Input::Left(true) => query.each(|position| position.0 -= 1),
-            Input::Right(true) => query.each(|position| position.0 += 1),
-            Input::Down(true) => query.each(|position| position.1 -= 1),
-            Input::Up(true) => query.each(|position| position.1 += 1),
+            Input::Left(true) => query.each_mut(|position| position.0 -= 1),
+            Input::Right(true) => query.each_mut(|position| position.0 += 1),
+            Input::Down(true) => query.each_mut(|position| position.1 -= 1),
+            Input::Up(true) => query.each_mut(|position| position.1 += 1),
             _ => {}
         }
 

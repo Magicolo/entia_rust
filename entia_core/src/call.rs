@@ -1,3 +1,5 @@
+use crate::recurse;
+
 pub trait Call<I, O = ()> {
     fn call(&mut self, input: I) -> O;
 }
@@ -13,4 +15,4 @@ macro_rules! call {
     };
 }
 
-entia_macro::recurse_16!(call);
+recurse!(call);

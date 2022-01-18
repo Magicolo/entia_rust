@@ -27,7 +27,7 @@ fn has_entity_count() -> Result {
                 assert_eq!(entity, item.0);
                 assert_eq!(&position, item.1);
             }
-            assert_eq!(query.len(), count);
+            assert_eq!(query.into_iter().count(), count);
             for item in &query {
                 assert!(entities.contains(&item.0));
                 assert_eq!(&position, item.1);

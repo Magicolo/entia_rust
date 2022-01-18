@@ -1,12 +1,12 @@
-use entia_core::Marker;
-
 use crate::{
     entities::Entities,
     entity::Entity,
     error::{Error, Result},
     family::template::{EntityIndices, Family, SegmentIndices},
+    recurse,
     world::{meta::Meta, segment::Segment, store::Store, World},
 };
+use entia_core::Marker;
 use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
 pub struct DeclareContext<'a> {
@@ -680,4 +680,4 @@ macro_rules! template {
     };
 }
 
-entia_macro::recurse_16!(template);
+recurse!(template);

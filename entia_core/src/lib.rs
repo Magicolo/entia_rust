@@ -18,3 +18,4 @@ pub use crate::{
     maybe::{Maybe, Wrap},
     slice::Slice,
 };
+pub(crate) use entia_macro::recurse_16 as recurse;

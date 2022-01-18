@@ -1,4 +1,4 @@
-use crate::{error, world::World};
+use crate::{error, recurse, world::World};
 use entia_core::utility::short_type_name;
 use std::{
     any::TypeId,
@@ -96,7 +96,7 @@ macro_rules! depend {
     };
 }
 
-entia_macro::recurse_16!(depend);
+recurse!(depend);
 
 #[derive(Debug)]
 pub enum Has {

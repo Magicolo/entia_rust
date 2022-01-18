@@ -57,7 +57,8 @@ impl<I: Item, S: Scope> Item for Ignore<I, S> {
 
 impl<'a, T: At<'a>, S: Scope> At<'a> for State<T, S> {
     type State = T::State;
-    type Item = Ignore<T::Item>;
+    type Ref = Ignore<T::Ref>;
+    type Mut = Ignore<T::Mut>;
 
     #[inline]
     fn get(&'a self, world: &'a World) -> Self::State {
@@ -65,8 +66,13 @@ impl<'a, T: At<'a>, S: Scope> At<'a> for State<T, S> {
     }
 
     #[inline]
-    fn at(state: &Self::State, index: usize) -> Self::Item {
+    fn at(state: &Self::State, index: usize) -> Self::Ref {
         Ignore(T::at(state, index), PhantomData)
+    }
+
+    #[inline]
+    fn at_mut(state: &mut Self::State, index: usize) -> Self::Mut {
+        Ignore(T::at_mut(state, index), PhantomData)
     }
 }
 

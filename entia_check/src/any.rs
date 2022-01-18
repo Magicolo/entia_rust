@@ -1,4 +1,7 @@
-use crate::generator::{or::Or, FullGenerator, Generator, State};
+use crate::{
+    generator::{or::Or, FullGenerator, Generator, State},
+    recurse,
+};
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct Any<T>(T);
@@ -172,4 +175,4 @@ collection!([T; N], indexed, [], [N]);
 collection!([Weight<T>; N], weighted, [0], [N]);
 collection!(Vec<T>, indexed, [], []);
 collection!(Vec<Weight<T>>, weighted, [0], []);
-entia_macro::recurse_16!(tuple);
+recurse!(tuple);

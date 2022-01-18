@@ -57,11 +57,26 @@ impl Resolver {
 }
 
 impl<R: Resolve> Defer<'_, R> {
-    pub fn defer(&mut self, resolve: R::Item) {
-        self.queue.push_back(resolve);
+    pub fn one(&mut self, item: R::Item) {
+        self.queue.push_back(item);
+        self.increment(1);
+    }
+
+    pub fn all(&mut self, items: impl IntoIterator<Item = R::Item>) {
+        let count = self.queue.len();
+        self.queue.extend(items);
+        self.increment(self.queue.len() - count);
+    }
+
+    #[inline]
+    fn increment(&mut self, count: usize) {
+        if count == 0 {
+            return;
+        }
+
         match self.indices.last_mut() {
-            Some((index, count)) if *index == self.index => *count += 1,
-            _ => self.indices.push((self.index, 1)),
+            Some(pair) if pair.0 == self.index => pair.1 += count,
+            _ => self.indices.push((self.index, count)),
         }
     }
 }

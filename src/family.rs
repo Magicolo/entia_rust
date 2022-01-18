@@ -133,7 +133,8 @@ impl Item for Family<'_> {
 
 impl<'a> At<'a> for State {
     type State = (*const Entity, &'a Entities);
-    type Item = Family<'a>;
+    type Ref = Family<'a>;
+    type Mut = Self::Ref;
 
     #[inline]
     fn get(&'a self, world: &'a World) -> Self::State {
@@ -141,8 +142,13 @@ impl<'a> At<'a> for State {
     }
 
     #[inline]
-    fn at(state: &Self::State, index: usize) -> Self::Item {
+    fn at(state: &Self::State, index: usize) -> Self::Ref {
         Family(unsafe { *state.0.add(index) }, state.1)
+    }
+
+    #[inline]
+    fn at_mut(state: &mut Self::State, index: usize) -> Self::Ref {
+        Self::at(state, index)
     }
 }
 

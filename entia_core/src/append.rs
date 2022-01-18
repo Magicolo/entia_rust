@@ -1,3 +1,5 @@
+use crate::recurse;
+
 pub trait Append<T> {
     type Target: Chop<T, Rest = Self>;
     fn append(self, value: T) -> Self::Target;
@@ -33,4 +35,4 @@ macro_rules! append {
     };
 }
 
-entia_macro::recurse_16!(append);
+recurse!(append);

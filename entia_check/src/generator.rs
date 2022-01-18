@@ -20,6 +20,7 @@ pub trait FullGenerator {
     fn generator() -> Self::Generator;
 }
 
+// TODO: Review all 'shrink' implementations and ensure that only one 'shrink' happens per call (ex: tuples must shrink only 1 item at a time).
 // TODO: Replace 'Generator' implementations that operate directly on values (such as 'Vec<T>' and '[T; N]') with 'IntoGenerator'
 // implementations?
 pub trait IntoGenerator {
@@ -320,8 +321,6 @@ pub mod array {
     pub struct Array<G, const N: usize>(G);
 
     impl<G: Generator, const N: usize> Array<G, N> {
-        // The compiler fails to detect the usage of this function and wrongly produces a warning.
-        #[allow(dead_code)]
         #[inline]
         pub fn new(generator: G) -> Self {
             Self(generator)
@@ -329,9 +328,9 @@ pub mod array {
     }
 
     impl<G: Generator, const N: usize> Generator for Array<G, N> {
-        type Item = [G::Item; N];
-        type State = ([G::State; N], usize);
-        type Shrink = All<[Or<G, G::Shrink>; N]>;
+        type Item = <All<[G; N]> as Generator>::Item;
+        type State = <All<[G; N]> as Generator>::State;
+        type Shrink = <All<[G; N]> as Generator>::Shrink;
 
         fn generate(&self, state: &mut State) -> (Self::Item, Self::State) {
             let mut items = [(); N].map(|_| None);
@@ -345,17 +344,7 @@ pub mod array {
         }
 
         fn shrink(&self, state: &mut Self::State) -> Option<Self::Shrink> {
-            while state.1 < N {
-                if let Some(shrink) = self.0.shrink(&mut state.0[state.1]) {
-                    let mut generators = [(); N].map(|_| Or::Left(self.0.clone()));
-                    generators[state.1] = Or::Right(shrink);
-                    return Some(All::from(generators));
-                } else {
-                    state.1 += 1;
-                }
-            }
-
-            None
+            All::from([(); N].map(|_| self.0.clone())).shrink(state)
         }
     }
 
@@ -451,11 +440,46 @@ pub mod option {
 
 pub mod or {
     use super::*;
+    use Or::*;
 
     #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
     pub enum Or<L, R> {
         Left(L),
         Right(R),
+    }
+
+    impl<L, R> Or<Or<L, R>, Or<L, R>> {
+        #[inline]
+        pub fn flatten(self) -> Or<L, R> {
+            match self {
+                Left(Left(left)) => Left(left),
+                Left(Right(right)) => Right(right),
+                Right(Left(left)) => Left(left),
+                Right(Right(right)) => Right(right),
+            }
+        }
+    }
+
+    impl<L, R> Or<Or<L, R>, R> {
+        #[inline]
+        pub fn flatten_left(self) -> Or<L, R> {
+            match self {
+                Left(Left(left)) => Left(left),
+                Left(Right(right)) => Right(right),
+                Right(right) => Right(right),
+            }
+        }
+    }
+
+    impl<L, R> Or<L, Or<L, R>> {
+        #[inline]
+        pub fn flatten_right(self) -> Or<L, R> {
+            match self {
+                Left(left) => Left(left),
+                Right(Left(left)) => Left(left),
+                Right(Right(right)) => Right(right),
+            }
+        }
     }
 
     impl<L: Generator, R: Generator<Item = L::Item>> Generator for Or<L, R> {
@@ -465,23 +489,21 @@ pub mod or {
 
         fn generate(&self, state: &mut State) -> (Self::Item, Self::State) {
             match self {
-                Or::Left(generator) => {
+                Left(generator) => {
                     let (item, state) = generator.generate(state);
-                    (item, Or::Left(state))
+                    (item, Left(state))
                 }
-                Or::Right(generator) => {
+                Right(generator) => {
                     let (item, state) = generator.generate(state);
-                    (item, Or::Right(state))
+                    (item, Right(state))
                 }
             }
         }
 
         fn shrink(&self, state: &mut Self::State) -> Option<Self::Shrink> {
             match (self, state) {
-                (Or::Left(generator), Or::Left(state)) => Some(Or::Left(generator.shrink(state)?)),
-                (Or::Right(generator), Or::Right(state)) => {
-                    Some(Or::Right(generator.shrink(state)?))
-                }
+                (Left(generator), Left(state)) => Some(Left(generator.shrink(state)?)),
+                (Right(generator), Right(state)) => Some(Right(generator.shrink(state)?)),
                 _ => None,
             }
         }
@@ -579,6 +601,7 @@ pub mod flatten {
     impl<G: Generator<Item = impl Generator>> Generator for Flatten<G> {
         type Item = <G::Item as Generator>::Item;
         type State = (G::State, G::Item, <G::Item as Generator>::State);
+        // TODO: Fix infinite type (because of 'Or::Left').
         type Shrink = Or<Flatten<G::Shrink>, <<G as Generator>::Item as Generator>::Shrink>;
 
         fn generate(&self, state: &mut State) -> (Self::Item, Self::State) {
@@ -651,8 +674,6 @@ pub mod filter {
     pub struct Filter<G, F = fn(&<G as Generator>::Item) -> bool>(G, F, usize);
 
     impl<G: Generator, F: Fn(&G::Item) -> bool + Clone> Filter<G, F> {
-        // The compiler fails to detect the usage of this function and wrongly produces a warning.
-        #[allow(dead_code)]
         #[inline]
         pub fn new(generator: G, filter: F, iterations: usize) -> Self {
             Self(generator, filter, iterations)
@@ -702,8 +723,6 @@ pub mod filter_map {
     }
 
     impl<G: Generator, T, F: Fn(G::Item) -> Option<T> + Clone> FilterMap<G, T, F> {
-        // The compiler fails to detect the usage of this function and wrongly produces a warning.
-        #[allow(dead_code)]
         #[inline]
         pub fn new(generator: G, map: F, iterations: usize) -> Self {
             Self(generator, map, iterations, PhantomData)

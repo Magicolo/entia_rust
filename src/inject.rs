@@ -1,6 +1,7 @@
 use crate::{
     depend::{Conflict, Depend, Dependency, Scope},
     error::{Error, Result},
+    recurse,
     world::World,
 };
 use entia_core::utility::short_type_name;
@@ -157,6 +158,8 @@ impl<I: Inject> Injector<I> {
 }
 
 impl<I: Inject> Guard<'_, I> {
+    // TODO: Is there a way to implement 'Deref/Mut' instead of having a seperate 'Guard' and 'I' value?
+    // - The 'I' value will need to be stored in the guard along with 'state' (for resolution).
     pub fn inject(&mut self) -> <I::State as Get<'_>>::Item {
         self.state.get(self.world)
     }
@@ -217,4 +220,4 @@ macro_rules! inject {
     };
 }
 
-entia_macro::recurse_16!(inject);
+recurse!(inject);

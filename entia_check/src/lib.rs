@@ -4,12 +4,9 @@ pub mod generator;
 pub mod primitive;
 
 use self::any::Any;
+pub(crate) use entia_macro::recurse_16 as recurse;
 pub use generator::{size::Size, FullGenerator, Generator, IntoGenerator};
 use std::ops::{self, Neg};
-
-pub fn clone<T: Clone>(value: T) -> impl Generator<Item = T> {
-    ().map(move |_| value.clone())
-}
 
 pub fn default<T: Default>() -> impl Generator<Item = T> {
     ().map(|_| T::default())

@@ -26,18 +26,18 @@ enum Defer {
 impl Destroy<'_> {
     #[inline]
     pub fn one(&mut self, entity: impl Into<Entity>) {
-        self.0.defer(Defer::One(entity.into()));
+        self.0.one(Defer::One(entity.into()));
     }
 
-    pub fn all<I: Iterator<Item = impl Into<Entity>>>(&mut self, entities: I) {
-        for entity in entities {
-            self.one(entity);
-        }
+    #[inline]
+    pub fn all(&mut self, entities: impl IntoIterator<Item = impl Into<Entity>>) {
+        self.0
+            .all(entities.into_iter().map(Into::into).map(Defer::One))
     }
 
     #[inline]
     pub fn family(&mut self, entity: impl Into<Entity>) {
-        self.0.defer(Defer::Family(entity.into()));
+        self.0.one(Defer::Family(entity.into()));
     }
 }
 

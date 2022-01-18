@@ -14,6 +14,15 @@ fn main() {
     struct Target(Entity);
     #[derive(Default, Clone)]
     struct OnKill;
+    #[derive(Default, Clone)]
+    struct OnDeath(Entity);
+    struct Dead;
+
+    impl Into<Entity> for OnDeath {
+        fn into(self) -> Entity {
+            self.0
+        }
+    }
 
     let create = || {
         let mut counter = 0;
@@ -107,10 +116,17 @@ fn main() {
                     .flat_map(|family| family.children())
                     .filter_map(|child| children.get(child))
                 {}
-                println!("C: {:?}", roots.len())
+                // println!("C: {:?}", roots.len())
             },
         )
         .add(|query: Query<Entity>, mut destroy: Destroy| query.each(|entity| destroy.one(entity)))
+        .add(|mut receive: Receive<OnDeath>, mut destroy: Destroy| destroy.all(&mut receive))
+        .add(|mut query: Query<Entity, Has<Dead>>, mut destroy: Destroy| destroy.all(&mut query))
+        .add(
+            |mut receive: Receive<OnDeath>| {
+                if let Some(_message) = receive.next() {}
+            },
+        )
         .schedule()
         .unwrap();
 

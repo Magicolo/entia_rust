@@ -67,7 +67,8 @@ impl Item for Entity {
 
 impl<'a> At<'a> for State {
     type State = *const Entity;
-    type Item = Entity;
+    type Ref = Entity;
+    type Mut = Self::Ref;
 
     #[inline]
     fn get(&'a self, _: &'a World) -> Self::State {
@@ -75,8 +76,13 @@ impl<'a> At<'a> for State {
     }
 
     #[inline]
-    fn at(state: &Self::State, index: usize) -> Self::Item {
+    fn at(state: &Self::State, index: usize) -> Self::Ref {
         unsafe { *state.add(index) }
+    }
+
+    #[inline]
+    fn at_mut(state: &mut Self::State, index: usize) -> Self::Mut {
+        Self::at(state, index)
     }
 }
 

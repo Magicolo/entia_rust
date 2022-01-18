@@ -6,6 +6,7 @@ use crate::{
     error::Result,
     inject::{self, Get, Inject},
     read::Read,
+    recurse,
     world::{segment::Segment, World},
     write::Write,
 };
@@ -27,14 +28,6 @@ pub struct State<I: Item, F> {
     pub(crate) entities: Read<Entities>,
 }
 
-pub struct Iterator<'a, 'b, I: Item, F> {
-    index: usize,
-    count: usize,
-    segment: usize,
-    state: Option<<I::State as At<'a>>::State>,
-    query: &'b Query<'a, I, F>,
-}
-
 pub struct Inner<S, F> {
     pub(crate) segments: Vec<Option<usize>>,
     pub(crate) states: Vec<(S, usize)>,
@@ -51,88 +44,9 @@ impl<S, F> Default for Inner<S, F> {
     }
 }
 
-impl<'a, I: Item, F> Query<'a, I, F> {
-    pub fn len(&self) -> usize {
-        self.inner
-            .states
-            .iter()
-            .map(|&(_, segment)| self.world.segments[segment].count())
-            .sum()
-    }
-
-    pub fn each(&'a self, mut each: impl FnMut(<I::State as At<'a>>::Item)) {
-        for (state, segment) in &self.inner.states {
-            let segment = &self.world.segments[*segment];
-            let state = state.get(self.world);
-            for i in 0..segment.count() {
-                each(I::State::at(&state, i));
-            }
-        }
-    }
-
-    pub fn get(&self, entity: impl Into<Entity>) -> Option<<I::State as At<'_>>::Item> {
-        let datum = self.entities.get_datum(entity.into())?;
-        let index = self.inner.segments[datum.segment_index as usize]?;
-        let (state, _) = &self.inner.states[index];
-        let state = state.get(self.world);
-        Some(<I::State as At<'_>>::at(&state, datum.store_index as usize))
-    }
-}
-
-impl<'a, 'b: 'a, I: Item, F> IntoIterator for &'b Query<'a, I, F> {
-    type Item = <I::State as At<'a>>::Item;
-    type IntoIter = Iterator<'a, 'b, I, F>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        Iterator {
-            index: 0,
-            count: 0,
-            state: None,
-            segment: 0,
-            query: self,
-        }
-    }
-}
-
-impl<'a, 'b: 'a, I: Item, F> iter::Iterator for Iterator<'a, 'b, I, F> {
-    type Item = <I::State as At<'a>>::Item;
-
-    #[inline]
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.index < self.count {
-            if let Some(state) = &self.state {
-                let item = I::State::at(state, self.index);
-                self.index += 1;
-                return Some(item);
-            }
-        }
-
-        while let Some((state, segment)) = self.query.inner.states.get(self.segment) {
-            let segment = &self.query.world.segments[*segment];
-            self.segment += 1;
-            match segment.count() {
-                0 => continue,
-                1 => {
-                    let state = state.get(self.query.world);
-                    return Some(I::State::at(&state, 0));
-                }
-                count => {
-                    let state = state.get(self.query.world);
-                    let item = I::State::at(&state, 0);
-                    self.index = 1;
-                    self.state = Some(state);
-                    self.count = count;
-                    return Some(item);
-                }
-            }
-        }
-
-        None
-    }
-}
 impl<I: Item, F> fmt::Debug for Query<'_, I, F>
 where
-    for<'a> <I::State as At<'a>>::Item: fmt::Debug,
+    for<'a> <I::State as At<'a>>::Ref: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(type_name::<Self>())?;
@@ -203,6 +117,96 @@ where
     }
 }
 
+macro_rules! iterator {
+    ($t:ident, $at:ident, $iter:ident, $each:ident, $get:ident, $item:ident, [$($mut:tt)?]) => {
+        impl<'a, I: Item, F> Query<'a, I, F> {
+            #[inline]
+            pub fn $iter<'b>(&'b $($mut)? self) -> $t<'a, 'b, I, F> where 'a: 'b {
+                self.into_iter()
+            }
+
+            pub fn $each(& $($mut)? self, mut each: impl FnMut(<I::State as At<'a>>::$item)) {
+                for (state, segment) in &self.inner.states {
+                    let segment = &self.world.segments[*segment];
+                    let $($mut)? state = state.get(self.world);
+                    for i in 0..segment.count() {
+                        each(I::State::$at(& $($mut)? state, i));
+                    }
+                }
+            }
+
+            pub fn $get(& $($mut)? self, entity: impl Into<Entity>) -> Option<<I::State as At<'a>>::$item> {
+                let datum = self.entities.get_datum(entity.into())?;
+                let index = self.inner.segments[datum.segment_index as usize]?;
+                let (state, _) = &self.inner.states[index];
+                let $($mut)? state = state.get(self.world);
+                Some(<I::State as At<'_>>::$at(& $($mut)? state, datum.store_index as usize))
+            }
+        }
+
+        pub struct $t<'a, 'b, I: Item, F> {
+            index: usize,
+            count: usize,
+            segment: usize,
+            state: Option<<I::State as At<'a>>::State>,
+            query: &'b $($mut)? Query<'a, I, F>,
+        }
+
+        impl<'a: 'b, 'b, I: Item, F> IntoIterator for &'b $($mut)? Query<'a, I, F> {
+            type Item = <I::State as At<'a>>::$item;
+            type IntoIter = $t<'a, 'b, I, F>;
+
+            fn into_iter(self) -> Self::IntoIter {
+                $t {
+                    index: 0,
+                    count: 0,
+                    state: None,
+                    segment: 0,
+                    query: self,
+                }
+            }
+        }
+
+        impl<'a: 'b, 'b, I: Item, F> iter::Iterator for $t<'a, 'b, I, F> {
+            type Item = <I::State as At<'a>>::$item;
+
+            fn next(&mut self) -> Option<Self::Item> {
+                if self.index < self.count {
+                    if let Some(state) = & $($mut)? self.state {
+                        let item = I::State::$at(state, self.index);
+                        self.index += 1;
+                        return Some(item);
+                    }
+                }
+
+                while let Some((state, segment)) = self.query.inner.states.get(self.segment) {
+                    let segment = &self.query.world.segments[*segment];
+                    self.segment += 1;
+                    match segment.count() {
+                        0 => continue,
+                        1 => {
+                            let $($mut)? state = state.get(self.query.world);
+                            return Some(I::State::$at(& $($mut)? state, 0));
+                        }
+                        count => {
+                            let $($mut)? state = state.get(self.query.world);
+                            let item = I::State::$at(& $($mut)? state, 0);
+                            self.index = 1;
+                            self.state = Some(state);
+                            self.count = count;
+                            return Some(item);
+                        }
+                    }
+                }
+
+                None
+            }
+        }
+    };
+}
+iterator!(RefIterator, at, iter, each, get, Ref, []);
+iterator!(MutIterator, at_mut, iter_mut, each_mut, get_mut, Mut, [mut]);
+
 pub mod item {
     use super::*;
 
@@ -219,9 +223,11 @@ pub mod item {
 
     pub trait At<'a> {
         type State;
-        type Item;
+        type Ref;
+        type Mut;
         fn get(&'a self, world: &'a World) -> Self::State;
-        fn at(state: &Self::State, index: usize) -> Self::Item;
+        fn at(state: &Self::State, index: usize) -> Self::Ref;
+        fn at_mut(state: &mut Self::State, index: usize) -> Self::Mut;
     }
 
     impl<'a> Context<'a> {
@@ -270,7 +276,8 @@ pub mod item {
 
     impl<'a, A: At<'a>> At<'a> for Option<A> {
         type State = Option<A::State>;
-        type Item = Option<A::Item>;
+        type Ref = Option<A::Ref>;
+        type Mut = Option<A::Mut>;
 
         #[inline]
         fn get(&'a self, world: &'a World) -> Self::State {
@@ -278,8 +285,13 @@ pub mod item {
         }
 
         #[inline]
-        fn at(state: &Self::State, index: usize) -> Self::Item {
+        fn at(state: &Self::State, index: usize) -> Self::Ref {
             Some(A::at(state.as_ref()?, index))
+        }
+
+        #[inline]
+        fn at_mut(state: &mut Self::State, index: usize) -> Self::Mut {
+            Some(A::at_mut(state.as_mut()?, index))
         }
     }
 
@@ -292,7 +304,8 @@ pub mod item {
 
     impl<'a, T> At<'a> for PhantomData<T> {
         type State = <() as At<'a>>::State;
-        type Item = <() as At<'a>>::Item;
+        type Ref = <() as At<'a>>::Ref;
+        type Mut = <() as At<'a>>::Mut;
 
         #[inline]
         fn get(&'a self, world: &'a World) -> Self::State {
@@ -300,8 +313,13 @@ pub mod item {
         }
 
         #[inline]
-        fn at(state: &Self::State, index: usize) -> Self::Item {
+        fn at(state: &Self::State, index: usize) -> Self::Ref {
             <()>::at(state, index)
+        }
+
+        #[inline]
+        fn at_mut(state: &mut Self::State, index: usize) -> Self::Mut {
+            <()>::at_mut(state, index)
         }
     }
 
@@ -317,7 +335,8 @@ pub mod item {
 
             impl<'a, $($t: At<'a>,)*> At<'a> for ($($t,)*) {
                 type State = ($($t::State,)*);
-                type Item = ($($t::Item,)*);
+                type Ref = ($($t::Ref,)*);
+                type Mut = ($($t::Mut,)*);
 
                 #[inline]
                 fn get(&'a self, _world: &'a World) -> Self::State {
@@ -326,15 +345,21 @@ pub mod item {
                 }
 
                 #[inline]
-                fn at(_state: &Self::State, _index: usize) -> Self::Item {
+                fn at(_state: &Self::State, _index: usize) -> Self::Ref {
                     let ($($p,)*) = _state;
                     ($($t::at($p, _index),)*)
+                }
+
+                #[inline]
+                fn at_mut(_state: &mut Self::State, _index: usize) -> Self::Mut {
+                    let ($($p,)*) = _state;
+                    ($($t::at_mut($p, _index),)*)
                 }
             }
         };
     }
 
-    entia_macro::recurse_16!(item);
+    recurse!(item);
 }
 
 pub mod filter {
@@ -381,5 +406,5 @@ pub mod filter {
         };
     }
 
-    entia_macro::recurse_16!(filter);
+    recurse!(filter);
 }

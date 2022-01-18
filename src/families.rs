@@ -76,27 +76,27 @@ pub mod adopt {
     impl Adopt<'_> {
         #[inline]
         pub fn at(&mut self, parent: impl Into<Entity>, child: impl Into<Entity>, index: usize) {
-            self.0.defer(Defer::At(parent.into(), child.into(), index));
+            self.0.one(Defer::At(parent.into(), child.into(), index));
         }
 
         #[inline]
         pub fn first(&mut self, parent: impl Into<Entity>, child: impl Into<Entity>) {
-            self.0.defer(Defer::First(parent.into(), child.into()));
+            self.0.one(Defer::First(parent.into(), child.into()));
         }
 
         #[inline]
         pub fn last(&mut self, parent: impl Into<Entity>, child: impl Into<Entity>) {
-            self.0.defer(Defer::Last(parent.into(), child.into()));
+            self.0.one(Defer::Last(parent.into(), child.into()));
         }
 
         #[inline]
         pub fn before(&mut self, sibling: impl Into<Entity>, child: impl Into<Entity>) {
-            self.0.defer(Defer::Before(sibling.into(), child.into()));
+            self.0.one(Defer::Before(sibling.into(), child.into()));
         }
 
         #[inline]
         pub fn after(&mut self, sibling: impl Into<Entity>, child: impl Into<Entity>) {
-            self.0.defer(Defer::After(sibling.into(), child.into()));
+            self.0.one(Defer::After(sibling.into(), child.into()));
         }
     }
 
@@ -164,27 +164,27 @@ pub mod reject {
     impl Reject<'_> {
         #[inline]
         pub fn one(&mut self, child: impl Into<Entity>) {
-            self.0.defer(Defer::One(child.into()));
+            self.0.one(Defer::One(child.into()));
         }
 
         #[inline]
         pub fn first(&mut self, parent: impl Into<Entity>) {
-            self.0.defer(Defer::First(parent.into()));
+            self.0.one(Defer::First(parent.into()));
         }
 
         #[inline]
         pub fn last(&mut self, parent: impl Into<Entity>) {
-            self.0.defer(Defer::Last(parent.into()));
+            self.0.one(Defer::Last(parent.into()));
         }
 
         #[inline]
         pub fn at(&mut self, parent: impl Into<Entity>, index: usize) {
-            self.0.defer(Defer::At(parent.into(), index));
+            self.0.one(Defer::At(parent.into(), index));
         }
 
         #[inline]
         pub fn all(&mut self, parent: impl Into<Entity>) {
-            self.0.defer(Defer::All(parent.into()));
+            self.0.one(Defer::All(parent.into()));
         }
     }
 

@@ -1,22 +1,29 @@
-use std::convert::TryInto;
-use std::iter::{self, FromIterator};
-use std::mem::size_of;
-use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not};
-use std::{cmp::min, hash::Hash};
+use std::{
+    cmp::min,
+    convert::TryInto,
+    hash::Hash,
+    iter::{self, FromIterator},
+    mem::size_of,
+    ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not},
+};
+
+pub type Bucket = u128;
 
 #[derive(Default, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Bits {
-    buckets: Vec<u128>,
+    buckets: Vec<Bucket>,
 }
 
 pub struct Iterator<'a> {
-    index: usize,
+    bucket: usize,
     shift: usize,
     bits: &'a Bits,
 }
 
 impl Bits {
-    const SIZE: usize = size_of::<u128>() * 8;
+    pub const EMPTY: Self = Self::new();
+
+    const SIZE: usize = size_of::<Bucket>() * 8;
 
     #[inline]
     pub const fn new() -> Self {
@@ -31,9 +38,9 @@ impl Bits {
     }
 
     pub fn has(&self, index: usize) -> bool {
-        if index < self.capacity() {
+        if let Some(&bucket) = self.buckets.get(index / Self::SIZE) {
             let bit = 1 << (index % Self::SIZE);
-            (self.buckets[index / Self::SIZE] & bit) == bit
+            (bucket & bit) == bit
         } else {
             false
         }
@@ -55,16 +62,32 @@ impl Bits {
             .any(|(&left, &right)| left & right > 0)
     }
 
-    pub fn set(&mut self, index: usize, value: bool) {
+    #[inline]
+    pub fn set(&mut self, index: usize, value: bool) -> bool {
         if value {
             self.ensure(index + 1);
+            let bucket = &mut self.buckets[index / Self::SIZE];
             let bit = 1 << (index % Self::SIZE);
-            self.buckets[index / Self::SIZE] |= bit;
+            let previous = *bucket;
+            let current = previous | bit;
+            *bucket = current;
+            previous != current
         } else if index < self.capacity() {
+            let bucket = &mut self.buckets[index / Self::SIZE];
             let bit = 1 << (index % Self::SIZE);
-            self.buckets[index / Self::SIZE] &= !bit;
+            let previous = *bucket;
+            let current = previous & !bit;
+            *bucket = current;
             self.shrink();
+            previous != current
+        } else {
+            false
         }
+    }
+
+    pub fn copy(&mut self, bits: &Self) {
+        self.buckets.resize(bits.buckets.len(), 0);
+        self.buckets.copy_from_slice(&bits.buckets);
     }
 
     pub fn not(&mut self) {
@@ -73,12 +96,12 @@ impl Bits {
     }
 
     pub fn or(&mut self, bits: &Bits) {
-        // No need to shrink since an 'or' operation cannot make add more '0' bits to a bucket.
+        // No need to shrink since an 'or' operation cannot add more '0' bits to a bucket.
         self.binary(bits, true, false, |left, right| left | right);
     }
 
     pub fn or_not(&mut self, bits: &Bits) {
-        // No need to shrink since an 'or' operation cannot make add more '0' bits to a bucket.
+        // No need to shrink since an 'or' operation cannot add more '0' bits to a bucket.
         self.binary(bits, true, false, |left, right| left | !right);
     }
 
@@ -98,22 +121,28 @@ impl Bits {
         self.binary(bits, true, true, |left, right| left ^ !right);
     }
 
+    #[inline]
     fn ensure(&mut self, capacity: usize) {
         while self.capacity() < capacity {
             self.buckets.push(0);
         }
     }
 
+    #[inline]
     fn shrink(&mut self) {
-        while let Some(value) = self.buckets.pop() {
-            if value > 0 {
-                self.buckets.push(value);
-                break;
-            }
+        while let Some(&0) = self.buckets.last() {
+            self.buckets.pop();
         }
     }
 
-    fn binary(&mut self, bits: &Bits, ensure: bool, shrink: bool, merge: fn(u128, u128) -> u128) {
+    #[inline]
+    fn binary(
+        &mut self,
+        bits: &Bits,
+        ensure: bool,
+        shrink: bool,
+        mut merge: impl FnMut(Bucket, Bucket) -> Bucket,
+    ) {
         let count = if ensure {
             self.ensure(bits.capacity());
             self.buckets.len()
@@ -135,9 +164,10 @@ impl<'a> IntoIterator for &'a Bits {
     type Item = usize;
     type IntoIter = Iterator<'a>;
 
+    #[inline]
     fn into_iter(self) -> Self::IntoIter {
         Iterator {
-            index: 0,
+            bucket: 0,
             shift: 0,
             bits: self,
         }
@@ -148,22 +178,32 @@ impl iter::Iterator for Iterator<'_> {
     type Item = usize;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(&value) = self.bits.buckets.get(self.index) {
-            if value > 0 {
+        while let Some(&bucket) = self.bits.buckets.get(self.bucket) {
+            if bucket > 0 {
                 while self.shift < Bits::SIZE {
                     let shift = self.shift;
                     let bit = 1 << shift;
+                    if bit > bucket {
+                        // Early break since the upper bits of the bucket are all zeroes.
+                        break;
+                    }
+
                     self.shift += 1;
-                    if (value & bit) == bit {
-                        return Some(self.index * Bits::SIZE + shift);
+                    if (bucket & bit) == bit {
+                        return Some(self.bucket * Bits::SIZE + shift);
                     }
                 }
             }
 
-            self.index += 1;
+            self.bucket += 1;
             self.shift = 0;
         }
         None
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let upper = self.bits.capacity() - self.bucket * Bits::SIZE - self.shift;
+        (0, Some(upper))
     }
 }
 

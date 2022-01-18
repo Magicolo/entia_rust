@@ -3,6 +3,7 @@ use crate::{
     depend::{Conflict, Depend, Dependency, Scope},
     error::{Error, Result},
     inject::{Context, Get, Inject},
+    recurse,
     world::World,
 };
 use entia_core::{utility::short_type_name, Call};
@@ -450,5 +451,5 @@ pub mod output {
         };
     }
 
-    entia_macro::recurse_16!(output);
+    recurse!(output);
 }

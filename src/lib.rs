@@ -43,6 +43,7 @@ pub use crate::{
     world::World,
 };
 pub use entia_derive::{Depend, Filter, Inject, Template};
+pub(crate) use entia_macro::recurse_16 as recurse;
 
 #[cfg(test)]
 mod tests;
