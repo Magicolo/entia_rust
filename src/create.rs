@@ -86,14 +86,9 @@ impl<T: Template> Create<'_, T> {
             entities,
             world,
         } = self;
-
-        inner.initial_roots.clear();
+        // 'apply_or_defer' is responsible for clearing 'initial_roots'.
         for template in templates {
             inner.initial_roots.push(Spawn::new(template));
-        }
-
-        if inner.initial_roots.len() == 0 {
-            return Families::EMPTY;
         }
 
         inner.entity_roots.truncate(inner.initial_roots.len());
@@ -101,22 +96,7 @@ impl<T: Template> Create<'_, T> {
             inner.entity_roots.push((inner.entity_roots.len(), 0));
         }
 
-        let (index, success) = inner.reserve(count * inner.initial_roots.len(), entities, world);
-        if success {
-            apply(
-                &inner.initial_state,
-                inner.initial_roots.drain(..),
-                &inner.entity_roots,
-                &inner.entity_instances,
-                &inner.entity_indices,
-                entities,
-                &inner.segment_indices,
-            );
-        } else {
-            defer.one(inner.defer(index));
-        }
-
-        inner.families()
+        inner.apply_or_defer(count * inner.initial_roots.len(), defer, entities, world)
     }
 
     fn all_dynamic(&mut self, templates: impl IntoIterator<Item = T>) -> Families {
@@ -151,31 +131,52 @@ impl<T: Template> Create<'_, T> {
             inner.initial_roots.push(root);
         }
 
-        let count = inner.entity_indices.len();
-        if count == 0 {
-            return Families::EMPTY;
-        }
-
-        let (index, success) = inner.reserve(count, entities, world);
-        if success {
-            apply(
-                &inner.initial_state,
-                inner.initial_roots.drain(..),
-                &inner.entity_roots,
-                &inner.entity_instances,
-                &inner.entity_indices,
-                entities,
-                &inner.segment_indices,
-            );
-        } else {
-            defer.one(inner.defer(index));
-        }
-
-        inner.families()
+        inner.apply_or_defer(inner.entity_indices.len(), defer, entities, world)
     }
 }
 
 impl<T: Template> Inner<T> {
+    fn apply_or_defer(
+        &mut self,
+        count: usize,
+        defer: &mut defer::Defer<Outer<T>>,
+        entities: &mut Entities,
+        world: &World,
+    ) -> Families {
+        if count == 0 {
+            return Families::EMPTY;
+        }
+
+        let (index, success) = self.reserve(count, entities, world);
+        if success {
+            apply(
+                &self.initial_state,
+                self.initial_roots.drain(..),
+                &self.entity_roots,
+                &self.entity_instances,
+                &self.entity_indices,
+                entities,
+                &self.segment_indices,
+            );
+        } else {
+            defer.one(Defer {
+                index,
+                initial_roots: self.initial_roots.drain(..).collect(),
+                entity_roots: self.entity_roots.clone(),
+                entity_instances: self.entity_instances.clone(),
+                entity_indices: self.entity_indices.clone(),
+                segment_indices: self.segment_indices.clone(),
+            });
+        }
+
+        Families::new(
+            &self.entity_roots,
+            &self.entity_instances,
+            &self.entity_indices,
+            &self.segment_indices,
+        )
+    }
+
     fn reserve(&mut self, count: usize, entities: &Entities, world: &World) -> (usize, bool) {
         self.entity_instances.resize(count, Entity::NULL);
         let ready = entities.reserve(&mut self.entity_instances);
@@ -207,26 +208,6 @@ impl<T: Template> Inner<T> {
         }
 
         (last, success && ready == count)
-    }
-
-    fn families(&self) -> Families {
-        Families::new(
-            &self.entity_roots,
-            &self.entity_instances,
-            &self.entity_indices,
-            &self.segment_indices,
-        )
-    }
-
-    fn defer(&mut self, index: usize) -> Defer<T> {
-        Defer {
-            index,
-            initial_roots: self.initial_roots.drain(..).collect(),
-            entity_roots: self.entity_roots.clone(),
-            entity_instances: self.entity_instances.clone(),
-            entity_indices: self.entity_indices.clone(),
-            segment_indices: self.segment_indices.clone(),
-        }
     }
 }
 
@@ -357,14 +338,14 @@ impl<T: Template> Resolve for Outer<T> {
 
 fn apply<T: Template>(
     initial_state: &<Spawn<T> as Template>::State,
-    initial_roots: impl Iterator<Item = Spawn<T>>,
+    initial_roots: impl IntoIterator<Item = Spawn<T>>,
     entity_roots: &[(usize, usize)],
     entity_instances: &[Entity],
     entity_indices: &[EntityIndices],
     entities: &mut Entities,
     segment_indices: &[SegmentIndices],
 ) {
-    for (i, root) in initial_roots.enumerate() {
+    for (i, root) in initial_roots.into_iter().enumerate() {
         let (entity_root, mut entity_count) = entity_roots[i];
         root.apply(
             initial_state,

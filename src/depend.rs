@@ -6,6 +6,25 @@ use std::{
     marker::PhantomData,
 };
 
+/*
+TODO: There should be a way to opt out of dependency checking.
+    - Every system or system group should be allowed to change its dependency behavior.
+    - Dependency rules fall into 3 categories: Inner, Outer, Coherence.
+    - Inner rules are local to a system and ensure that no undefined behavior occurs. These are always active.
+    - Outer rules ensure that there is no undefined behavior between parallel systems. Since there are scenarios where the
+    user can ensure safety, these rules can be disabled although not recommended.
+    - Coherence rules maintain all 'happens before' relationships. Since a user may know better than these heuristics, these rules
+    can be disabled without any risk of undefined behavior.
+        Example of coherence:
+        - Let system A have a 'Create<Entity>' and let system B have a 'Query<Entity>'
+        - While they could run in parallel since 'Create' has been made safe, the query will never see newly created entities
+        because they are only 'commited' to the segment at 'resolve' time.
+        - The coherence rules would impose a synchronization point between the 2 systems such that system B always observes
+        system A's created entities. Such ordering would respect the declaration order of the systems.
+        - Note that if system B and system A swapped their declaration order, there would not be any coherence issue; the query
+        would simply never observe the created entities.
+*/
+
 /// SAFETY: This trait is unsafe since a wrong implementation may lead to undefined behavior. Every
 /// implementor must declare all necessary dependencies in order to properly inform a scheduler of what it
 /// it allowed to do.
@@ -28,6 +47,21 @@ pub enum Dependency {
     Defer(TypeId, String),
     At(usize, Box<Dependency>),
     Ignore(Scope, Box<Dependency>),
+}
+
+#[derive(Debug)]
+pub enum Has {
+    All,
+    None,
+    Indices(HashSet<usize>),
+}
+
+#[derive(Debug, Default)]
+pub struct Conflict {
+    unknown: bool,
+    reads: HashMap<TypeId, Has>,
+    writes: HashMap<TypeId, Has>,
+    defers: HashMap<TypeId, Has>,
 }
 
 #[derive(Debug)]
@@ -97,21 +131,6 @@ macro_rules! depend {
 }
 
 recurse!(depend);
-
-#[derive(Debug)]
-pub enum Has {
-    All,
-    None,
-    Indices(HashSet<usize>),
-}
-
-#[derive(Debug, Default)]
-pub struct Conflict {
-    unknown: bool,
-    reads: HashMap<TypeId, Has>,
-    writes: HashMap<TypeId, Has>,
-    defers: HashMap<TypeId, Has>,
-}
 
 impl Has {
     pub fn add(&mut self, index: usize) -> bool {
@@ -195,7 +214,6 @@ impl Conflict {
                     Ok(())
                 }
             }
-
             (Some(index), Write(identifier, name)) => {
                 if has(&self.reads, identifier, index) {
                     Err(ReadWriteConflict(scope, name, Some(index)))

@@ -6,15 +6,26 @@ pub mod depend;
 
 #[derive(Default)]
 pub struct Time(f64);
+impl Resource for Time {}
+
 #[derive(Default)]
 pub struct Physics;
+impl Resource for Physics {}
+
 pub struct Frozen;
+impl Component for Frozen {}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Position(f64, f64, f64);
+impl Component for Position {}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Velocity(f64, f64, f64);
+impl Component for Velocity {}
+
 #[derive(Clone)]
 pub struct OnKill(Entity);
+impl Message for OnKill {}
 
 fn world() -> World {
     let mut world = World::new();

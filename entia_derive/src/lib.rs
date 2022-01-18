@@ -10,6 +10,48 @@ use syn::{
 };
 use syn::{parse_macro_input, Data, DataStruct};
 
+#[proc_macro_derive(Resource)]
+pub fn resource(input: TokenStream) -> TokenStream {
+    let DeriveInput {
+        ident, generics, ..
+    } = parse_macro_input!(input as DeriveInput);
+    let resource_path = full_path(ident.span(), vec!["entia", "world", "Resource"]);
+    let (impl_generics, type_generics, where_clauses) = generics.split_for_impl();
+    let code = quote! {
+        #[automatically_derived]
+        impl #impl_generics #resource_path for #ident #type_generics #where_clauses {}
+    };
+    code.into()
+}
+
+#[proc_macro_derive(Component)]
+pub fn component(input: TokenStream) -> TokenStream {
+    let DeriveInput {
+        ident, generics, ..
+    } = parse_macro_input!(input as DeriveInput);
+    let component_path = full_path(ident.span(), vec!["entia", "world", "Component"]);
+    let (impl_generics, type_generics, where_clauses) = generics.split_for_impl();
+    let code = quote! {
+        #[automatically_derived]
+        impl #impl_generics #component_path for #ident #type_generics #where_clauses {}
+    };
+    code.into()
+}
+
+#[proc_macro_derive(Message)]
+pub fn message(input: TokenStream) -> TokenStream {
+    let DeriveInput {
+        ident, generics, ..
+    } = parse_macro_input!(input as DeriveInput);
+    let message_path = full_path(ident.span(), vec!["entia", "message", "Message"]);
+    let (impl_generics, type_generics, where_clauses) = generics.split_for_impl();
+    let code = quote! {
+        #[automatically_derived]
+        impl #impl_generics #message_path for #ident #type_generics #where_clauses {}
+    };
+    code.into()
+}
+
 /*
 TODO: Inject structs don't seem to work very well since their lifetime seem to conflict.
     - "mismatched types; expected trait `Get<'a>`; found trait `Get<'_>`"

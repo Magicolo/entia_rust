@@ -62,6 +62,10 @@ impl Bits {
             .any(|(&left, &right)| left & right > 0)
     }
 
+    pub fn has_none(&self, bits: &Bits) -> bool {
+        !self.has_any(bits)
+    }
+
     #[inline]
     pub fn set(&mut self, index: usize, value: bool) -> bool {
         if value {

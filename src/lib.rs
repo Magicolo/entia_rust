@@ -33,16 +33,16 @@ pub use crate::{
     family::Family,
     ignore::Ignore,
     inject::{Inject, Injector},
-    message::{emit::Emit, receive::Receive},
+    message::{emit::Emit, receive::Receive, Message},
     query::{
         filter::{Filter, Has, Not},
         Query,
     },
     system::{runner::Runner, schedule::Scheduler, IntoSystem, System},
     template::{Add, LeafTemplate, Spawn, SpawnTemplate, StaticTemplate, Template, With},
-    world::World,
+    world::{Component, Resource, World},
 };
-pub use entia_derive::{Depend, Filter, Inject, Template};
+pub use entia_derive::{Component, Depend, Filter, Inject, Message, Resource, Template};
 pub(crate) use entia_macro::recurse_16 as recurse;
 
 #[cfg(test)]

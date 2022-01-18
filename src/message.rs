@@ -7,6 +7,8 @@ use crate::{
 };
 use std::{collections::VecDeque, iter::FusedIterator};
 
+pub trait Message: Clone + Send + Sync + 'static {}
+
 struct Queue<T>(usize, VecDeque<T>);
 struct Inner<T> {
     pub queues: Vec<Queue<T>>,
@@ -25,7 +27,7 @@ impl<T> Queue<T> {
     }
 
     #[inline]
-    pub fn enqueue(&mut self, messages: impl Iterator<Item = T>) {
+    pub fn enqueue(&mut self, messages: impl IntoIterator<Item = T>) {
         self.1.extend(messages);
         self.truncate();
     }
@@ -35,6 +37,7 @@ impl<T> Queue<T> {
         self.1.pop_front()
     }
 
+    #[inline]
     fn truncate(&mut self) {
         if self.0 > 0 {
             while self.1.len() > self.0 {
@@ -47,12 +50,17 @@ impl<T> Queue<T> {
 pub mod emit {
     use super::*;
 
-    pub struct Emit<'a, T>(&'a mut Vec<T>);
+    pub struct Emit<'a, M>(&'a mut Vec<M>);
     pub struct State<T>(Write<Inner<T>>, Vec<T>);
 
     impl<T> Emit<'_, T> {
         #[inline]
-        pub fn emit(&mut self, message: impl Into<T>) {
+        pub fn all(&mut self, messages: impl IntoIterator<Item = T>) {
+            self.0.extend(messages);
+        }
+
+        #[inline]
+        pub fn one(&mut self, message: T) {
             self.0.push(message.into());
         }
 
@@ -62,9 +70,9 @@ pub mod emit {
         }
     }
 
-    impl<'a, T: Clone + Send + Sync + 'static> Inject for Emit<'a, T> {
+    impl<'a, M: Message> Inject for Emit<'a, M> {
         type Input = ();
-        type State = State<T>;
+        type State = State<M>;
 
         fn initialize(_: Self::Input, context: Context) -> Result<Self::State> {
             Ok(State(Write::initialize(None, context)?, Vec::new()))
@@ -72,10 +80,15 @@ pub mod emit {
 
         fn resolve(State(inner, messages): &mut Self::State, _: Context) -> Result {
             let inner = inner.as_mut();
-            for queue in inner.queues.iter_mut() {
-                queue.enqueue(messages.iter().cloned());
+            let mut iterator = inner.queues.iter_mut();
+            if let Some(first) = iterator.next() {
+                for queue in iterator {
+                    queue.enqueue(messages.iter().cloned());
+                }
+                first.enqueue(messages.drain(..));
+            } else {
+                messages.clear();
             }
-            messages.clear();
             Ok(())
         }
     }
@@ -114,12 +127,12 @@ pub mod receive {
         }
 
         #[inline]
-        pub fn next(&mut self) -> Option<T> {
+        pub fn first(&mut self) -> Option<T> {
             self.0.pop_front()
         }
 
         #[inline]
-        pub fn next_back(&mut self) -> Option<T> {
+        pub fn last(&mut self) -> Option<T> {
             self.0.pop_back()
         }
     }
@@ -129,7 +142,7 @@ pub mod receive {
 
         #[inline]
         fn next(&mut self) -> Option<Self::Item> {
-            Receive::next(self)
+            Receive::first(self)
         }
 
         #[inline]
@@ -142,7 +155,7 @@ pub mod receive {
     impl<T> DoubleEndedIterator for &mut Receive<'_, T> {
         #[inline]
         fn next_back(&mut self) -> Option<Self::Item> {
-            Receive::next_back(self)
+            Receive::last(self)
         }
     }
 
@@ -155,12 +168,12 @@ pub mod receive {
 
     impl<T> FusedIterator for &mut Receive<'_, T> {}
 
-    impl<T: Send + Sync + 'static> Inject for Receive<'_, T> {
+    impl<M: Message> Inject for Receive<'_, M> {
         type Input = usize;
-        type State = State<T>;
+        type State = State<M>;
 
         fn initialize(input: Self::Input, context: Context) -> Result<Self::State> {
-            let mut inner = Write::<Inner<T>>::initialize(None, context)?;
+            let mut inner = Write::<Inner<M>>::initialize(None, context)?;
             let index = {
                 let inner = inner.as_mut();
                 let index = inner.queues.len();

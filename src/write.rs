@@ -3,7 +3,7 @@ use crate::{
     error::Result,
     inject::{self, Get, Inject},
     query::item::{self, At, Item},
-    world::{store::Store, World},
+    world::{store::Store, Component, Resource, World},
 };
 use std::{marker::PhantomData, sync::Arc};
 
@@ -16,9 +16,9 @@ impl<T> Write<T> {
     }
 }
 
-impl<T: Default + Send + Sync + 'static> Inject for &mut T {
-    type Input = <Write<T> as Inject>::Input;
-    type State = <Write<T> as Inject>::State;
+impl<R: Resource> Inject for &mut R {
+    type Input = <Write<R> as Inject>::Input;
+    type State = <Write<R> as Inject>::State;
 
     fn initialize(input: Self::Input, context: inject::Context) -> Result<Self::State> {
         <Write<_> as Inject>::initialize(input, context)
@@ -46,11 +46,11 @@ impl<'a, T: 'static> Get<'a> for Write<T> {
     }
 }
 
-impl<T: Send + Sync + 'static> Item for &mut T {
-    type State = <Write<T> as Item>::State;
+impl<C: Component> Item for &mut C {
+    type State = <Write<C> as Item>::State;
 
     fn initialize(context: item::Context) -> Result<Self::State> {
-        Write::<T>::initialize(context)
+        Write::<C>::initialize(context)
     }
 }
 

@@ -44,6 +44,9 @@ pub struct World {
     pub(crate) resources: HashMap<TypeId, Arc<Store>>,
 }
 
+pub trait Component: Send + Sync + 'static {}
+pub trait Resource: Default + Send + Sync + 'static {}
+
 impl World {
     pub fn new() -> Self {
         let mut world = Self {
@@ -133,7 +136,7 @@ impl World {
         &mut self.segments[index]
     }
 
-    pub(crate) fn get_or_add_resource_store<T: Send + Sync + 'static>(
+    pub(crate) fn get_or_add_resource_store<T: Default + Send + Sync + 'static>(
         &mut self,
         default: impl FnOnce() -> T,
     ) -> Arc<Store> {
@@ -560,7 +563,7 @@ pub mod store {
 
     impl Store {
         #[inline]
-        pub(super) fn new(meta: Arc<Meta>, capacity: usize) -> Self {
+        pub(crate) fn new(meta: Arc<Meta>, capacity: usize) -> Self {
             let pointer = (meta.allocate)(capacity);
             Self(meta, pointer.into())
         }

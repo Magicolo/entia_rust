@@ -116,7 +116,7 @@ the deferred operations should have a 'Defer(Entity)' dependency on all segments
 //     pub query: Query<'a, &'a Position>,
 // }
 
-#[derive(Clone, Debug)]
+#[derive(Message, Clone, Debug)]
 enum Input {
     Left(bool),
     Right(bool),
@@ -124,19 +124,19 @@ enum Input {
     Up(bool),
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Component, Copy, Clone, Debug)]
 struct Position(isize, isize);
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Component, Copy, Clone, Debug)]
 struct Render {
     color: [f32; 4],
     visible: bool,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Component, Copy, Clone, Debug)]
 struct Controller;
 
-#[derive(Default, Clone, Debug)]
+#[derive(Resource, Default, Clone, Debug)]
 struct Time {
     pub frames: usize,
     pub total: Duration,
@@ -200,11 +200,11 @@ fn run() -> Result<(), Box<dyn error::Error>> {
                     ..
                 }),
                 _,
-            ) => inputs.run(&mut world, |mut inputs| match key {
-                Key::Left => inputs.emit(Input::Left(state == ButtonState::Press)),
-                Key::Right => inputs.emit(Input::Right(state == ButtonState::Press)),
-                Key::Down => inputs.emit(Input::Down(state == ButtonState::Press)),
-                Key::Up => inputs.emit(Input::Up(state == ButtonState::Press)),
+            ) => inputs.run(&mut world, |mut emit| match key {
+                Key::Left => emit.one(Input::Left(state == ButtonState::Press)),
+                Key::Right => emit.one(Input::Right(state == ButtonState::Press)),
+                Key::Down => emit.one(Input::Down(state == ButtonState::Press)),
+                Key::Up => emit.one(Input::Up(state == ButtonState::Press)),
                 _ => {}
             })?,
             Event::Loop(Loop::Update(UpdateArgs { dt })) => {
@@ -221,8 +221,8 @@ fn run() -> Result<(), Box<dyn error::Error>> {
 
                     let cell_size = [SIZE[0] / CELLS[0], SIZE[1] / CELLS[1]];
                     let square = rectangle::square(0., 0., cell_size[1]);
-                    render.run(&mut world, |render| {
-                        for (position, render) in &render {
+                    render.run(&mut world, |query| {
+                        for (position, render) in &query {
                             if render.visible {
                                 let x =
                                     position.0.rem_euclid(CELLS[0] as isize) as f64 * cell_size[0];

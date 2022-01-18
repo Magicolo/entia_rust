@@ -1,21 +1,23 @@
 use entia::*;
 
 fn main() {
-    #[derive(Default, Clone)]
+    #[derive(Resource, Default, Clone)]
     struct Time;
-    #[derive(Default, Clone)]
+    #[derive(Resource, Default, Clone)]
     struct Physics;
-    #[derive(Default, Clone)]
+    #[derive(Component, Default, Clone)]
     struct Position(Vec<usize>);
-    #[derive(Default, Clone)]
+    #[derive(Component, Default, Clone)]
     struct Velocity(Vec<usize>);
-    #[derive(Default, Clone)]
+    #[derive(Component, Default, Clone)]
     struct Frozen;
+    #[derive(Component)]
     struct Target(Entity);
-    #[derive(Default, Clone)]
+    #[derive(Message, Default, Clone)]
     struct OnKill;
-    #[derive(Default, Clone)]
+    #[derive(Message, Default, Clone)]
     struct OnDeath(Entity);
+    #[derive(Component)]
     struct Dead;
 
     impl Into<Entity> for OnDeath {
@@ -104,7 +106,7 @@ fn main() {
         .add(
             |roots: Query<Family, Has<Target>>,
              children: Query<&Position>,
-             _query: Query<&Entity>| {
+             _query: Query<Entity>| {
                 for family in &roots {
                     if let Some(_child) =
                         family.descend(|descendant| children.get(descendant), |_| None)
@@ -124,9 +126,10 @@ fn main() {
         .add(|mut query: Query<Entity, Has<Dead>>, mut destroy: Destroy| destroy.all(&mut query))
         .add(
             |mut receive: Receive<OnDeath>| {
-                if let Some(_message) = receive.next() {}
+                if let Some(_message) = receive.first() {}
             },
         )
+        .add(|mut emit: Emit<_>| emit.one(OnDeath(Entity::NULL)))
         .schedule()
         .unwrap();
 

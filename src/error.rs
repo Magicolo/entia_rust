@@ -89,6 +89,7 @@ macro_rules! error {
         $crate::error::error!($t);
 
         impl Into<$crate::error::Error> for $t {
+            #[inline]
             fn into(self) -> $crate::error::Error {
                 $e(self)
             }
