@@ -1,3 +1,4 @@
+use self::adapt::*;
 use crate::{recurse, serialize::*};
 use std::marker::PhantomData;
 
@@ -10,74 +11,27 @@ pub trait Serializer: Sized {
     type Enumeration: Enumeration<Value = Self::Value, Error = Self::Error>;
 
     fn unit(self) -> Result<Self::Value, Self::Error>;
-    #[inline]
-    fn bool(self, value: bool) -> Result<Self::Value, Self::Error> {
-        self.u8(value as _)
-    }
-    #[inline]
-    fn char(self, value: char) -> Result<Self::Value, Self::Error> {
-        self.u32(value as _)
-    }
-    #[inline]
-    fn u8(self, value: u8) -> Result<Self::Value, Self::Error> {
-        self.u16(value as _)
-    }
-    #[inline]
-    fn u16(self, value: u16) -> Result<Self::Value, Self::Error> {
-        self.u32(value as _)
-    }
-    #[inline]
-    fn u32(self, value: u32) -> Result<Self::Value, Self::Error> {
-        self.u64(value as _)
-    }
-    #[inline]
-    fn u64(self, value: u64) -> Result<Self::Value, Self::Error> {
-        self.u128(value as _)
-    }
-    #[inline]
-    fn usize(self, value: usize) -> Result<Self::Value, Self::Error> {
-        self.u128(value as _)
-    }
+    fn bool(self, value: bool) -> Result<Self::Value, Self::Error>;
+    fn char(self, value: char) -> Result<Self::Value, Self::Error>;
+    fn u8(self, value: u8) -> Result<Self::Value, Self::Error>;
+    fn u16(self, value: u16) -> Result<Self::Value, Self::Error>;
+    fn u32(self, value: u32) -> Result<Self::Value, Self::Error>;
+    fn u64(self, value: u64) -> Result<Self::Value, Self::Error>;
+    fn usize(self, value: usize) -> Result<Self::Value, Self::Error>;
     fn u128(self, value: u128) -> Result<Self::Value, Self::Error>;
-
-    #[inline]
-    fn i8(self, value: i8) -> Result<Self::Value, Self::Error> {
-        self.i16(value as _)
-    }
-    #[inline]
-    fn i16(self, value: i16) -> Result<Self::Value, Self::Error> {
-        self.i32(value as _)
-    }
-    #[inline]
-    fn i32(self, value: i32) -> Result<Self::Value, Self::Error> {
-        self.i64(value as _)
-    }
-    #[inline]
-    fn i64(self, value: i64) -> Result<Self::Value, Self::Error> {
-        self.i128(value as _)
-    }
-    #[inline]
-    fn isize(self, value: isize) -> Result<Self::Value, Self::Error> {
-        self.i128(value as _)
-    }
+    fn i8(self, value: i8) -> Result<Self::Value, Self::Error>;
+    fn i16(self, value: i16) -> Result<Self::Value, Self::Error>;
+    fn i32(self, value: i32) -> Result<Self::Value, Self::Error>;
+    fn i64(self, value: i64) -> Result<Self::Value, Self::Error>;
+    fn isize(self, value: isize) -> Result<Self::Value, Self::Error>;
     fn i128(self, value: i128) -> Result<Self::Value, Self::Error>;
-    #[inline]
-    fn f32(self, value: f32) -> Result<Self::Value, Self::Error> {
-        self.f64(value as _)
-    }
+    fn f32(self, value: f32) -> Result<Self::Value, Self::Error>;
     fn f64(self, value: f64) -> Result<Self::Value, Self::Error>;
 
     fn shared<T: ?Sized>(self, value: &T) -> Result<Self::Value, Self::Error>;
-    #[inline]
-    fn exclusive<T: ?Sized>(self, value: &mut T) -> Result<Self::Value, Self::Error> {
-        self.shared(value)
-    }
-
+    fn exclusive<T: ?Sized>(self, value: &mut T) -> Result<Self::Value, Self::Error>;
     fn constant<T: ?Sized>(self, value: *const T) -> Result<Self::Value, Self::Error>;
-    #[inline]
-    fn mutable<T: ?Sized>(self, value: *mut T) -> Result<Self::Value, Self::Error> {
-        self.constant(value)
-    }
+    fn mutable<T: ?Sized>(self, value: *mut T) -> Result<Self::Value, Self::Error>;
 
     fn list(self, capacity: usize) -> Result<Self::List, Self::Error>;
     fn map(self, capacity: usize) -> Result<Self::Map, Self::Error>;
@@ -109,13 +63,16 @@ pub trait Serializer: Sized {
     fn structure<T: ?Sized>(self) -> Result<Self::Structure, Self::Error>;
     fn enumeration<T: ?Sized>(self) -> Result<Self::Enumeration, Self::Error>;
 
-    // #[inline]
-    // fn map<T, F: FnMut(Self::Value) -> T>(self, map: F) -> map::Map<Self, T, F>
-    // where
-    //     Self: Sized,
-    // {
-    //     map::Map::new(self, map)
-    // }
+    #[inline]
+    fn adapt<T, E: From<Self::Error>, F: FnOnce(Result<Self::Value, Self::Error>) -> Result<T, E>>(
+        self,
+        map: F,
+    ) -> Adapt<Self, T, E, F>
+    where
+        Self: Sized,
+    {
+        Adapt::new(self, map)
+    }
 }
 
 pub trait Structure {
@@ -446,234 +403,256 @@ macro_rules! tuple {
 
 recurse!(tuple);
 
-mod map {
+mod adapt {
     use super::*;
 
-    pub struct Map<S, T, F>(S, F, PhantomData<T>);
+    pub struct Adapt<S, V, E, F>(S, F, PhantomData<(V, E)>);
 
-    impl<S, T, F> Map<S, T, F> {
+    impl<S, V, E, F> Adapt<S, V, E, F> {
         #[inline]
         pub(super) const fn new(serializer: S, map: F) -> Self {
             Self(serializer, map, PhantomData)
         }
     }
 
-    impl<S: Serializer, T, F: FnMut(S::Value) -> T> Serializer for Map<S, T, F> {
-        type Value = T;
-        type Error = S::Error;
-        type Map = Map<S::Map, T, F>;
-        type List = Map<S::List, T, F>;
-        type Structure = Map<S::Structure, T, F>;
-        type Enumeration = Map<S::Enumeration, T, F>;
+    impl<
+            S: Serializer,
+            V,
+            E: From<S::Error>,
+            F: FnOnce(Result<S::Value, S::Error>) -> Result<V, E>,
+        > Serializer for Adapt<S, V, E, F>
+    {
+        type Value = V;
+        type Error = E;
+        type Map = Adapt<S::Map, V, E, F>;
+        type List = Adapt<S::List, V, E, F>;
+        type Structure = Adapt<S::Structure, V, E, F>;
+        type Enumeration = Adapt<S::Enumeration, V, E, F>;
 
         #[inline]
         fn unit(self) -> Result<Self::Value, Self::Error> {
-            self.0.unit().map(self.1)
+            self.1(self.0.unit())
         }
         #[inline]
         fn bool(self, value: bool) -> Result<Self::Value, Self::Error> {
-            self.0.bool(value).map(self.1)
+            self.1(self.0.bool(value))
         }
         #[inline]
         fn char(self, value: char) -> Result<Self::Value, Self::Error> {
-            self.0.char(value).map(self.1)
+            self.1(self.0.char(value))
         }
         #[inline]
         fn u8(self, value: u8) -> Result<Self::Value, Self::Error> {
-            self.0.u8(value).map(self.1)
+            self.1(self.0.u8(value))
         }
         #[inline]
         fn u16(self, value: u16) -> Result<Self::Value, Self::Error> {
-            self.0.u16(value).map(self.1)
+            self.1(self.0.u16(value))
         }
         #[inline]
         fn u32(self, value: u32) -> Result<Self::Value, Self::Error> {
-            self.0.u32(value).map(self.1)
+            self.1(self.0.u32(value))
         }
         #[inline]
         fn u64(self, value: u64) -> Result<Self::Value, Self::Error> {
-            self.0.u64(value).map(self.1)
+            self.1(self.0.u64(value))
         }
         #[inline]
         fn u128(self, value: u128) -> Result<Self::Value, Self::Error> {
-            self.0.u128(value).map(self.1)
+            self.1(self.0.u128(value))
         }
         #[inline]
         fn usize(self, value: usize) -> Result<Self::Value, Self::Error> {
-            self.0.usize(value).map(self.1)
+            self.1(self.0.usize(value))
         }
         #[inline]
         fn i8(self, value: i8) -> Result<Self::Value, Self::Error> {
-            self.0.i8(value).map(self.1)
+            self.1(self.0.i8(value))
         }
         #[inline]
         fn i16(self, value: i16) -> Result<Self::Value, Self::Error> {
-            self.0.i16(value).map(self.1)
+            self.1(self.0.i16(value))
         }
         #[inline]
         fn i32(self, value: i32) -> Result<Self::Value, Self::Error> {
-            self.0.i32(value).map(self.1)
+            self.1(self.0.i32(value))
         }
         #[inline]
         fn i64(self, value: i64) -> Result<Self::Value, Self::Error> {
-            self.0.i64(value).map(self.1)
+            self.1(self.0.i64(value))
         }
         #[inline]
         fn i128(self, value: i128) -> Result<Self::Value, Self::Error> {
-            self.0.i128(value).map(self.1)
+            self.1(self.0.i128(value))
         }
         #[inline]
         fn isize(self, value: isize) -> Result<Self::Value, Self::Error> {
-            self.0.isize(value).map(self.1)
+            self.1(self.0.isize(value))
         }
         #[inline]
         fn f32(self, value: f32) -> Result<Self::Value, Self::Error> {
-            self.0.f32(value).map(self.1)
+            self.1(self.0.f32(value))
         }
         #[inline]
         fn f64(self, value: f64) -> Result<Self::Value, Self::Error> {
-            self.0.f64(value).map(self.1)
+            self.1(self.0.f64(value))
         }
         #[inline]
-        fn shared<V: ?Sized>(self, value: &V) -> Result<Self::Value, Self::Error> {
-            self.0.shared(value).map(self.1)
+        fn shared<T: ?Sized>(self, value: &T) -> Result<Self::Value, Self::Error> {
+            self.1(self.0.shared(value))
         }
         #[inline]
-        fn exclusive<V: ?Sized>(self, value: &mut V) -> Result<Self::Value, Self::Error> {
-            self.0.exclusive(value).map(self.1)
+        fn exclusive<T: ?Sized>(self, value: &mut T) -> Result<Self::Value, Self::Error> {
+            self.1(self.0.exclusive(value))
         }
         #[inline]
-        fn constant<V: ?Sized>(self, value: *const V) -> Result<Self::Value, Self::Error> {
-            self.0.constant(value).map(self.1)
+        fn constant<T: ?Sized>(self, value: *const T) -> Result<Self::Value, Self::Error> {
+            self.1(self.0.constant(value))
         }
         #[inline]
-        fn mutable<V: ?Sized>(self, value: *mut V) -> Result<Self::Value, Self::Error> {
-            self.0.mutable(value).map(self.1)
+        fn mutable<T: ?Sized>(self, value: *mut T) -> Result<Self::Value, Self::Error> {
+            self.1(self.0.mutable(value))
         }
         #[inline]
         fn list(self, capacity: usize) -> Result<Self::List, Self::Error> {
-            Ok(Map::new(self.0.list(capacity)?, self.1))
+            Ok(Adapt::new(self.0.list(capacity)?, self.1))
         }
         #[inline]
         fn map(self, capacity: usize) -> Result<Self::Map, Self::Error> {
-            Ok(Map::new(self.0.map(capacity)?, self.1))
+            Ok(Adapt::new(self.0.map(capacity)?, self.1))
         }
         #[inline]
         fn tuple<const N: usize>(self) -> Result<Self::List, Self::Error> {
-            Ok(Map::new(self.0.tuple::<N>()?, self.1))
+            Ok(Adapt::new(self.0.tuple::<N>()?, self.1))
         }
         #[inline]
         fn string(self, value: &str) -> Result<Self::Value, Self::Error> {
-            self.0.string(value).map(self.1)
+            self.1(self.0.string(value))
         }
         #[inline]
-        fn slice<V: Serialize>(self, value: &[V]) -> Result<Self::Value, Self::Error> {
-            self.0.slice(value).map(self.1)
+        fn slice<T: Serialize>(self, value: &[T]) -> Result<Self::Value, Self::Error> {
+            self.1(self.0.slice(value))
         }
         #[inline]
-        fn array<V: Serialize, const N: usize>(
+        fn array<T: Serialize, const N: usize>(
             self,
-            value: &[V; N],
+            value: &[T; N],
         ) -> Result<Self::Value, Self::Error> {
-            self.0.array(value).map(self.1)
+            self.1(self.0.array(value))
         }
         #[inline]
         fn bytes(self, value: &[u8]) -> Result<Self::Value, Self::Error> {
-            self.0.bytes(value).map(self.1)
+            self.1(self.0.bytes(value))
         }
         #[inline]
-        fn structure<V: ?Sized>(self) -> Result<Self::Structure, Self::Error> {
-            Ok(Map::new(self.0.structure::<V>()?, self.1))
+        fn structure<T: ?Sized>(self) -> Result<Self::Structure, Self::Error> {
+            Ok(Adapt::new(self.0.structure::<T>()?, self.1))
         }
         #[inline]
-        fn enumeration<V: ?Sized>(self) -> Result<Self::Enumeration, Self::Error> {
-            Ok(Map::new(self.0.enumeration::<V>()?, self.1))
+        fn enumeration<T: ?Sized>(self) -> Result<Self::Enumeration, Self::Error> {
+            Ok(Adapt::new(self.0.enumeration::<T>()?, self.1))
         }
     }
 
-    impl<S: Structure, T, F: FnMut(S::Value) -> T> Structure for Map<S, T, F> {
-        type Value = T;
-        type Error = S::Error;
-        type Map = Map<S::Map, T, F>;
-        type List = Map<S::List, T, F>;
+    impl<
+            S: Structure,
+            V,
+            E: From<S::Error>,
+            F: FnOnce(Result<S::Value, S::Error>) -> Result<V, E>,
+        > Structure for Adapt<S, V, E, F>
+    {
+        type Value = V;
+        type Error = E;
+        type Map = Adapt<S::Map, V, E, F>;
+        type List = Adapt<S::List, V, E, F>;
 
         #[inline]
         fn unit(self) -> Result<Self::Value, Self::Error> {
-            self.0.unit().map(self.1)
+            self.1(self.0.unit())
         }
         #[inline]
         fn tuple<const N: usize>(self) -> Result<Self::List, Self::Error> {
-            Ok(Map::new(self.0.tuple::<N>()?, self.1))
+            Ok(Adapt::new(self.0.tuple::<N>()?, self.1))
         }
         #[inline]
         fn map<const N: usize>(self) -> Result<Self::Map, Self::Error> {
-            Ok(Map::new(self.0.map::<N>()?, self.1))
+            Ok(Adapt::new(self.0.map::<N>()?, self.1))
         }
     }
 
-    impl<S: super::Map, T, F: FnMut(S::Value) -> T> super::Map for Map<S, T, F> {
-        type Value = T;
-        type Error = S::Error;
+    impl<S: Map, V, E: From<S::Error>, F: FnOnce(Result<S::Value, S::Error>) -> Result<V, E>> Map
+        for Adapt<S, V, E, F>
+    {
+        type Value = V;
+        type Error = E;
 
         #[inline]
-        fn pair<K: Serialize, V: Serialize>(self, key: K, value: V) -> Result<Self, Self::Error> {
-            Ok(Map::new(self.0.pair(key, value)?, self.1))
+        fn pair<K: Serialize, T: Serialize>(self, key: K, value: T) -> Result<Self, Self::Error> {
+            Ok(Adapt::new(self.0.pair(key, value)?, self.1))
         }
         #[inline]
         fn end(self) -> Result<Self::Value, Self::Error> {
-            self.0.end().map(self.1)
+            self.1(self.0.end())
         }
         #[inline]
-        fn pairs<K: Serialize, V: Serialize, I: IntoIterator<Item = (K, V)>>(
+        fn pairs<K: Serialize, T: Serialize, I: IntoIterator<Item = (K, T)>>(
             self,
             pairs: I,
         ) -> Result<Self::Value, Self::Error>
         where
             Self: Sized,
         {
-            self.0.pairs(pairs).map(self.1)
+            self.1(self.0.pairs(pairs))
         }
     }
 
-    impl<S: List, T, F: FnMut(S::Value) -> T> List for Map<S, T, F> {
-        type Value = T;
-        type Error = S::Error;
+    impl<S: List, V, E: From<S::Error>, F: FnOnce(Result<S::Value, S::Error>) -> Result<V, E>> List
+        for Adapt<S, V, E, F>
+    {
+        type Value = V;
+        type Error = E;
 
         #[inline]
         fn item<I: Serialize>(self, item: I) -> Result<Self, Self::Error> {
-            Ok(Map::new(self.0.item(item)?, self.1))
+            Ok(Adapt::new(self.0.item(item)?, self.1))
         }
         #[inline]
         fn end(self) -> Result<Self::Value, Self::Error> {
-            self.0.end().map(self.1)
+            self.1(self.0.end())
         }
         #[inline]
-        fn items<V: Serialize, I: IntoIterator<Item = V>>(
+        fn items<T: Serialize, I: IntoIterator<Item = T>>(
             self,
             items: I,
         ) -> Result<Self::Value, Self::Error>
         where
             Self: Sized,
         {
-            self.0.items(items).map(self.1)
+            self.1(self.0.items(items))
         }
     }
 
-    impl<S: Enumeration, T, F: FnMut(S::Value) -> T> Enumeration for Map<S, T, F> {
-        type Value = T;
-        type Error = S::Error;
-        type Structure = Map<S::Structure, T, F>;
+    impl<
+            S: Enumeration,
+            V,
+            E: From<S::Error>,
+            F: FnOnce(Result<S::Value, S::Error>) -> Result<V, E>,
+        > Enumeration for Adapt<S, V, E, F>
+    {
+        type Value = V;
+        type Error = E;
+        type Structure = Adapt<S::Structure, V, E, F>;
 
         #[inline]
         fn never(self) -> Result<Self::Value, Self::Error> {
-            self.0.never().map(self.1)
+            self.1(self.0.never())
         }
         #[inline]
         fn variant<const I: usize, const N: usize>(
             self,
             name: &'static str,
         ) -> Result<Self::Structure, Self::Error> {
-            Ok(Map::new(self.0.variant::<I, N>(name)?, self.1))
+            Ok(Adapt::new(self.0.variant::<I, N>(name)?, self.1))
         }
     }
 }

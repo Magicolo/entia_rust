@@ -1,6 +1,4 @@
-#![cfg(test)]
-
-use entia_main::{self as entia, *};
+use crate::{self as entia, *};
 use error::Result;
 
 pub mod create;

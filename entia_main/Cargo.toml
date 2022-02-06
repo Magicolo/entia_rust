@@ -9,3 +9,6 @@ entia_core = { path = "../entia_core" }
 entia_macro = { path = "../entia_macro" }
 entia_serialize = { path = "../entia_serialize" }
 rayon = "*"
+
+#[dev-dependencies]
+entia_check = { path = "../entia_check" }

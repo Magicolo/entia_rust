@@ -49,4 +49,4 @@ pub fn ascii() -> impl Generator<Item = char> {
 }
 
 #[cfg(test)]
-mod tests;
+mod test;
