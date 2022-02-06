@@ -1,0 +1,11 @@
+[package]
+name = "entia_main"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+entia_main_derive = { path = "../entia_main_derive" }
+entia_core = { path = "../entia_core" }
+entia_macro = { path = "../entia_macro" }
+entia_serialize = { path = "../entia_serialize" }
+rayon = "*"

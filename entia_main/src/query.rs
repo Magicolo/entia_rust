@@ -1,5 +1,6 @@
 use self::{filter::*, item::*};
 use crate::{
+    self as entia,
     depend::{Depend, Dependency},
     entities::Entities,
     entity::Entity,
@@ -9,6 +10,7 @@ use crate::{
     recurse,
     world::{segment::Segment, World},
     write::Write,
+    Resource,
 };
 use std::{
     any::type_name,
@@ -28,6 +30,7 @@ pub struct State<I: Item, F> {
     pub(crate) entities: Read<Entities>,
 }
 
+#[derive(Resource)]
 pub struct Inner<S, F> {
     pub(crate) segments: Vec<Option<usize>>,
     pub(crate) states: Vec<(S, usize)>,
@@ -377,7 +380,7 @@ pub mod filter {
     impl<T: Send + Sync + 'static> Filter for Has<T> {
         fn filter(segment: &Segment, world: &World) -> bool {
             if let Ok(meta) = world.get_meta::<T>() {
-                segment.component_types().contains(&meta.identifier)
+                segment.component_types().contains(&meta.identifier())
             } else {
                 false
             }
@@ -397,7 +400,7 @@ pub mod filter {
     }
 
     macro_rules! filter {
-        ($($t:ident, $p:ident),*) => {
+        ($($p:ident, $t:ident),*) => {
             impl<$($t: Filter,)*> Filter for ($($t,)*) {
                 fn filter(_segment: &Segment, _world: &World) -> bool {
                     $($t::filter(_segment, _world) &&)* true

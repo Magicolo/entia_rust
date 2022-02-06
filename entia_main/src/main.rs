@@ -1,4 +1,5 @@
 use entia::*;
+use entia_main as entia;
 
 fn main() {
     #[derive(Resource, Default, Clone)]

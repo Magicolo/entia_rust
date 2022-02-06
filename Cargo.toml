@@ -4,16 +4,14 @@ version = "0.1.0"
 authors = ["Magicolo <magicololand@gmail.com>"]
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 entia_core = { path = "./entia_core" }
+entia_main = { path = "./entia_main" }
 entia_macro = { path = "./entia_macro" }
-entia_derive = { path = "./entia_derive" }
-rayon = "*"
+entia_serialize = { path = "./entia_serialize" }
 
 [dev-dependencies]
 entia_check = { path = "./entia_check" }
 
 [workspace]
-members = ["entia_core", "entia_check", "entia_macro", "entia_derive", "entia_example_01"]
+members = ["entia_check", "entia_core", "entia_example_01", "entia_macro", "entia_main", "entia_main_derive", "entia_serialize", "entia_serialize_derive"]

@@ -1,43 +1,29 @@
-use super::*;
+#![cfg(test)]
+
+use entia_main::{self as entia, *};
 use error::Result;
 
 pub mod create;
 pub mod depend;
 
-#[derive(Default)]
+#[derive(Resource, Default)]
 pub struct Time(f64);
-impl Resource for Time {}
-
-#[derive(Default)]
+#[derive(Resource, Default)]
 pub struct Physics;
-impl Resource for Physics {}
-
+#[derive(Component)]
 pub struct Frozen;
-impl Component for Frozen {}
-
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Component, Debug, Clone, PartialEq)]
 pub struct Position(f64, f64, f64);
-impl Component for Position {}
-
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Component, Debug, Clone, PartialEq)]
 pub struct Velocity(f64, f64, f64);
-impl Component for Velocity {}
-
-#[derive(Clone)]
+#[derive(Message, Clone)]
 pub struct OnKill(Entity);
-impl Message for OnKill {}
-
-fn world() -> World {
-    let mut world = World::new();
-    metas!(world, Time, Physics, Frozen, Position, Velocity, OnKill);
-    world
-}
 
 fn inject<I: Inject>() -> Result
 where
     I::Input: Default,
 {
-    let mut world = world();
+    let mut world = World::new();
     world.injector::<I>()?.guard(&mut world)?;
     Ok(())
 }

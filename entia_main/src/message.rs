@@ -1,15 +1,21 @@
 use crate::{
+    self as entia,
     depend::{Depend, Dependency},
     error::Result,
     inject::{Context, Get, Inject},
-    world::World,
+    world::{meta::Meta, World},
     write::Write,
+    Resource,
 };
 use std::{collections::VecDeque, iter::FusedIterator};
 
-pub trait Message: Clone + Send + Sync + 'static {}
+pub trait Message: Sized + Clone + Send + Sync + 'static {
+    fn meta() -> Meta;
+}
 
 struct Queue<T>(usize, VecDeque<T>);
+
+#[derive(Resource)]
 struct Inner<T> {
     pub queues: Vec<Queue<T>>,
 }

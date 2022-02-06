@@ -155,8 +155,6 @@ fn run() -> Result<(), Box<dyn error::Error>> {
     const CELLS: [f64; 2] = [25., 25.];
 
     let mut world = World::new();
-    metas!(world, Time, Controller, Render, Input, Position);
-
     let mut window: PistonWindow = WindowSettings::new("Example_01", SIZE)
         .exit_on_esc(true)
         .build()?;

@@ -5,13 +5,12 @@ use crate::{
 };
 use entia_core::{utility::next_power_of_2, Flags, IntoFlags, Maybe, Wrap};
 use std::{
-    any::{type_name, TypeId},
+    any::{type_name, Any, TypeId},
     cell::UnsafeCell,
     cmp::min,
     collections::{HashMap, HashSet},
     fmt,
     iter::once,
-    marker::PhantomData,
     mem::{needs_drop, replace, size_of, ManuallyDrop},
     ptr::{copy, drop_in_place, slice_from_raw_parts_mut},
     slice::from_raw_parts_mut,
@@ -40,12 +39,17 @@ pub struct World {
     version: usize,
     metas: Vec<Arc<Meta>>,
     type_to_meta: HashMap<TypeId, usize>,
+    resources: HashMap<TypeId, Arc<Store>>,
     pub(crate) segments: Vec<Segment>,
-    pub(crate) resources: HashMap<TypeId, Arc<Store>>,
 }
 
-pub trait Component: Send + Sync + 'static {}
-pub trait Resource: Default + Send + Sync + 'static {}
+pub trait Component: Sized + Send + Sync + 'static {
+    fn meta() -> Meta;
+}
+
+pub trait Resource: Sized + Default + Send + Sync + 'static {
+    fn meta() -> Meta;
+}
 
 impl World {
     pub fn new() -> Self {
@@ -54,13 +58,13 @@ impl World {
             version: 1,
             metas: Vec::new(),
             type_to_meta: HashMap::new(),
-            segments: Vec::new(),
             resources: HashMap::new(),
+            segments: Vec::new(),
         };
 
         // Ensures that the 'Entity' meta has the lowest identifier of this world's metas and as such, 'Entity' stores will alway
         // appear as the first store of a segment if present.
-        crate::metas!(world, Entity);
+        world.set_meta(crate::meta!(Entity));
         world
     }
 
@@ -79,20 +83,19 @@ impl World {
         self.version
     }
 
-    pub fn set_meta(&mut self, mut meta: Meta) -> Arc<Meta> {
-        let identifier = meta.identifier;
+    pub fn set_meta(&mut self, meta: Meta) -> Arc<Meta> {
+        let identifier = meta.identifier();
         let meta = match self.type_to_meta.get(&identifier) {
             Some(&index) => {
-                meta.index = index;
                 let meta = Arc::new(meta);
                 self.metas[index] = meta.clone();
                 meta
             }
             None => {
-                meta.index = self.metas.len();
+                let index = self.metas.len();
                 let meta = Arc::new(meta);
                 self.metas.push(meta.clone());
-                self.type_to_meta.insert(meta.identifier, meta.index);
+                self.type_to_meta.insert(meta.identifier(), index);
                 meta
             }
         };
@@ -109,20 +112,25 @@ impl World {
         Ok(self.metas[index].clone())
     }
 
-    pub fn get_or_add_meta<T: Send + Sync + 'static>(&mut self) -> Arc<Meta> {
+    pub fn get_or_add_meta<T: Send + Sync + 'static, F: FnOnce() -> Meta>(
+        &mut self,
+        provide: F,
+    ) -> Arc<Meta> {
         match self.get_meta::<T>() {
             Ok(meta) => meta,
-            Err(_) => self.set_meta(Meta::new::<T>(None, None, None)),
+            Err(_) => self.set_meta(provide()),
         }
     }
 
-    pub fn get_segment(&self, metas: &[Arc<Meta>]) -> Option<&Segment> {
-        let types: HashSet<_> = metas.iter().map(|meta| meta.identifier).collect();
-        Some(&self.segments[self.get_segment_index(&types)?])
+    pub fn get_segment(&self, metas: impl IntoIterator<Item = TypeId>) -> Option<&Segment> {
+        Some(&self.segments[self.get_segment_index(&metas.into_iter().collect())?])
     }
 
-    pub fn get_or_add_segment<'a>(&'a mut self, metas: &[Arc<Meta>]) -> &'a mut Segment {
-        let types: HashSet<_> = metas.iter().map(|meta| meta.identifier).collect();
+    pub fn get_or_add_segment<'a>(
+        &'a mut self,
+        metas: impl IntoIterator<Item = Arc<Meta>>,
+    ) -> &'a mut Segment {
+        let types: HashSet<_> = metas.into_iter().map(|meta| meta.identifier()).collect();
         let index = match self.get_segment_index(&types) {
             Some(index) => index,
             None => {
@@ -136,17 +144,17 @@ impl World {
         &mut self.segments[index]
     }
 
-    pub(crate) fn get_or_add_resource_store<T: Default + Send + Sync + 'static>(
+    pub(crate) fn get_or_add_resource_store<R: Resource>(
         &mut self,
-        default: impl FnOnce() -> T,
+        default: Option<R>,
     ) -> Arc<Store> {
-        let meta = self.get_or_add_meta::<T>();
-        let identifier = meta.identifier;
+        let meta = self.get_or_add_meta::<R, _>(R::meta);
+        let identifier = meta.identifier();
         let store = match self.resources.get(&identifier) {
             Some(store) => store.clone(),
             None => {
                 let store = Arc::new(Store::new(meta, 1));
-                unsafe { store.set(0, default()) };
+                unsafe { store.set(0, default.unwrap_or_default()) };
                 self.resources.insert(identifier, store.clone());
                 store
             }
@@ -172,55 +180,38 @@ impl Drop for World {
 pub mod meta {
     use super::*;
 
-    #[derive(Clone)]
+    type Module = dyn Any + Send + Sync;
+
     pub struct Meta {
-        pub(crate) index: usize,
-        pub(crate) identifier: TypeId,
-        pub(crate) name: &'static str,
-        pub(crate) allocate: fn(usize) -> *mut (),
-        pub(crate) free: unsafe fn(*mut (), usize, usize),
-        pub(crate) copy: unsafe fn((*const (), usize), (*mut (), usize), usize),
-        pub(crate) drop: unsafe fn(*mut (), usize, usize),
-        pub(crate) cloner: Option<Cloner>,
-        pub(crate) formatter: Option<Formatter>,
-        pub(crate) serializer: Option<Serializer>,
+        identifier: TypeId,
+        name: &'static str,
+        pub(super) allocate: fn(usize) -> *mut (),
+        pub(super) free: unsafe fn(*mut (), usize, usize),
+        pub(super) copy: unsafe fn((*const (), usize), (*mut (), usize), usize),
+        pub(super) drop: unsafe fn(*mut (), usize, usize),
+        pub(super) cloner: Option<Cloner>,
+        pub(super) formatter: Option<Formatter>,
+        modules: HashMap<TypeId, Box<Module>>,
     }
 
     #[derive(Clone)]
-    pub struct Cloner<T: ?Sized = ()> {
-        pub(crate) clone:
-            unsafe fn(source: (*const (), usize), target: (*mut (), usize), count: usize),
-        pub(crate) duplicate:
-            unsafe fn(source: (*const (), usize), target: (*mut (), usize), count: usize),
-        _marker: PhantomData<T>,
+    pub struct Cloner {
+        pub clone: unsafe fn(source: (*const (), usize), target: (*mut (), usize), count: usize),
+        pub fill: unsafe fn(source: (*const (), usize), target: (*mut (), usize), count: usize),
     }
 
     #[derive(Clone)]
-    pub struct Formatter<T: ?Sized = ()> {
-        pub(crate) format: unsafe fn(source: *const (), index: usize) -> String,
-        _marker: PhantomData<T>,
-    }
-
-    #[derive(Copy, Clone)]
-    pub struct Serializer<T: ?Sized = ()> {
-        // TODO: 'target' will most likely some kind of 'Writer'.
-        pub(crate) serialize:
-            unsafe fn(source: (*const (), usize), target: &mut String, count: usize),
-        // TODO: 'source' will most likely some kind of 'Reader'.
-        pub(crate) deserialize: unsafe fn(source: &str, target: (*mut (), usize), count: usize),
-        _marker: PhantomData<T>,
+    pub struct Formatter {
+        pub format: unsafe fn(source: *const (), index: usize) -> String,
     }
 
     impl Meta {
         // To increase safe usage of 'Meta' and 'Store', type 'T' is required to be 'Send' and 'Sync', therefore it is
         // impossible to hold an instance of 'Meta' that is not 'Send' and 'Sync'.
-        pub fn new<T: Send + Sync + 'static>(
-            cloner: Option<Cloner<T>>,
-            formatter: Option<Formatter<T>>,
-            serializer: Option<Serializer<T>>,
+        pub fn new<T: Send + Sync + 'static, I: IntoIterator<Item = Box<Module>>>(
+            modules: I,
         ) -> Self {
-            Self {
-                index: usize::MAX,
+            let mut meta = Self {
                 identifier: TypeId::of::<T>(),
                 name: type_name::<T>(),
                 allocate: |capacity| {
@@ -251,121 +242,129 @@ pub mod meta {
                 } else {
                     |_, _, _| {}
                 },
-                cloner: cloner.map(Cloner::discard),
-                formatter: formatter.map(Formatter::discard),
-                serializer: serializer.map(Serializer::discard),
-            }
+                cloner: None,
+                formatter: None,
+                modules: modules
+                    .into_iter()
+                    .map(|module| (module.type_id(), module))
+                    .collect(),
+            };
+            meta.reset_cache();
+            meta
+        }
+
+        #[inline]
+        pub const fn identifier(&self) -> TypeId {
+            self.identifier
+        }
+
+        #[inline]
+        pub const fn name(&self) -> &'static str {
+            self.name
+        }
+
+        pub fn get<T: Send + Sync + 'static>(&self) -> Option<&T> {
+            self.modules
+                .get(&TypeId::of::<T>())
+                .and_then(|module| module.downcast_ref::<T>())
+        }
+
+        pub fn set<T: Send + Sync + 'static>(&mut self, module: T) {
+            let module: Box<Module> = Box::new(module);
+            self.modules.insert(TypeId::of::<T>(), module);
+            self.reset_cache();
+        }
+
+        fn reset_cache(&mut self) {
+            self.cloner = self.get().cloned();
+            self.formatter = self.get().cloned();
         }
     }
 
-    impl<T: Clone> Maybe<Cloner<T>> for Wrap<Cloner<T>> {
-        fn maybe(self) -> Option<Cloner<T>> {
-            Some(Cloner::new())
+    impl<T: Clone> Maybe<Cloner> for Wrap<Cloner, T> {
+        fn maybe(self) -> Option<Cloner> {
+            Some(Cloner::new::<T>())
         }
     }
 
-    impl<T: fmt::Debug> Maybe<Formatter<T>> for Wrap<Formatter<T>> {
-        fn maybe(self) -> Option<Formatter<T>> {
-            Some(Formatter::new())
+    impl<T: fmt::Debug> Maybe<Formatter> for Wrap<Formatter, T> {
+        fn maybe(self) -> Option<Formatter> {
+            Some(Formatter::new::<T>())
         }
     }
 
-    // TODO: Implement 'serialize' and 'deserialize'.
-    impl<T> Maybe<Serializer<T>> for Wrap<Serializer<T>> {
-        fn maybe(self) -> Option<Serializer<T>> {
-            None
-            // Some(Serializer::new())
-        }
-    }
-
-    impl<T> Cloner<T> {
-        pub(crate) fn discard(self) -> Cloner {
-            Cloner {
-                clone: self.clone,
-                duplicate: self.duplicate,
-                _marker: PhantomData,
-            }
-        }
-    }
-
-    impl<T: Clone> Cloner<T> {
-        pub fn new() -> Self {
+    impl Cloner {
+        pub fn new<T: Clone>() -> Self {
             Self {
-                clone: |source, target, count| unsafe {
-                    if count > 0 {
-                        let source = source.0.cast::<T>().add(source.1);
-                        let target = target.0.cast::<T>().add(target.1);
-                        // Use 'ptd::write' to prevent the old value from being dropped since it is expected to be already
-                        // dropped or uninitialized.
-                        for i in 0..count {
-                            let source = &*source.add(i);
-                            target.add(i).write(source.clone());
+                clone: if size_of::<T>() > 0 {
+                    |source, target, count| unsafe {
+                        if count > 0 {
+                            let source = source.0.cast::<T>().add(source.1);
+                            let target = target.0.cast::<T>().add(target.1);
+                            // Use 'ptd::write' to prevent the old value from being dropped since it is expected to be already
+                            // dropped or uninitialized.
+                            for i in 0..count {
+                                let source = &*source.add(i);
+                                target.add(i).write(source.clone());
+                            }
                         }
                     }
+                } else {
+                    // TODO: What about implementations of 'Clone' that have side-effects?
+                    |_, _, _| {}
                 },
-                duplicate: |source, target, count| unsafe {
-                    if count > 0 {
-                        let source = &*source.0.cast::<T>().add(source.1);
-                        let target = target.0.cast::<T>().add(target.1);
-                        // Use 'ptd::write' to prevent the old value from being dropped since it is expected to be already
-                        // dropped or uninitialized.
-                        for i in 0..count {
-                            target.add(i).write(source.clone());
+                fill: if size_of::<T>() > 0 {
+                    |source, target, count| unsafe {
+                        if count > 0 {
+                            let source = &*source.0.cast::<T>().add(source.1);
+                            let target = target.0.cast::<T>().add(target.1);
+                            // Use 'ptd::write' to prevent the old value from being dropped since it is expected to be already
+                            // dropped or uninitialized.
+                            for i in 0..count {
+                                target.add(i).write(source.clone());
+                            }
                         }
                     }
+                } else {
+                    // TODO: What about implementations of 'Clone' that have side-effects?
+                    |_, _, _| {}
                 },
-                _marker: PhantomData,
             }
         }
     }
 
-    impl<T> Formatter<T> {
-        pub fn discard(self) -> Formatter {
-            Formatter {
-                format: self.format,
-                _marker: PhantomData,
-            }
-        }
-    }
-
-    impl<T: fmt::Debug> Formatter<T> {
-        pub fn new() -> Self {
+    impl Formatter {
+        pub fn new<T: fmt::Debug>() -> Self {
             Self {
                 format: |source, index| unsafe {
                     let source = &*source.cast::<T>().add(index);
                     format!("{:?}", source)
                 },
-                _marker: PhantomData,
             }
-        }
-    }
-
-    impl<T> Serializer<T> {
-        pub fn discard(self) -> Serializer {
-            Serializer {
-                serialize: self.serialize,
-                deserialize: self.deserialize,
-                _marker: PhantomData,
-            }
-        }
-
-        // TODO: This will probably require some constraint on 'T'.
-        pub fn new() -> Self {
-            todo!()
         }
     }
 
     #[macro_export]
-    macro_rules! metas {
-        ($world:expr $(,$types:ty)*) => {{
+    macro_rules! meta {
+        ($t:ty) => {{
+            use std::{
+                any::Any,
+                boxed::Box,
+                marker::{Send, Sync},
+                vec::Vec,
+            };
             use $crate::core::Maybe;
-            $(
-                $world.set_meta($crate::world::meta::Meta::new(
-                    $crate::core::Wrap::<$crate::world::meta::Cloner<$types>>::default().maybe(),
-                    $crate::core::Wrap::<$crate::world::meta::Formatter<$types>>::default().maybe(),
-                    $crate::core::Wrap::<$crate::world::meta::Serializer<$types>>::default().maybe(),
-                ).into());
-            )*
+
+            let mut modules: Vec<Box<dyn Any + Send + Sync + 'static>> = Vec::new();
+            type Cloner<T> = $crate::core::Wrap<$crate::world::meta::Cloner, T>;
+            if let Some(module) = Cloner::<$t>::default().maybe() {
+                modules.push(std::boxed::Box::new(module));
+            }
+            type Formatter<T> = $crate::core::Wrap<$crate::world::meta::Formatter, T>;
+            if let Some(module) = Formatter::<$t>::default().maybe() {
+                modules.push(std::boxed::Box::new(module));
+            }
+            $crate::world::meta::Meta::new::<$t, _>(modules)
         }};
     }
 }
@@ -379,7 +378,7 @@ pub mod segment {
         Clone = 1 << 0,
     }
 
-    // The 'entities' store must be kept separate from the  'components' stores to prevent undesired behavior that may arise
+    // The 'entities' store must be kept separate from the 'components' stores to prevent undesired behavior that may arise
     // from using queries such as '&mut Entity' or templates such as 'Add<Entity>' as a component with a template.
     pub struct Segment {
         identifier: usize,
@@ -404,7 +403,7 @@ pub mod segment {
             let entity_store = metas
                 .iter()
                 .find_map(|meta| {
-                    if meta.identifier == TypeId::of::<Entity>() {
+                    if meta.identifier() == TypeId::of::<Entity>() {
                         Some(Arc::new(Store::new(meta.clone(), capacity)))
                     } else {
                         None
@@ -415,7 +414,7 @@ pub mod segment {
             // Iterate over all metas in order to have them consistently ordered.
             let component_stores: Vec<_> = metas
                 .iter()
-                .filter(|meta| types.contains(&meta.identifier))
+                .filter(|meta| types.contains(&meta.identifier()))
                 .map(|meta| Arc::new(Store::new(meta.clone(), capacity)))
                 .collect();
             let mut flags = Flag::None.flags();
@@ -501,9 +500,9 @@ pub mod segment {
         pub fn component_store(&self, meta: &Meta) -> Result<Arc<Store>> {
             self.component_stores
                 .iter()
-                .find(|store| store.meta().identifier == meta.identifier)
+                .find(|store| store.meta().identifier() == meta.identifier())
                 .cloned()
-                .ok_or(Error::MissingStore(meta.name, self.index))
+                .ok_or(Error::MissingStore(meta.name(), self.index))
         }
 
         pub fn stores(&self) -> impl Iterator<Item = &Store> {
@@ -562,7 +561,6 @@ pub mod store {
     unsafe impl Send for Store {}
 
     impl Store {
-        #[inline]
         pub(crate) fn new(meta: Arc<Meta>, capacity: usize) -> Self {
             let pointer = (meta.allocate)(capacity);
             Self(meta, pointer.into())
@@ -575,13 +573,12 @@ pub mod store {
 
         #[inline]
         pub fn data<T: 'static>(&self) -> *mut T {
-            debug_assert_eq!(TypeId::of::<T>(), self.meta().identifier);
+            debug_assert_eq!(TypeId::of::<T>(), self.meta().identifier());
             self.pointer().cast()
         }
 
-        #[inline]
         pub unsafe fn copy(source: (&Self, usize), target: (&Self, usize), count: usize) {
-            debug_assert_eq!(source.0.meta().identifier, target.0.meta().identifier);
+            debug_assert_eq!(source.0.meta().identifier(), target.0.meta().identifier());
             (source.0.meta().copy)(
                 (source.0.pointer(), source.1),
                 (target.0.pointer(), target.1),
@@ -590,15 +587,14 @@ pub mod store {
         }
 
         /// SAFETY: The target must be dropped before calling this function.
-        #[inline]
         pub unsafe fn clone(
             source: (&Self, usize),
             target: (&Self, usize),
             count: usize,
         ) -> Result {
-            debug_assert_eq!(source.0.meta().identifier, target.0.meta().identifier);
+            debug_assert_eq!(source.0.meta().identifier(), target.0.meta().identifier());
             let metas = (source.0.meta(), target.0.meta());
-            let error = Error::MissingClone(metas.0.name);
+            let error = Error::MissingClone(metas.0.name());
             let cloner = metas
                 .0
                 .cloner
@@ -614,22 +610,17 @@ pub mod store {
         }
 
         /// SAFETY: The target must be dropped before calling this function.
-        #[inline]
-        pub unsafe fn duplicate(
-            source: (&Self, usize),
-            target: (&Self, usize),
-            count: usize,
-        ) -> Result {
-            debug_assert_eq!(source.0.meta().identifier, target.0.meta().identifier);
+        pub unsafe fn fill(source: (&Self, usize), target: (&Self, usize), count: usize) -> Result {
+            debug_assert_eq!(source.0.meta().identifier(), target.0.meta().identifier());
             let metas = (source.0.meta(), target.0.meta());
-            let error = Error::MissingClone(metas.0.name);
+            let error = Error::MissingClone(metas.0.name());
             let cloner = metas
                 .0
                 .cloner
                 .as_ref()
                 .or(metas.1.cloner.as_ref())
                 .ok_or(error)?;
-            (cloner.duplicate)(
+            (cloner.fill)(
                 (source.0.pointer(), source.1),
                 (target.0.pointer(), target.1),
                 count,
@@ -637,7 +628,6 @@ pub mod store {
             Ok(())
         }
 
-        #[inline]
         pub unsafe fn chunk(&self, index: usize, count: usize) -> Result<Self> {
             debug_assert!(self.meta().cloner.is_some());
             let store = Self::new(self.0.clone(), count);
@@ -646,23 +636,19 @@ pub mod store {
         }
 
         /// SAFETY: The 'index' must be within the bounds of the store.
-        #[inline]
         pub unsafe fn get<T: 'static>(&self, index: usize) -> &mut T {
             &mut *self.data::<T>().add(index)
         }
 
         /// SAFETY: Both 'index' and 'count' must be within the bounds of the store.
-        #[inline]
         pub unsafe fn get_all<T: 'static>(&self, index: usize, count: usize) -> &mut [T] {
             from_raw_parts_mut(self.data::<T>().add(index), count)
         }
 
-        #[inline]
         pub unsafe fn set<T: 'static>(&self, index: usize, item: T) {
             self.data::<T>().add(index).write(item);
         }
 
-        #[inline]
         pub unsafe fn set_all<T: 'static>(&self, index: usize, items: &[T])
         where
             T: Copy,
@@ -673,7 +659,6 @@ pub mod store {
         }
 
         /// SAFETY: Both the 'source' and 'target' indices must be within the bounds of the store.
-        #[inline]
         pub unsafe fn squash(&self, source_index: usize, target_index: usize) {
             let meta = self.meta();
             let pointer = self.pointer();
@@ -681,17 +666,14 @@ pub mod store {
             (meta.copy)((pointer, source_index), (pointer, target_index), 1);
         }
 
-        #[inline]
         pub unsafe fn drop(&self, index: usize, count: usize) {
             (self.meta().drop)(self.pointer(), index, count);
         }
 
-        #[inline]
         pub unsafe fn free(&self, count: usize, capacity: usize) {
             (self.meta().free)(self.pointer(), count, capacity);
         }
 
-        #[inline]
         pub unsafe fn resize(&self, old_capacity: usize, new_capacity: usize) {
             let meta = self.meta();
             let old_pointer = self.pointer();

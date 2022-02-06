@@ -8,7 +8,7 @@ fn has_entity_count() -> Result {
     let position = <(f64, f64, f64)>::generator().map(|(x, y, z)| Position(x, y, z));
     let count = (0usize..1000).generator();
     for (position, count) in (position, count).sample(100) {
-        let mut world = world();
+        let mut world = World::new();
         let mut create = world.injector::<Create<_>>()?;
         let mut query = world.injector::<Query<(Entity, &Position)>>()?;
         let mut families = world.injector::<Families>()?;

@@ -2,6 +2,7 @@ use proc_macro::TokenStream;
 use quote::__private::Span;
 use quote::quote;
 use syn::punctuated::Punctuated;
+use syn::token::SelfType;
 use syn::{
     self, AngleBracketedGenericArguments, Binding, BoundLifetimes, DeriveInput, Fields,
     GenericArgument, GenericParam, Ident, Index, Lifetime, LifetimeDef, Member, Path,
@@ -12,42 +13,47 @@ use syn::{parse_macro_input, Data, DataStruct};
 
 #[proc_macro_derive(Resource)]
 pub fn resource(input: TokenStream) -> TokenStream {
-    let DeriveInput {
-        ident, generics, ..
-    } = parse_macro_input!(input as DeriveInput);
-    let resource_path = full_path(ident.span(), vec!["entia", "world", "Resource"]);
-    let (impl_generics, type_generics, where_clauses) = generics.split_for_impl();
-    let code = quote! {
-        #[automatically_derived]
-        impl #impl_generics #resource_path for #ident #type_generics #where_clauses {}
-    };
-    code.into()
+    data(input, ["entia", "world", "Resource"])
 }
 
 #[proc_macro_derive(Component)]
 pub fn component(input: TokenStream) -> TokenStream {
-    let DeriveInput {
-        ident, generics, ..
-    } = parse_macro_input!(input as DeriveInput);
-    let component_path = full_path(ident.span(), vec!["entia", "world", "Component"]);
-    let (impl_generics, type_generics, where_clauses) = generics.split_for_impl();
-    let code = quote! {
-        #[automatically_derived]
-        impl #impl_generics #component_path for #ident #type_generics #where_clauses {}
-    };
-    code.into()
+    data(input, ["entia", "world", "Component"])
 }
 
 #[proc_macro_derive(Message)]
 pub fn message(input: TokenStream) -> TokenStream {
+    data(input, ["entia", "message", "Message"])
+}
+
+fn data<'a>(input: TokenStream, path: impl IntoIterator<Item = &'a str>) -> TokenStream {
     let DeriveInput {
         ident, generics, ..
     } = parse_macro_input!(input as DeriveInput);
-    let message_path = full_path(ident.span(), vec!["entia", "message", "Message"]);
+    let path = full_path(ident.span(), path);
     let (impl_generics, type_generics, where_clauses) = generics.split_for_impl();
+    let mut where_clauses = where_clauses.cloned().unwrap_or_else(|| WhereClause {
+        predicates: Default::default(),
+        where_token: Default::default(),
+    });
+    where_clauses.predicates.push(where_type_predicate(
+        self_type(),
+        [
+            send_bound(ident.span()),
+            sync_bound(ident.span()),
+            static_bound(ident.span()),
+        ],
+    ));
+    let meta_path = full_path(ident.span(), ["entia", "world", "meta", "Meta"]);
+    let meta_macro_path = full_path(ident.span(), ["entia", "meta"]);
+
     let code = quote! {
         #[automatically_derived]
-        impl #impl_generics #message_path for #ident #type_generics #where_clauses {}
+        impl #impl_generics #path for #ident #type_generics #where_clauses {
+            fn meta() -> #meta_path {
+                #meta_macro_path!(Self)
+            }
+        }
     };
     code.into()
 }
@@ -74,9 +80,9 @@ pub fn inject(input: TokenStream) -> TokenStream {
     {
         let world_path = world_path(ident.span());
         let result_path = result_path(ident.span());
-        let context_path = full_path(ident.span(), vec!["entia", "inject", "Context"]);
-        let inject_path = full_path(ident.span(), vec!["entia", "inject", "Inject"]);
-        let depend_path = full_path(ident.span(), vec!["entia", "Depend"]);
+        let context_path = full_path(ident.span(), ["entia", "inject", "Context"]);
+        let inject_path = full_path(ident.span(), ["entia", "inject", "Inject"]);
+        let depend_path = full_path(ident.span(), ["entia", "Depend"]);
         let get_path = |lifetime, item| {
             let mut arguments = Punctuated::new();
             arguments.push(GenericArgument::Lifetime(lifetime));
@@ -87,7 +93,7 @@ pub fn inject(input: TokenStream) -> TokenStream {
                     eq_token: Default::default(),
                 }));
             }
-            let mut path = full_path(ident.span(), vec!["entia", "inject"]);
+            let mut path = full_path(ident.span(), ["entia", "inject"]);
             path.segments.push(PathSegment {
                 ident: Ident::new("Get", ident.span()),
                 arguments: PathArguments::AngleBracketed(AngleBracketedGenericArguments {
@@ -142,17 +148,10 @@ pub fn inject(input: TokenStream) -> TokenStream {
             }));
         for (index, _, field_type) in unpack_fields(&fields) {
             let path = get_path(get_lifetime.clone(), Some(field_type));
-            let mut bounds = Punctuated::new();
-            bounds.push(TypeParamBound::Trait(TraitBound {
-                path,
-                lifetimes: None,
-                modifier: TraitBoundModifier::None,
-                paren_token: Default::default(),
-            }));
             get_generics.params.push(GenericParam::Type(TypeParam {
                 ident: Ident::new(&format!("__T{}__", index.index), ident.span()),
                 attrs: Default::default(),
-                bounds,
+                bounds: [trait_bound(path)].into_iter().collect(),
                 colon_token: Default::default(),
                 default: Default::default(),
                 eq_token: Default::default(),
@@ -240,7 +239,7 @@ pub fn filter(input: TokenStream) -> TokenStream {
     {
         let world_path = world_path(ident.span());
         let segment_path = segment_path(ident.span());
-        let filter_path = full_path(ident.span(), vec!["entia", "query", "filter", "Filter"]);
+        let filter_path = full_path(ident.span(), ["entia", "query", "filter", "Filter"]);
         let (impl_generics, type_generics, where_clauses) = generics.split_for_impl();
         let filter_body = unpack_fields(&fields).map(|(_, _, field_type)| {
             quote! { <#field_type as #filter_path>::filter(_segment, _world) && }
@@ -270,15 +269,10 @@ pub fn depend(input: TokenStream) -> TokenStream {
     } = parse_macro_input!(input as DeriveInput)
     {
         let world_path = world_path(ident.span());
-        let depend_path = full_path(ident.span(), vec!["entia", "depend", "Depend"]);
-        let dependency_path = full_path(ident.span(), vec!["entia", "depend", "Dependency"]);
+        let depend_path = full_path(ident.span(), ["entia", "depend", "Depend"]);
+        let dependency_path = full_path(ident.span(), ["entia", "depend", "Dependency"]);
         for parameter in generics.type_params_mut() {
-            parameter.bounds.push(TypeParamBound::Trait(TraitBound {
-                path: depend_path.clone(),
-                lifetimes: Default::default(),
-                modifier: TraitBoundModifier::None,
-                paren_token: Default::default(),
-            }))
+            parameter.bounds.push(trait_bound(depend_path.clone()))
         }
 
         let (impl_generics, type_generics, where_clauses) = generics.split_for_impl();
@@ -312,22 +306,20 @@ pub fn template(input: TokenStream) -> TokenStream {
     } = parse_macro_input!(input as DeriveInput)
     {
         let result_path = result_path(ident.span());
-        let context_path = full_path(ident.span(), vec!["entia", "template"]);
-        let template_path = full_path(ident.span(), vec!["entia", "template", "Template"]);
-        let spawn_template_path =
-            full_path(ident.span(), vec!["entia", "template", "SpawnTemplate"]);
-        let leaf_template_path = full_path(ident.span(), vec!["entia", "template", "LeafTemplate"]);
-        let static_template_path =
-            full_path(ident.span(), vec!["entia", "template", "StaticTemplate"]);
+        let context_path = full_path(ident.span(), ["entia", "template"]);
+        let template_path = full_path(ident.span(), ["entia", "template", "Template"]);
+        let spawn_template_path = full_path(ident.span(), ["entia", "template", "SpawnTemplate"]);
+        let leaf_template_path = full_path(ident.span(), ["entia", "template", "LeafTemplate"]);
+        let static_template_path = full_path(ident.span(), ["entia", "template", "StaticTemplate"]);
         let indirect_lifetime = Lifetime::new("'__indirect__", ident.span());
         let indirect_path = |marker| {
             let mut arguments = Punctuated::new();
             arguments.push(GenericArgument::Lifetime(indirect_lifetime.clone()));
             arguments.push(GenericArgument::Type(Type::Path(TypePath {
-                path: full_path(ident.span(), vec!["entia", "template", marker]),
+                path: full_path(ident.span(), ["entia", "template", marker]),
                 qself: Default::default(),
             })));
-            let mut path = full_path(ident.span(), vec!["entia", "core"]);
+            let mut path = full_path(ident.span(), ["entia", "core"]);
             path.segments.push(PathSegment {
                 ident: Ident::new("Indirect", ident.span()),
                 arguments: PathArguments::AngleBracketed(AngleBracketedGenericArguments {
@@ -374,36 +366,30 @@ pub fn template(input: TokenStream) -> TokenStream {
                 predicates: Default::default(),
                 where_token: Default::default(),
             });
-            where_clauses
-                .predicates
-                .push(WherePredicate::Type(PredicateType {
-                    bounded_ty: Type::Tuple(TypeTuple {
-                        elems: unpack_fields(&fields)
-                            .map(|(_, _, field_type)| field_type)
-                            .collect(),
-                        paren_token: Default::default(),
+            where_clauses.predicates.push(where_type_predicate(
+                Type::Tuple(TypeTuple {
+                    elems: unpack_fields(&fields)
+                        .map(|(_, _, field_type)| field_type)
+                        .collect(),
+                    paren_token: Default::default(),
+                }),
+                [TypeParamBound::Trait(TraitBound {
+                    path: indirect_path.clone(),
+                    lifetimes: Some(BoundLifetimes {
+                        lifetimes: [LifetimeDef {
+                            lifetime: indirect_lifetime.clone(),
+                            attrs: Vec::new(),
+                            bounds: Default::default(),
+                            colon_token: Default::default(),
+                        }]
+                        .into_iter()
+                        .collect(),
+                        ..Default::default()
                     }),
-                    bounds: vec![TypeParamBound::Trait(TraitBound {
-                        path: indirect_path.clone(),
-                        lifetimes: Some(BoundLifetimes {
-                            lifetimes: vec![LifetimeDef {
-                                lifetime: indirect_lifetime.clone(),
-                                attrs: Vec::new(),
-                                bounds: Default::default(),
-                                colon_token: Default::default(),
-                            }]
-                            .into_iter()
-                            .collect(),
-                            ..Default::default()
-                        }),
-                        paren_token: Default::default(),
-                        modifier: TraitBoundModifier::None,
-                    })]
-                    .into_iter()
-                    .collect(),
-                    colon_token: Default::default(),
-                    lifetimes: Default::default(),
-                }));
+                    paren_token: Default::default(),
+                    modifier: TraitBoundModifier::None,
+                })],
+            ));
             quote! { unsafe impl #impl_generics #trait_path for #ident #type_generics #where_clauses { } }
         };
         let spawn_marker_impl = marker_impl(&spawn_template_path, &spawn_indirect_path);
@@ -451,15 +437,55 @@ pub fn template(input: TokenStream) -> TokenStream {
 }
 
 fn world_path(span: Span) -> Path {
-    full_path(span, vec!["entia", "world", "World"])
+    full_path(span, ["entia", "world", "World"])
 }
 
 fn result_path(span: Span) -> Path {
-    full_path(span, vec!["entia", "error", "Result"])
+    full_path(span, ["entia", "error", "Result"])
 }
 
 fn segment_path(span: Span) -> Path {
-    full_path(span, vec!["entia", "world", "segment", "Segment"])
+    full_path(span, ["entia", "world", "segment", "Segment"])
+}
+
+fn where_type_predicate(
+    bounded: Type,
+    bounds: impl IntoIterator<Item = TypeParamBound>,
+) -> WherePredicate {
+    WherePredicate::Type(PredicateType {
+        bounded_ty: bounded,
+        bounds: bounds.into_iter().collect(),
+        colon_token: Default::default(),
+        lifetimes: Default::default(),
+    })
+}
+
+fn self_type() -> Type {
+    Type::Path(TypePath {
+        path: SelfType::default().into(),
+        qself: Default::default(),
+    })
+}
+
+fn send_bound(span: Span) -> TypeParamBound {
+    trait_bound(full_path(span, ["std", "marker", "Send"]))
+}
+
+fn sync_bound(span: Span) -> TypeParamBound {
+    trait_bound(full_path(span, ["std", "marker", "Sync"]))
+}
+
+fn static_bound(span: Span) -> TypeParamBound {
+    TypeParamBound::Lifetime(Lifetime::new("'static".into(), span))
+}
+
+fn trait_bound(path: Path) -> TypeParamBound {
+    TypeParamBound::Trait(TraitBound {
+        path,
+        lifetimes: Default::default(),
+        modifier: TraitBoundModifier::None,
+        paren_token: Default::default(),
+    })
 }
 
 fn unpack_fields(fields: &Fields) -> impl Iterator<Item = (Index, Member, Type)> + '_ {
@@ -482,6 +508,6 @@ fn full_path<'a>(span: Span, segments: impl IntoIterator<Item = &'a str>) -> Pat
     }
     Path {
         segments: separated,
-        leading_colon: Some(Default::default()),
+        leading_colon: None,
     }
 }

@@ -25,14 +25,12 @@ impl<R: Resource> Inject for &mut R {
     }
 }
 
-impl<T: Default + Send + Sync + 'static> Inject for Write<T> {
-    type Input = Option<T>;
+impl<R: Resource> Inject for Write<R> {
+    type Input = Option<R>;
     type State = Self;
 
     fn initialize(input: Self::Input, mut context: inject::Context) -> Result<Self::State> {
-        let store = context
-            .world()
-            .get_or_add_resource_store(|| input.unwrap_or_default());
+        let store = context.world().get_or_add_resource_store(input);
         Ok(Self(store, usize::MAX, PhantomData))
     }
 }

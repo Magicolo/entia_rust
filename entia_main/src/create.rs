@@ -228,7 +228,7 @@ where
         let mut segment_indices = Vec::with_capacity(segment_metas.len());
 
         for (i, metas) in segment_metas.into_iter().enumerate() {
-            let segment = world.get_or_add_segment(&metas).index();
+            let segment = world.get_or_add_segment(metas).index();
             let index = match segment_to_index.get(&segment) {
                 Some(&index) => index,
                 None => {

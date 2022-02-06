@@ -1,9 +1,11 @@
 use crate::{
+    self as entia,
     depend::Depend,
     error::Result,
     inject::{Context, Get, Inject},
     world::World,
     write::Write,
+    Resource,
 };
 use std::{
     any::{Any, TypeId},
@@ -20,7 +22,7 @@ pub struct State<T> {
     _marker: PhantomData<fn(T)>,
 }
 
-#[derive(Default)]
+#[derive(Resource, Default)]
 struct Inner {
     states: Vec<Box<dyn Any + Send + Sync>>,
     indices: HashMap<(usize, TypeId), usize>,

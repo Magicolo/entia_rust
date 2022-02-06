@@ -1,0 +1,11 @@
+[package]
+name = "entia_serialize"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+entia_core = { path = "../entia_core" }
+entia_macro = { path = "../entia_macro" }
+entia_serialize_derive = { path = "../entia_serialize_derive" }

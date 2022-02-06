@@ -74,7 +74,7 @@ impl Duplicate<'_> {
                 unsafe { segment.entity_store().set_all(pair.0, self.buffer) };
                 for store in segment.component_stores() {
                     let source = (store, datum.store_index as usize);
-                    unsafe { Store::duplicate(source, (store, pair.0), 1) }
+                    unsafe { Store::fill(source, (store, pair.0), 1) }
                         .expect("Store must be clonable.");
                 }
 
@@ -129,7 +129,7 @@ impl Slot {
                 // First index copies to unify behavior between the deferred and non-deferred version.
                 // If 'Clone' was used, there would be 1 additionnal 'Clone' and 'Drop' in the deferred version.
                 unsafe { Store::copy((&source, 0), (target, index), 1) };
-                unsafe { Store::duplicate((&source, 0), (target, index + 1), count - 1) }
+                unsafe { Store::fill((&source, 0), (target, index + 1), count - 1) }
                     .expect("Store must be clonable.");
                 // Since the memory at index 0 has been copied over, it must not be dropped.
                 unsafe { source.free(0, 1) };
@@ -217,6 +217,8 @@ impl Resolve for Inner {
 
 unsafe impl Depend for State {
     fn depend(&self, _: &World) -> Vec<Dependency> {
+        // TODO: These dependencies do not take into account that the 'Duplicate' module may read from any component...
+        // - See 'Slot::get'
         vec![Dependency::defer::<Entity>()]
     }
 }

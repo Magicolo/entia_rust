@@ -4,7 +4,7 @@ use crate::{
     error::{Error, Result},
     family::template::{EntityIndices, Family, SegmentIndices},
     recurse,
-    world::{meta::Meta, segment::Segment, store::Store, World},
+    world::{meta::Meta, segment::Segment, store::Store, Component, World},
 };
 use entia_core::Marker;
 use std::{collections::HashMap, marker::PhantomData, sync::Arc};
@@ -95,8 +95,8 @@ impl<'a> DeclareContext<'a> {
         DeclareContext::new(metas_index, self.segment_metas, self.world)
     }
 
-    pub fn meta<T: Send + Sync + 'static>(&mut self) -> Arc<Meta> {
-        let meta = self.world.get_or_add_meta::<T>();
+    pub fn meta<C: Component>(&mut self) -> Arc<Meta> {
+        let meta = self.world.get_or_add_meta::<C, _>(C::meta);
         self.segment_metas[self.metas_index].push(meta.clone());
         meta
     }
@@ -471,8 +471,8 @@ impl<T: SpawnTemplate, const N: usize> Template for [T; N] {
 #[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Add<T>(T);
 
-unsafe impl<T: Send + Sync + 'static> StaticTemplate for Add<T> {}
-unsafe impl<T: Send + Sync + 'static> LeafTemplate for Add<T> {}
+unsafe impl<C: Component> StaticTemplate for Add<C> {}
+unsafe impl<C: Component> LeafTemplate for Add<C> {}
 
 impl<T> Add<T> {
     #[inline]
@@ -488,13 +488,13 @@ impl<T> From<T> for Add<T> {
     }
 }
 
-impl<T: Send + Sync + 'static> Template for Add<T> {
+impl<C: Component> Template for Add<C> {
     type Input = ();
     type Declare = Arc<Meta>;
     type State = Arc<Store>;
 
     fn declare(_: Self::Input, mut context: DeclareContext) -> Self::Declare {
-        context.meta::<T>()
+        context.meta::<C>()
     }
 
     fn initialize(state: Self::Declare, context: InitializeContext) -> Self::State {

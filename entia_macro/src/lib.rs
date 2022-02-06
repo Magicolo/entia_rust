@@ -10,6 +10,22 @@ macro_rules! count {
 }
 
 #[macro_export]
+macro_rules! first {
+    () => {};
+    ($v:ident $(,$vs:ident)*) => {
+        $v
+    };
+}
+
+#[macro_export]
+macro_rules! last {
+    () => {};
+    ($($vs:ident,)* $v:ident) => {
+        $v
+    };
+}
+
+#[macro_export]
 macro_rules! recurse {
     ($m:ident) => { $m!(); };
     ($m:ident, $p:ident, $t:ident $(,$ps:ident, $ts:ident)*) => {

@@ -1,10 +1,11 @@
-use crate::entity::Entity;
+use crate::{self as entia, entity::Entity, Resource};
 use std::{
     cmp::{max, min},
     mem::replace,
     sync::atomic::{AtomicIsize, AtomicUsize, Ordering},
 };
 
+#[derive(Resource)]
 pub struct Entities {
     free: (Vec<Entity>, AtomicIsize),
     data: (Vec<Datum>, AtomicUsize),
