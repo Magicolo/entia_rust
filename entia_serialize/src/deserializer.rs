@@ -1,21 +1,12 @@
-use crate::{deserialize::*, node::Node};
+use crate::deserialize::*;
 use std::str::{self, Utf8Error};
 
-pub trait Deserializer {
-    type Error;
-    type Primitive: Primitive<Error = Self::Error>;
+pub trait Deserializer: Sized {
+    type Error: From<Utf8Error>;
     type Structure: Structure<Error = Self::Error>;
-    type Sequence: Sequence<Error = Self::Error>;
     type Enumeration: Enumeration<Error = Self::Error>;
-
-    fn primitive(self) -> Result<Self::Primitive, Self::Error>;
-    fn structure(self, name: &'static str) -> Result<Self::Structure, Self::Error>;
-    fn enumeration(self, name: &'static str) -> Result<Self::Enumeration, Self::Error>;
-    fn sequence(self) -> Result<Self::Sequence, Self::Error>;
-}
-
-pub trait Primitive: Sized {
-    type Error;
+    type List: List<Error = Self::Error>;
+    type Map: Map<Error = Self::Error>;
 
     fn unit(self) -> Result<(), Self::Error>;
     fn bool(self) -> Result<bool, Self::Error>;
@@ -46,27 +37,16 @@ pub trait Primitive: Sized {
     //     Ok(self.mutable()?)
     // }
     // fn mutable<T: ?Sized>(self) -> Result<*mut T, Self::Error>;
-}
 
-pub trait Structure {
-    type Error;
-    type Fields: Fields<Error = Self::Error>;
-    fn map<const N: usize>(self) -> Result<Self::Fields, Self::Error>;
-}
+    fn list(self) -> Result<Self::List, Self::Error>;
+    fn map(self) -> Result<Self::Map, Self::Error>;
 
-pub trait Sequence: Sized {
-    // TODO: Is there a better way to achieve this than 'From<Utf8Error>'?
-    type Error: From<Utf8Error>;
-    type Items: Items<Error = Self::Error>;
-    type Fields: Fields<Error = Self::Error>;
-
-    fn list(self) -> Result<Self::Items, Self::Error>;
-    fn map(self) -> Result<Self::Fields, Self::Error>;
-
-    fn tuple<const N: usize>(self) -> Result<Self::Items, Self::Error> {
+    #[inline]
+    fn tuple<const N: usize>(self) -> Result<Self::List, Self::Error> {
         self.list()
     }
 
+    #[inline]
     fn string(self, value: &mut str, fill: bool) -> Result<&mut str, Self::Error> {
         let value = unsafe { value.as_bytes_mut() };
         let (index, error) = match self.bytes(value, fill) {
@@ -93,34 +73,38 @@ pub trait Sequence: Sized {
         }
     }
 
+    #[inline]
     fn bytes(self, value: &mut [u8], fill: bool) -> Result<&mut [u8], Self::Error> {
         self.slice::<u8>(value, fill)
     }
 
+    #[inline]
     fn array<T: Deserialize, const N: usize>(
         self,
         value: [T; N],
     ) -> Result<[T::Value; N], Self::Error> {
-        let mut items = self.list()?;
+        let mut list = self.list()?;
         let mut values = [(); N].map(|_| None);
         let mut index = 0;
         for value in value {
-            index += 1;
-            values[index] = Some(match items.item()? {
+            values[index] = Some(match list.item()? {
                 Some(item) => item.value(value)?,
-                None => items.miss(value)?,
+                None => list.miss(value)?,
             });
+            index += 1;
         }
+        list.drain()?;
         Ok(values.map(Option::unwrap))
     }
 
+    #[inline]
     fn slice<T>(self, value: &mut [T], fill: bool) -> Result<&mut [T], Self::Error>
     where
         for<'a> &'a mut T: Deserialize,
     {
-        let mut items = self.list()?;
+        let mut list = self.list()?;
         let mut index = 0;
-        while let Some(item) = items.item()? {
+        while let Some(item) = list.item()? {
             match value.get_mut(index) {
                 Some(value) => {
                     item.value(value)?;
@@ -131,14 +115,25 @@ pub trait Sequence: Sized {
         }
 
         if fill {
-            while index < value.len() {
-                items.miss(&mut value[index])?;
-                index += 1;
+            for value in &mut value[index..] {
+                list.miss(value)?;
             }
         }
-
         Ok(&mut value[..index])
     }
+
+    fn structure<T: ?Sized>(self) -> Result<Self::Structure, Self::Error>;
+    fn enumeration<T: ?Sized>(self) -> Result<Self::Enumeration, Self::Error>;
+}
+
+pub trait Structure {
+    type Error;
+    type List: List<Error = Self::Error>;
+    type Map: Map<Error = Self::Error>;
+
+    fn unit(self) -> Result<(), Self::Error>;
+    fn tuple<const N: usize>(self) -> Result<Self::List, Self::Error>;
+    fn map<const N: usize>(self) -> Result<Self::Map, Self::Error>;
 }
 
 pub trait Enumeration {
@@ -154,47 +149,46 @@ pub trait Enumeration {
 
 pub trait Variant {
     type Error;
-    type Fields: Fields<Error = Self::Error>;
-    type Items: Items<Error = Self::Error>;
+    type Map: Map<Error = Self::Error>;
+    type List: List<Error = Self::Error>;
 
     fn unit(self, name: &'static str, index: usize) -> Result<(), Self::Error>;
     fn map<const N: usize>(
         self,
         name: &'static str,
         index: usize,
-    ) -> Result<Self::Fields, Self::Error>;
+    ) -> Result<Self::Map, Self::Error>;
     fn tuple<const N: usize>(
         self,
         name: &'static str,
         index: usize,
-    ) -> Result<Self::Items, Self::Error>;
+    ) -> Result<Self::List, Self::Error>;
     fn excess<V: Deserialize>(self, value: V) -> Result<V::Value, Self::Error>;
 }
 
-pub trait Fields: Sized {
+pub trait Map {
     type Error;
     type Field: Field<Error = Self::Error>;
 
-    // For a json parser:
-    // - Tries to parse at head as 'K'.
-    // - If 'Ok(K)', move the head right after the ':' and return 'Some((K, Field(head)))'.
-    // - If 'Err(E)', move the head before the next key and loop; if no keys are left return 'None'.
     fn field<K: Deserialize>(
         &mut self,
         key: K,
     ) -> Result<Option<(K::Value, Self::Field)>, Self::Error>;
-    // The implementator will decide if a missing field should produce an error or if it can be recovered
-    // by producing a default value of type 'V'.
     fn miss<K, V: Deserialize>(&mut self, key: K, value: V) -> Result<V::Value, Self::Error>;
 }
 
-pub trait Field {
+pub trait Field: Sized {
     type Error;
+
     fn value<V: Deserialize>(self, value: V) -> Result<V::Value, Self::Error>;
-    fn excess(self) -> Result<(), Self::Error>;
+
+    #[inline]
+    fn excess(self) -> Result<(), Self::Error> {
+        Ok(())
+    }
 }
 
-pub trait Items: Sized {
+pub trait List: Sized {
     type Error;
     type Item: Item<Error = Self::Error>;
 
@@ -210,271 +204,11 @@ pub trait Items: Sized {
     }
 }
 
-pub trait Item {
+pub trait Item: Sized {
     type Error;
     fn value<V: Deserialize>(self, value: V) -> Result<V::Value, Self::Error>;
-    fn excess(self) -> Result<(), Self::Error>;
-}
-
-pub struct NodeDeserializer<'a>(&'a Node);
-pub struct FieldsDeserializer<'a>(&'a [(Node, Node)], usize);
-pub struct ItemsDeserializer<'a>(&'a [Node], usize);
-
-pub enum Error {
-    ExpectedObjectNode,
-    Utf8(Utf8Error),
-}
-
-impl From<Utf8Error> for Error {
-    fn from(error: Utf8Error) -> Self {
-        Error::Utf8(error)
-    }
-}
-
-impl NodeDeserializer<'_> {
-    pub fn deserialize<T>(node: &Node) -> Result<<New<T> as Deserialize>::Value, Error>
-    where
-        New<T>: Deserialize,
-    {
-        New::<T>::new().deserialize(NodeDeserializer(node))
-    }
-}
-
-impl Deserializer for NodeDeserializer<'_> {
-    type Error = Error;
-    type Primitive = Self;
-    type Structure = Self;
-    type Sequence = Self;
-    type Enumeration = Self;
 
     #[inline]
-    fn primitive(self) -> Result<Self::Primitive, Self::Error> {
-        Ok(self)
-    }
-    #[inline]
-    fn structure(self, _: &'static str) -> Result<Self::Structure, Self::Error> {
-        Ok(self)
-    }
-    #[inline]
-    fn enumeration(self, _: &'static str) -> Result<Self::Enumeration, Self::Error> {
-        Ok(self)
-    }
-    #[inline]
-    fn sequence(self) -> Result<Self::Sequence, Self::Error> {
-        Ok(self)
-    }
-}
-
-impl Primitive for NodeDeserializer<'_> {
-    type Error = Error;
-
-    #[inline]
-    fn unit(self) -> Result<(), Self::Error> {
-        Ok(())
-    }
-    #[inline]
-    fn bool(self) -> Result<bool, Self::Error> {
-        Ok(self.0.boolean().unwrap_or_default())
-    }
-    #[inline]
-    fn char(self) -> Result<char, Self::Error> {
-        Ok(self.0.character().unwrap_or_default())
-    }
-    #[inline]
-    fn u8(self) -> Result<u8, Self::Error> {
-        Ok(self.isize()? as _)
-    }
-    #[inline]
-    fn u16(self) -> Result<u16, Self::Error> {
-        Ok(self.isize()? as _)
-    }
-    #[inline]
-    fn u32(self) -> Result<u32, Self::Error> {
-        Ok(self.isize()? as _)
-    }
-    #[inline]
-    fn u64(self) -> Result<u64, Self::Error> {
-        Ok(self.isize()? as _)
-    }
-    #[inline]
-    fn u128(self) -> Result<u128, Self::Error> {
-        Ok(self.isize()? as _)
-    }
-    #[inline]
-    fn usize(self) -> Result<usize, Self::Error> {
-        Ok(self.isize()? as _)
-    }
-    #[inline]
-    fn i8(self) -> Result<i8, Self::Error> {
-        Ok(self.isize()? as _)
-    }
-    #[inline]
-    fn i16(self) -> Result<i16, Self::Error> {
-        Ok(self.isize()? as _)
-    }
-    #[inline]
-    fn i32(self) -> Result<i32, Self::Error> {
-        Ok(self.isize()? as _)
-    }
-    #[inline]
-    fn i64(self) -> Result<i64, Self::Error> {
-        Ok(self.isize()? as _)
-    }
-    #[inline]
-    fn i128(self) -> Result<i128, Self::Error> {
-        Ok(self.isize()? as _)
-    }
-    #[inline]
-    fn isize(self) -> Result<isize, Self::Error> {
-        Ok(self.0.integer().unwrap_or_default())
-    }
-    #[inline]
-    fn f32(self) -> Result<f32, Self::Error> {
-        Ok(self.f64()? as _)
-    }
-    #[inline]
-    fn f64(self) -> Result<f64, Self::Error> {
-        Ok(self.0.floating().unwrap_or_default())
-    }
-}
-
-impl<'a> Structure for NodeDeserializer<'a> {
-    type Error = Error;
-    type Fields = FieldsDeserializer<'a>;
-
-    fn map<const N: usize>(self) -> Result<Self::Fields, Self::Error> {
-        match self.0 {
-            Node::Object(pairs) => Ok(FieldsDeserializer(pairs, 0)),
-            _ => Err(Error::ExpectedObjectNode),
-        }
-    }
-}
-
-impl Enumeration for NodeDeserializer<'_> {
-    type Error = Error;
-    type Variant = Self;
-
-    // TODO: Is this right?
-    #[inline]
-    fn never<K: Deserialize>(self, key: K) -> Result<K::Value, Self::Error> {
-        key.deserialize(self)
-    }
-
-    #[inline]
-    fn variant<K: Deserialize, const N: usize>(
-        self,
-        key: K,
-    ) -> Result<(K::Value, Self::Variant), Self::Error> {
-        match self.0 {
-            Node::Object(pairs) if pairs.len() > 0 => {
-                let pair = &pairs[0];
-                let key = key.deserialize(NodeDeserializer(&pair.0))?;
-                Ok((key, self))
-            }
-            _ => Err(Error::ExpectedObjectNode),
-        }
-    }
-}
-
-impl<'a> Variant for NodeDeserializer<'a> {
-    type Error = Error;
-    type Fields = FieldsDeserializer<'a>;
-    type Items = ItemsDeserializer<'a>;
-
-    fn unit(self, _: &'static str, _: usize) -> Result<(), Self::Error> {
-        todo!()
-    }
-
-    fn map<const N: usize>(self, _: &'static str, _: usize) -> Result<Self::Fields, Self::Error> {
-        todo!()
-    }
-
-    fn tuple<const N: usize>(self, _: &'static str, _: usize) -> Result<Self::Items, Self::Error> {
-        todo!()
-    }
-
-    #[inline]
-    fn excess<V: Deserialize>(self, value: V) -> Result<V::Value, Self::Error> {
-        value.deserialize(self)
-    }
-}
-
-impl<'a> Sequence for NodeDeserializer<'a> {
-    type Error = Error;
-    type Items = ItemsDeserializer<'a>;
-    type Fields = FieldsDeserializer<'a>;
-
-    fn list(self) -> Result<Self::Items, Self::Error> {
-        todo!()
-    }
-
-    fn map(self) -> Result<Self::Fields, Self::Error> {
-        todo!()
-    }
-}
-
-impl<'a> Fields for FieldsDeserializer<'a> {
-    type Error = Error;
-    type Field = NodeDeserializer<'a>;
-
-    fn field<K: Deserialize>(
-        &mut self,
-        key: K,
-    ) -> Result<Option<(K::Value, Self::Field)>, Self::Error> {
-        match self.0.get(self.1) {
-            Some(pair) => {
-                self.1 += 1;
-                let key = key.deserialize(NodeDeserializer(&pair.0))?;
-                let field = NodeDeserializer(&pair.1);
-                Ok(Some((key, field)))
-            }
-            None => Ok(None),
-        }
-    }
-
-    fn miss<K, V: Deserialize>(&mut self, _: K, value: V) -> Result<V::Value, Self::Error> {
-        value.deserialize(NodeDeserializer(&Node::Null))
-    }
-}
-
-impl Field for NodeDeserializer<'_> {
-    type Error = Error;
-
-    fn value<V: Deserialize>(self, value: V) -> Result<V::Value, Self::Error> {
-        value.deserialize(self)
-    }
-
-    fn excess(self) -> Result<(), Self::Error> {
-        Ok(())
-    }
-}
-
-impl<'a> Items for ItemsDeserializer<'a> {
-    type Error = Error;
-    type Item = NodeDeserializer<'a>;
-
-    fn item(&mut self) -> Result<Option<Self::Item>, Self::Error> {
-        match self.0.get(self.1) {
-            Some(node) => {
-                self.1 += 1;
-                Ok(Some(NodeDeserializer(node)))
-            }
-            None => Ok(None),
-        }
-    }
-
-    fn miss<V: Deserialize>(&mut self, value: V) -> Result<V::Value, Self::Error> {
-        value.deserialize(NodeDeserializer(&Node::Null))
-    }
-}
-
-impl Item for NodeDeserializer<'_> {
-    type Error = Error;
-
-    fn value<V: Deserialize>(self, value: V) -> Result<V::Value, Self::Error> {
-        value.deserialize(self)
-    }
-
     fn excess(self) -> Result<(), Self::Error> {
         Ok(())
     }

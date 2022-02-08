@@ -1,4 +1,4 @@
-use crate::{deserializer::*, node::Node, recurse};
+use crate::{deserializer::*, json::Node, recurse};
 use std::{
     marker::PhantomData,
     str::{self, Utf8Error},
@@ -7,22 +7,22 @@ use std::{
 pub struct Boba {
     a: bool,
     b: usize,
-    c: Vec<bool>,
+    c: bool,
 }
 
 pub enum Fett {
     A,
     B(bool, usize, Boba),
-    C { a: Vec<bool>, b: char, c: String },
+    C { a: bool, b: char, c: String },
 }
-
-#[derive(Debug)]
-pub struct New<T: ?Sized>(PhantomData<T>);
 
 pub trait Deserialize {
     type Value;
     fn deserialize<D: Deserializer>(self, deserializer: D) -> Result<Self::Value, D::Error>;
 }
+
+#[derive(Debug)]
+pub struct New<T: ?Sized>(PhantomData<T>);
 
 impl<T: ?Sized> New<T> {
     #[inline]
@@ -74,7 +74,7 @@ impl<T: Deserialize, const N: usize> Deserialize for [T; N] {
 
     #[inline]
     fn deserialize<D: Deserializer>(self, deserializer: D) -> Result<Self::Value, D::Error> {
-        deserializer.sequence()?.array(self)
+        deserializer.array(self)
     }
 }
 
@@ -86,7 +86,7 @@ where
 
     #[inline]
     fn deserialize<D: Deserializer>(self, deserializer: D) -> Result<Self::Value, D::Error> {
-        deserializer.sequence()?.array([New::<T>::new(); N])
+        deserializer.array([New::<T>::new(); N])
     }
 }
 
@@ -99,9 +99,7 @@ where
     fn deserialize<D: Deserializer>(self, deserializer: D) -> Result<Self::Value, D::Error> {
         // TODO: Use 'self.0.each_mut' when it stabilizes.
         let mut iterator = self.iter_mut();
-        deserializer
-            .sequence()?
-            .array([(); N].map(|_| iterator.next().unwrap()))
+        deserializer.array([(); N].map(|_| iterator.next().unwrap()))
     }
 }
 
@@ -112,7 +110,7 @@ where
     type Value = &'a mut [T];
 
     fn deserialize<D: Deserializer>(self, deserializer: D) -> Result<Self::Value, D::Error> {
-        deserializer.sequence()?.slice::<T>(self, false)
+        deserializer.slice::<T>(self, false)
     }
 }
 
@@ -120,7 +118,7 @@ impl<'a> Deserialize for &'a mut str {
     type Value = &'a mut str;
 
     fn deserialize<D: Deserializer>(self, deserializer: D) -> Result<Self::Value, D::Error> {
-        deserializer.sequence()?.string(self, false)
+        deserializer.string(self, false)
     }
 }
 
@@ -131,10 +129,10 @@ where
     type Value = Vec<T>;
 
     fn deserialize<D: Deserializer>(self, deserializer: D) -> Result<Self::Value, D::Error> {
-        let mut items = deserializer.sequence()?.list()?;
+        let mut list = deserializer.list()?;
         // TODO: Get capacity somehow? Maybe through 'impl Iterator for Items'?
         let mut value = Vec::new();
-        while let Some(item) = items.item()? {
+        while let Some(item) = list.item()? {
             value.push(item.value(New::<T>::new())?);
         }
         Ok(value)
@@ -149,9 +147,9 @@ where
     type Value = ();
 
     fn deserialize<D: Deserializer>(self, deserializer: D) -> Result<Self::Value, D::Error> {
-        let mut items = deserializer.sequence()?.list()?;
+        let mut list = deserializer.list()?;
         let mut index = 0;
-        while let Some(item) = items.item()? {
+        while let Some(item) = list.item()? {
             match self.get_mut(index) {
                 Some(value) => {
                     item.value(value)?;
@@ -170,10 +168,10 @@ impl Deserialize for New<String> {
 
     fn deserialize<D: Deserializer>(self, deserializer: D) -> Result<Self::Value, D::Error> {
         todo!()
-        // let mut items = deserializer.sequence()?.list()?;
+        // let mut list = deserializer.sequence()?.list()?;
         // // TODO: Get capacity somehow? Maybe through 'impl Iterator for Items'?
         // let mut value = Vec::new();
-        // while let Some(item) = items.item()? {
+        // while let Some(item) = list.item()? {
         //     value.push(item.value(New::<char>::new())?);
         // }
         // Ok(value)
@@ -185,9 +183,9 @@ impl Deserialize for &mut String {
 
     fn deserialize<D: Deserializer>(self, deserializer: D) -> Result<Self::Value, D::Error> {
         todo!()
-        // let mut items = deserializer.sequence()?.list()?;
+        // let mut list = deserializer.sequence()?.list()?;
         // let mut index = 0;
-        // while let Some(item) = items.item()? {
+        // while let Some(item) = list.item()? {
         //     match self.get_mut(index) {
         //         Some(value) => {
         //             item.value(value)?;
@@ -211,7 +209,7 @@ macro_rules! primitive {
                 self,
                 deserializer: D,
             ) -> Result<Self::Value, D::Error> {
-                deserializer.primitive()?.$t()
+                deserializer.$t()
             }
         }
 
@@ -243,7 +241,7 @@ macro_rules! tuple {
                 self,
                 deserializer: D,
             ) -> Result<Self::Value, D::Error> {
-                deserializer.primitive()?.unit()
+                deserializer.unit()
             }
         }
 
@@ -281,9 +279,9 @@ macro_rules! tuple {
                 deserializer: D,
             ) -> Result<Self::Value, D::Error> {
                 let ($($p,)*) = self;
-                let mut items = deserializer.sequence()?.list()?;
-                $(let $p = match items.item()? { Some(item) => item.value($p)?, None => items.miss($p)?, };)*
-                while let Some(item) = items.item()? {
+                let mut list = deserializer.list()?;
+                $(let $p = match list.item()? { Some(item) => item.value($p)?, None => list.miss($p)?, };)*
+                while let Some(item) = list.item()? {
                     item.excess()?;
                 }
                 Ok(($($p,)*))
@@ -326,16 +324,16 @@ macro_rules! tuple {
 recurse!(tuple);
 
 #[inline]
-fn value_or_miss<I: Items, V: Deserialize>(items: &mut I, value: V) -> Result<V::Value, I::Error> {
-    match items.item()? {
+fn value_or_miss<L: List, V: Deserialize>(list: &mut L, value: V) -> Result<V::Value, L::Error> {
+    match list.item()? {
         Some(item) => item.value(value),
-        None => items.miss(value),
+        None => list.miss(value),
     }
 }
 
 #[inline]
-fn value_or_skip<I: Items, V: Deserialize>(items: &mut I, value: V) -> Result<(), I::Error> {
-    if let Some(item) = items.item()? {
+fn value_or_skip<L: List, V: Deserialize>(list: &mut L, value: V) -> Result<(), L::Error> {
+    if let Some(item) = list.item()? {
         item.value(value)?;
     }
     Ok(())
@@ -372,8 +370,8 @@ mod example {
         type Value = Boba;
 
         fn deserialize<D: Deserializer>(self, deserializer: D) -> Result<Self::Value, D::Error> {
-            let mut fields = deserializer.structure("Boba")?.map::<3>()?;
-            let (a, b, c) = new_map!(fields, 1, a: bool, b: usize, c: Vec<bool>);
+            let mut map = deserializer.structure::<Boba>()?.map::<3>()?;
+            let (a, b, c) = new_map!(map, 1, a: bool, b: usize, c: bool);
             Ok(Boba { a, b, c })
         }
     }
@@ -382,9 +380,9 @@ mod example {
         type Value = ();
 
         fn deserialize<D: Deserializer>(self, deserializer: D) -> Result<Self::Value, D::Error> {
-            let mut fields = deserializer.structure("Boba")?.map::<3>()?;
+            let mut map = deserializer.structure::<Boba>()?.map::<3>()?;
             let Boba { a, b, c } = self;
-            use_map!(fields, 1, a, b, c);
+            use_map!(map, 1, a, b, c);
             Ok(())
         }
     }
@@ -395,7 +393,7 @@ mod example {
         fn deserialize<D: Deserializer>(self, deserializer: D) -> Result<Self::Value, D::Error> {
             let key = &mut [0];
             let (key, variant) = deserializer
-                .enumeration("Fett")?
+                .enumeration::<Fett>()?
                 .variant::<_, 3>(unsafe { str::from_utf8_unchecked_mut(key) })?;
             match &*key {
                 "A" => {
@@ -403,19 +401,19 @@ mod example {
                     Ok(Fett::A)
                 }
                 "B" => {
-                    let mut items = variant.tuple::<3>("B", 1)?;
-                    let a = value_or_miss(&mut items, New::<bool>::new())?;
-                    let b = value_or_miss(&mut items, New::<usize>::new())?;
-                    let c = value_or_miss(&mut items, New::<Boba>::new())?;
-                    items.drain()?;
+                    let mut list = variant.tuple::<3>("B", 1)?;
+                    let a = value_or_miss(&mut list, New::<bool>::new())?;
+                    let b = value_or_miss(&mut list, New::<usize>::new())?;
+                    let c = value_or_miss(&mut list, New::<Boba>::new())?;
+                    list.drain()?;
                     Ok(Fett::B(a, b, c))
                 }
                 "C" => {
-                    let mut fields = variant.map::<3>("C", 2)?;
-                    let (a, b, c) = new_map!(fields, 1, a: Vec<bool>, b: char, c: String);
+                    let mut map = variant.map::<3>("C", 2)?;
+                    let (a, b, c) = new_map!(map, 1, a: bool, b: char, c: String);
                     Ok(Fett::C { a, b, c })
                 }
-                _ => todo!(), // variant.excess()?,
+                _ => variant.excess(self),
             }
         }
     }
@@ -427,7 +425,7 @@ mod example {
         fn deserialize<D: Deserializer>(self, deserializer: D) -> Result<Self::Value, D::Error> {
             let key = &mut [0];
             let (key, variant) = deserializer
-                .enumeration("Fett")?
+                .enumeration::<Fett>()?
                 .variant::<_, 3>(unsafe { str::from_utf8_unchecked_mut(key) })?;
             match &*key {
                 "A" => {
@@ -436,36 +434,36 @@ mod example {
                     Ok(())
                 }
                 "B" => {
-                    let mut items = variant.tuple::<3>("B", 1)?;
+                    let mut list = variant.tuple::<3>("B", 1)?;
                     match self {
                         Fett::B(a, b, c) => {
-                            value_or_skip(&mut items, a)?;
-                            value_or_skip(&mut items, b)?;
-                            value_or_skip(&mut items, c)?;
+                            value_or_skip(&mut list, a)?;
+                            value_or_skip(&mut list, b)?;
+                            value_or_skip(&mut list, c)?;
                         }
                         value => {
-                            let a = value_or_miss(&mut items, New::<bool>::new())?;
-                            let b = value_or_miss(&mut items, New::<usize>::new())?;
-                            let c = value_or_miss(&mut items, New::<Boba>::new())?;
+                            let a = value_or_miss(&mut list, New::<bool>::new())?;
+                            let b = value_or_miss(&mut list, New::<usize>::new())?;
+                            let c = value_or_miss(&mut list, New::<Boba>::new())?;
                             *value = Fett::B(a, b, c);
                         }
                     }
-                    items.drain()
+                    list.drain()
                 }
                 "C" => {
-                    let mut fields = variant.map::<3>("C", 2)?;
+                    let mut map = variant.map::<3>("C", 2)?;
                     match self {
                         Fett::C { a, b, c } => {
-                            use_map!(fields, 1, a, b, c);
+                            use_map!(map, 1, a, b, c);
                         }
                         value => {
-                            let (a, b, c) = new_map!(fields, 1, a: Vec<bool>, b: char, c: String);
+                            let (a, b, c) = new_map!(map, 1, a: bool, b: char, c: String);
                             *value = Fett::C { a, b, c };
                         }
                     }
                     Ok(())
                 }
-                _ => todo!(), // variant.excess()???
+                _ => Variant::excess(variant, self),
             }
         }
     }
@@ -474,21 +472,24 @@ mod example {
 mod node {
     use super::*;
     pub struct NodeDeserializer<'a>(&'a Node);
-    pub struct FieldsDeserializer<'a>(&'a [(Node, Node)], usize);
-    pub struct ItemsDeserializer<'a>(&'a [Node], usize);
+    pub struct MapDeserializer<'a>(&'a [(Node, Node)], usize);
+    pub struct ListDeserializer<'a>(&'a [Node], usize);
 
     pub enum Error {
+        ExpectedArrayNode,
         ExpectedObjectNode,
         Utf8(Utf8Error),
     }
 
     impl From<Utf8Error> for Error {
+        #[inline]
         fn from(error: Utf8Error) -> Self {
             Error::Utf8(error)
         }
     }
 
     impl NodeDeserializer<'_> {
+        #[inline]
         pub fn deserialize<T>(node: &Node) -> Result<<New<T> as Deserialize>::Value, Error>
         where
             New<T>: Deserialize,
@@ -497,33 +498,12 @@ mod node {
         }
     }
 
-    impl Deserializer for NodeDeserializer<'_> {
+    impl<'a> Deserializer for NodeDeserializer<'a> {
         type Error = Error;
-        type Primitive = Self;
         type Structure = Self;
-        type Sequence = Self;
         type Enumeration = Self;
-
-        #[inline]
-        fn primitive(self) -> Result<Self::Primitive, Self::Error> {
-            Ok(self)
-        }
-        #[inline]
-        fn structure(self, name: &'static str) -> Result<Self::Structure, Self::Error> {
-            Ok(self)
-        }
-        #[inline]
-        fn enumeration(self, name: &'static str) -> Result<Self::Enumeration, Self::Error> {
-            Ok(self)
-        }
-        #[inline]
-        fn sequence(self) -> Result<Self::Sequence, Self::Error> {
-            Ok(self)
-        }
-    }
-
-    impl Primitive for NodeDeserializer<'_> {
-        type Error = Error;
+        type List = ListDeserializer<'a>;
+        type Map = MapDeserializer<'a>;
 
         #[inline]
         fn unit(self) -> Result<(), Self::Error> {
@@ -593,15 +573,43 @@ mod node {
         fn f64(self) -> Result<f64, Self::Error> {
             Ok(self.0.floating().unwrap_or_default())
         }
+        #[inline]
+        fn list(self) -> Result<Self::List, Self::Error> {
+            todo!()
+        }
+        #[inline]
+        fn map(self) -> Result<Self::Map, Self::Error> {
+            todo!()
+        }
+        #[inline]
+        fn structure<T: ?Sized>(self) -> Result<Self::Structure, Self::Error> {
+            Ok(self)
+        }
+        #[inline]
+        fn enumeration<T: ?Sized>(self) -> Result<Self::Enumeration, Self::Error> {
+            Ok(self)
+        }
     }
 
     impl<'a> Structure for NodeDeserializer<'a> {
         type Error = Error;
-        type Fields = FieldsDeserializer<'a>;
+        type List = ListDeserializer<'a>;
+        type Map = MapDeserializer<'a>;
 
-        fn map<const N: usize>(self) -> Result<Self::Fields, Self::Error> {
+        fn unit(self) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn tuple<const N: usize>(self) -> Result<Self::List, Self::Error> {
             match self.0 {
-                Node::Object(pairs) => Ok(FieldsDeserializer(pairs, 0)),
+                Node::Array(nodes) => Ok(ListDeserializer(nodes, 0)),
+                _ => Err(Error::ExpectedArrayNode),
+            }
+        }
+
+        fn map<const N: usize>(self) -> Result<Self::Map, Self::Error> {
+            match self.0 {
+                Node::Object(pairs) => Ok(MapDeserializer(pairs, 0)),
                 _ => Err(Error::ExpectedObjectNode),
             }
         }
@@ -635,8 +643,8 @@ mod node {
 
     impl<'a> Variant for NodeDeserializer<'a> {
         type Error = Error;
-        type Fields = FieldsDeserializer<'a>;
-        type Items = ItemsDeserializer<'a>;
+        type Map = MapDeserializer<'a>;
+        type List = ListDeserializer<'a>;
 
         fn unit(self, name: &'static str, index: usize) -> Result<(), Self::Error> {
             todo!()
@@ -646,7 +654,7 @@ mod node {
             self,
             name: &'static str,
             index: usize,
-        ) -> Result<Self::Fields, Self::Error> {
+        ) -> Result<Self::Map, Self::Error> {
             todo!()
         }
 
@@ -654,7 +662,7 @@ mod node {
             self,
             name: &'static str,
             index: usize,
-        ) -> Result<Self::Items, Self::Error> {
+        ) -> Result<Self::List, Self::Error> {
             todo!()
         }
 
@@ -664,21 +672,7 @@ mod node {
         }
     }
 
-    impl<'a> Sequence for NodeDeserializer<'a> {
-        type Error = Error;
-        type Items = ItemsDeserializer<'a>;
-        type Fields = FieldsDeserializer<'a>;
-
-        fn list(self) -> Result<Self::Items, Self::Error> {
-            todo!()
-        }
-
-        fn map(self) -> Result<Self::Fields, Self::Error> {
-            todo!()
-        }
-    }
-
-    impl<'a> Fields for FieldsDeserializer<'a> {
+    impl<'a> Map for MapDeserializer<'a> {
         type Error = Error;
         type Field = NodeDeserializer<'a>;
 
@@ -714,7 +708,7 @@ mod node {
         }
     }
 
-    impl<'a> Items for ItemsDeserializer<'a> {
+    impl<'a> List for ListDeserializer<'a> {
         type Error = Error;
         type Item = NodeDeserializer<'a>;
 
