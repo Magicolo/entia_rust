@@ -5,6 +5,7 @@ pub mod primitive;
 
 use self::any::Any;
 pub(crate) use entia_macro::recurse_16 as recurse;
+use generator::constant::{constant, Constant};
 pub use generator::{size::Size, FullGenerator, Generator, IntoGenerator};
 use std::ops::{self, Neg};
 
@@ -27,17 +28,18 @@ where
 }
 
 pub fn letter() -> impl Generator<Item = char> {
-    const LETTERS: [char; 52] = [
+    const LETTERS: [Constant<char>; 52] = constant![
         'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r',
         's', 't', 'u', 'v', 'w', 'x', 'y', 'z', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J',
-        'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
+        'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'
     ];
-    &LETTERS
+    Any::from(&LETTERS).map(Option::unwrap)
 }
 
 pub fn digit() -> impl Generator<Item = char> {
-    const DIGITS: [char; 10] = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
-    &DIGITS
+    const DIGITS: [Constant<char>; 10] =
+        constant!['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
+    Any::from(&DIGITS).map(Option::unwrap)
 }
 
 pub fn ascii() -> impl Generator<Item = char> {
@@ -46,6 +48,11 @@ pub fn ascii() -> impl Generator<Item = char> {
         digit(),
         (0..=0x7Fu8).generator().map(|value| value as char),
     ))
+}
+
+pub fn option<T: FullGenerator>() -> impl Generator<Item = Option<T::Item>> {
+    let none: fn() -> Option<T::Item> = || None;
+    Any::from((T::generator().map(Some), none))
 }
 
 #[cfg(test)]

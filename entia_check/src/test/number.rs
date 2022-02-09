@@ -30,7 +30,7 @@ mod range {
                 #[test]
                 fn is_constant() {
                     for value in $t::generator().sample(COUNT) $(.filter(|value| value.$f()))? {
-                        assert_that(&[value].sample(1).next().unwrap()).is_equal_to(value);
+                        assert_that(&Constant(value).sample(1).next().unwrap()).is_equal_to(value);
                     }
                 }
 
