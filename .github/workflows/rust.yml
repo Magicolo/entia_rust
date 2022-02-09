@@ -15,9 +15,9 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
-    - name: Run tests
+    - name: Test
       run: cargo test --verbose --workspace
-      
+
   build:
     runs-on: ubuntu-latest
 
