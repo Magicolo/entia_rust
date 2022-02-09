@@ -215,7 +215,7 @@ mod character {
         }
 
         fn shrink(&self, state: &mut Self::State) -> Option<Self> {
-            Some(Size(self.deref().shrink(state)?, false))
+            Some(self.deref().shrink(state)?.size())
         }
     }
 
@@ -366,6 +366,7 @@ mod number {
                 }
 
                 fn shrink(&self, state: &mut Self::State) -> Option<Self> {
+                    // TODO: Shrinking never stops...
                     if self.start == self.end {
                         None
                     } else if *state < $t::default() {
@@ -413,7 +414,7 @@ mod number {
                 }
 
                 fn shrink(&self, state: &mut Self::State) -> Option<Self> {
-                    Some(Size(self.deref().shrink(state)?, false))
+                    Some(self.deref().shrink(state)?.size())
                 }
             }
 
@@ -455,7 +456,7 @@ mod number {
                 }
 
                 fn shrink(&self, state: &mut Self::State) -> Option<Self> {
-                    Some(Size(self.deref().shrink(state)?, false))
+                    Some(self.deref().shrink(state)?.size())
                 }
             }
 
@@ -556,7 +557,7 @@ mod number {
                 }
 
                 fn shrink(&self, state: &mut Self::State) -> Option<Self> {
-                    Some(Size(self.deref().shrink(state)?, false))
+                    Some(self.deref().shrink(state)?.size())
                 }
             }
 
@@ -613,7 +614,7 @@ mod number {
                 }
 
                 fn shrink(&self, state: &mut Self::State) -> Option<Self> {
-                    Some(Size(self.deref().shrink(state)?, false))
+                    Some(self.deref().shrink(state)?.size())
                 }
             }
 

@@ -62,7 +62,10 @@ macro_rules! collection {
             fn shrink(&self, state: &mut Self::State) -> Option<Self> {
                 let (state, index) = state.as_mut()?;
                 Some(Any::Shrink(match self {
-                    Any::Generate(generators) => generators[*index] $(.$a)? .shrink(state)?,
+                    Any::Generate(generators) => {
+                        let generator = &generators[*index] $(.$a)?;
+                        generator.shrink(state).unwrap_or_else(|| generator.clone())
+                    },
                     Any::Shrink(generator) => generator.shrink(state)?
                 }))
             }
@@ -158,8 +161,8 @@ macro_rules! tuple {
                 fn shrink(&self, state: &mut Self::State) -> Option<Self> {
                     Some(Any::Shrink(match self {
                         Any::Generate(($p, $($ps,)*)) => match state {
-                            One::$t(state) => One::$t($p.shrink(state)?),
-                            $(One::$ts(state) => One::$ts($ps.shrink(state)?),)*
+                            One::$t(state) => One::$t($p.shrink(state).unwrap_or_else(|| $p.clone())),
+                            $(One::$ts(state) => One::$ts($ps.shrink(state).unwrap_or_else(|| $ps.clone())),)*
                         }
                         Any::Shrink(generator) => generator.shrink(state)?,
                     }))
@@ -187,8 +190,8 @@ macro_rules! tuple {
                 fn shrink(&self, state: &mut Self::State) -> Option<Self> {
                     Some(Any::Shrink(match self {
                         Any::Generate(($p, $($ps,)*)) => match state {
-                            One::$t(state) => One::$t($p.0.shrink(state)?),
-                            $(One::$ts(state) => One::$ts($ps.0.shrink(state)?),)*
+                            One::$t(state) => One::$t($p.0.shrink(state).unwrap_or_else(|| $p.0.clone())),
+                            $(One::$ts(state) => One::$ts($ps.0.shrink(state).unwrap_or_else(|| $ps.0.clone())),)*
                         }
                         Any::Shrink(generator) => generator.shrink(state)?,
                     }))

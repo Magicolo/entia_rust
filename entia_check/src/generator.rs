@@ -119,7 +119,7 @@ pub trait Generator: Sized + Clone {
         Self: Sized,
         Size<Self>: Generator,
     {
-        Size(self, true)
+        Size::from(self)
     }
 
     fn sample(&mut self, count: usize) -> Sample<Self>
@@ -129,29 +129,30 @@ pub trait Generator: Sized + Clone {
         Sample::new(self, State::new(count))
     }
 
-    fn check<F: Fn(&Self::Item) -> bool>(&self, count: usize, check: F) -> Result<(), Self::Item> {
-        fn shrink<G: Generator, F: Fn(&G::Item) -> bool>(
-            generator: &G,
-            mut pair: (G::Item, G::State),
-            state: State,
-            check: F,
-        ) -> G::Item {
-            while let Some(generator) = generator.shrink(&mut pair.1) {
-                let pair = generator.generate(&mut state.clone());
-                if !check(&pair.0) {
-                    return shrink(&generator, pair, state, check);
-                }
-            }
-            pair.0
-        }
-
+    fn check<F: Fn(&Self::Item) -> bool>(&self, count: usize, check: F) -> Result<(), Self::Item>
+    where
+        Self::Item: std::fmt::Debug,
+    {
         // TODO: Parallelize checking!
         for mut state in State::new(count) {
             let old = state.clone();
-            let pair = self.generate(&mut state);
-            if !check(&pair.0) {
-                return Err(shrink(self, pair, old, check));
+            let (mut item, mut state) = self.generate(&mut state);
+            if check(&item) {
+                continue;
             }
+
+            let mut generator = self.clone();
+            while let Some(shrink) = generator.shrink(&mut state) {
+                let (shrink_item, shrink_state) = shrink.generate(&mut old.clone());
+                if check(&shrink_item) {
+                    continue;
+                }
+                println!("Shrunk!   {:?} -> {:?}", item, shrink_item);
+                generator = shrink;
+                item = shrink_item;
+                state = shrink_state;
+            }
+            return Err(item);
         }
         Ok(())
     }
@@ -252,7 +253,21 @@ pub mod size {
     use super::*;
 
     #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
-    pub struct Size<G>(pub G, pub bool);
+    pub struct Size<G>(G);
+
+    impl<G> Size<G> {
+        #[inline]
+        pub const fn new(generator: G) -> Self {
+            Self(generator)
+        }
+    }
+
+    impl<G> From<G> for Size<G> {
+        #[inline]
+        fn from(value: G) -> Self {
+            Self::new(value)
+        }
+    }
 
     impl<T> Deref for Size<T> {
         type Target = T;
@@ -321,7 +336,7 @@ pub mod array {
 
     impl<G: Generator, const N: usize> Generator for Array<G, N> {
         type Item = [G::Item; N];
-        type State = ([G::State; N], usize);
+        type State = [G::State; N];
 
         fn generate(&self, state: &mut State) -> (Self::Item, Self::State) {
             let (items, states) = match self {
@@ -330,7 +345,7 @@ pub mod array {
                     generate_array(|index| generators[index].generate(state))
                 }
             };
-            (items, (states, 0))
+            (items, states)
         }
 
         fn shrink(&self, state: &mut Self::State) -> Option<Self> {
@@ -641,7 +656,7 @@ pub mod collect {
         for Collect<G, C, F>
     {
         type Item = F;
-        type State = (Vec<G::State>, usize, usize);
+        type State = (Vec<G::State>, usize);
 
         fn generate(&self, state: &mut State) -> (Self::Item, Self::State) {
             match self {
@@ -654,7 +669,7 @@ pub mod collect {
                         item
                     })
                     .collect();
-                    (items, (states, 0, 0))
+                    (items, (states, 0))
                 }
                 Self::Shrink(generators) => {
                     let mut states = Vec::with_capacity(generators.len());
@@ -666,7 +681,7 @@ pub mod collect {
                             item
                         })
                         .collect();
-                    (items, (states, 0, 0))
+                    (items, (states, 0))
                 }
             }
         }

@@ -22,11 +22,11 @@ impl<G: Generator, const N: usize> From<[G; N]> for All<[G; N]> {
 
 impl<G: Generator, const N: usize> Generator for All<[G; N]> {
     type Item = [G::Item; N];
-    type State = ([G::State; N], usize);
+    type State = [G::State; N];
 
     fn generate(&self, state: &mut State) -> (Self::Item, Self::State) {
         let (items, states) = generate_array(|index| self.0[index].generate(state));
-        (items, (states, 0))
+        (items, states)
     }
 
     fn shrink(&self, state: &mut Self::State) -> Option<Self> {
@@ -49,18 +49,22 @@ pub(crate) fn generate_array<T, S, F: FnMut(usize) -> (T, S), const N: usize>(
 
 pub(crate) fn shrink_array<G: Generator, const N: usize>(
     array: &[G; N],
-    state: &mut ([G::State; N], usize),
+    state: &mut [G::State; N],
 ) -> Option<[G; N]> {
-    while state.1 < N {
-        if let Some(shrink) = array[state.1].shrink(&mut state.0[state.1]) {
-            let mut generators = array.clone();
-            generators[state.1] = shrink;
-            return Some(generators);
-        } else {
-            state.1 += 1;
+    // Try to shrink each generator and succeed if any generator is shrunk.
+    let mut generators = array.clone();
+    let mut shrunk = false;
+    for i in 0..N {
+        if let Some(generator) = generators[i].shrink(&mut state[i]) {
+            generators[i] = generator;
+            shrunk = true;
         }
     }
-    None
+    if shrunk {
+        Some(generators)
+    } else {
+        None
+    }
 }
 
 impl<G: Generator> From<Vec<G>> for All<Vec<G>> {
@@ -71,7 +75,7 @@ impl<G: Generator> From<Vec<G>> for All<Vec<G>> {
 
 impl<G: Generator> Generator for All<Vec<G>> {
     type Item = Vec<G::Item>;
-    type State = (Vec<G::State>, usize, usize);
+    type State = (Vec<G::State>, usize);
 
     fn generate(&self, state: &mut State) -> (Self::Item, Self::State) {
         let (items, states) = self
@@ -79,7 +83,7 @@ impl<G: Generator> Generator for All<Vec<G>> {
             .iter()
             .map(|generator| generator.generate(state))
             .unzip();
-        (items, (states, 0, 0))
+        (items, (states, 0))
     }
 
     fn shrink(&self, state: &mut Self::State) -> Option<Self> {
@@ -89,28 +93,31 @@ impl<G: Generator> Generator for All<Vec<G>> {
 
 pub(crate) fn shrink_vector<G: Generator>(
     vector: &Vec<G>,
-    state: &mut (Vec<G::State>, usize, usize),
+    state: &mut (Vec<G::State>, usize),
 ) -> Option<Vec<G>> {
+    let mut generators = vector.clone();
+
     // Try to remove irrelevant generators.
     if state.1 < vector.len() {
-        let mut generators = vector.clone();
         generators.remove(state.1);
         state.1 += 1;
         return Some(generators);
     }
 
-    // Try to shrink each item and succeed if any item is shrunk.
-    while state.2 < vector.len() {
-        if let Some(shrink) = vector[state.2].shrink(&mut state.0[state.2]) {
-            let mut generators = vector.clone();
-            generators[state.2] = shrink;
-            return Some(generators);
-        } else {
-            state.2 += 1;
+    // Try to shrink each generator and succeed if any generator is shrunk.
+    let mut shrunk = false;
+    for i in 0..generators.len() {
+        if let Some(generator) = generators[i].shrink(&mut state.0[i]) {
+            generators[i] = generator;
+            shrunk = true;
         }
     }
 
-    None
+    if shrunk {
+        Some(generators)
+    } else {
+        None
+    }
 }
 
 macro_rules! tuple {
@@ -149,8 +156,13 @@ macro_rules! tuple {
 
             fn shrink(&self, ($($t,)*): &mut Self::State) -> Option<Self> {
                 let ($($p,)*) = self;
-                // TODO: Shrink one element at a time. 'Shrink' type will be '(Or<$t, $t::Shrink>, ...)'.
-                Some(($($p.shrink($t)?,)*))
+                let mut shrunk = false;
+                let ($($p,)*) = ($(match $p.shrink($t) { Some(generator) => { shrunk = true; generator }, None => $p.clone() },)*);
+                if shrunk {
+                    Some(($($p,)*))
+                } else {
+                    None
+                }
             }
         }
     };
