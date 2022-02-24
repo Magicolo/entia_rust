@@ -6,6 +6,7 @@ pub mod flags;
 pub mod marker;
 pub mod maybe;
 pub mod slice;
+pub mod unzip;
 pub mod utility;
 
 pub use crate::{
@@ -17,5 +18,6 @@ pub use crate::{
     marker::{Indirect, Marker},
     maybe::{Maybe, Wrap},
     slice::Slice,
+    unzip::Unzip,
 };
 pub(crate) use entia_macro::recurse_16 as recurse;

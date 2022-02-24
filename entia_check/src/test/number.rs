@@ -4,7 +4,7 @@ mod range {
     use super::*;
 
     macro_rules! tests {
-        ($t:ident, [$c:expr], [$($f:ident)?], [$($p:ident)?]) => {
+        ($t:ident, [$c:expr], [$($f:ident)?], [$($m:ident)?]) => {
             mod $t {
                 use super::*;
 
@@ -30,7 +30,7 @@ mod range {
                 #[test]
                 fn is_constant() {
                     for value in $t::generator().sample(COUNT) $(.filter(|value| value.$f()))? {
-                        assert_that(&Constant(value).sample(1).next().unwrap()).is_equal_to(value);
+                        assert_that(&value.sample(1).next().unwrap()).is_equal_to(value);
                     }
                 }
 
@@ -92,27 +92,46 @@ mod range {
                     }
                 }
 
-                $(#[cfg($p)])?
-                #[test]
-                fn is_negative() {
-                    for value in negative::<$t>().sample(COUNT) {
-                        assert_that(&value).is_less_than(0 as $t);
-                    }
-                }
+                $($m!(INNER $t);)?
             }
         };
     }
 
     macro_rules! tests_signed {
-        ($($t:ident),*) => { $(tests!($t, [|low, high| low == high], [], []);)* };
+        (INNER $t:ident) => {
+            #[test]
+            fn is_negative() {
+                for value in negative::<$t>().sample(COUNT) {
+                    assert_that(&value).is_less_than(0 as $t);
+                }
+            }
+        };
+        ($($t:ident),*) => { $(tests!($t, [|low, high| low == high], [], [tests_signed]);)* };
     }
 
     macro_rules! tests_unsigned {
-        ($($t:ident),*) => { $(tests!($t, [|low, high| low == high], [], [POSITIVE]);)* };
+        (INNER $t:ident) => {
+            #[test]
+            fn check_less_than_finds_minimum() {
+                for right in <$t>::generator().sample(COUNT) {
+                    let result = <$t>::generator().check(COUNT * 10, None, |&left| left < right).map_err(|report| *report.shrunk());
+                    assert_that(&result).is_err_containing(&right);
+                }
+            }
+        };
+        ($($t:ident),*) => { $(tests!($t, [|low, high| low == high], [], [tests_unsigned]);)* };
     }
 
     macro_rules! tests_floating {
-        ($($t:ident),*) => { $(tests!($t, [|low: $t, high: $t| high - low < $t::EPSILON], [is_finite], []);)* };
+        (INNER $t:ident) => {
+            #[test]
+            fn is_negative() {
+                for value in negative::<$t>().sample(COUNT) {
+                    assert_that(&value).is_less_than(0 as $t);
+                }
+            }
+        };
+        ($($t:ident),*) => { $(tests!($t, [|low: $t, high: $t| high - low < $t::EPSILON], [is_finite], [tests_floating]);)* };
     }
 
     tests_signed!(i8, i16, i32, i64, i128);

@@ -2,7 +2,7 @@ use crate::{
     depend::{Depend, Dependency},
     entities::Entities,
     entity::Entity,
-    error::Result,
+    error,
     inject::Inject,
     query::item::{At, Context, Item},
     read::Read,
@@ -72,29 +72,51 @@ impl<'a> Family<'a> {
     }
 
     #[inline]
-    pub fn ascend<T>(
+    pub fn ascend<E, U: FnMut(Entity) -> Result<(), E>, D: FnMut(Entity) -> Result<(), E>>(
         &self,
-        mut up: impl FnMut(Self) -> Option<T>,
-        mut down: impl FnMut(Self) -> Option<T>,
-    ) -> Option<T> {
-        self.1.ascend(
-            self.0,
-            |parent| up(Self(parent, self.1)),
-            |parent| down(Self(parent, self.1)),
-        )
+        up: U,
+        down: D,
+    ) -> Result<(), E> {
+        self.1.ascend(self.0, up, down)
     }
 
     #[inline]
-    pub fn descend<T>(
+    pub fn ascend_with<
+        S,
+        E,
+        U: FnMut(Entity, S) -> Result<S, E>,
+        D: FnMut(Entity, S) -> Result<S, E>,
+    >(
         &self,
-        mut down: impl FnMut(Self) -> Option<T>,
-        mut up: impl FnMut(Self) -> Option<T>,
-    ) -> Option<T> {
-        self.1.descend(
-            self.0,
-            |child| down(Self(child, self.1)),
-            |child| up(Self(child, self.1)),
-        )
+        state: S,
+        up: U,
+        down: D,
+    ) -> Result<S, E> {
+        self.1.ascend_with(self.0, state, up, down)
+    }
+
+    #[inline]
+    pub fn descend<E, D: FnMut(Entity) -> Result<(), E>, U: FnMut(Entity) -> Result<(), E>>(
+        &self,
+        down: D,
+        up: U,
+    ) -> Result<(), E> {
+        self.1.descend(self.0, down, up)
+    }
+
+    #[inline]
+    pub fn descend_with<
+        S,
+        E,
+        D: FnMut(Entity, S) -> Result<S, E>,
+        U: FnMut(Entity, S) -> Result<S, E>,
+    >(
+        &self,
+        state: S,
+        down: D,
+        up: U,
+    ) -> Result<S, E> {
+        self.1.descend_with(self.0, state, down, up)
     }
 }
 
@@ -123,7 +145,7 @@ impl fmt::Debug for Family<'_> {
 impl Item for Family<'_> {
     type State = State;
 
-    fn initialize(mut context: Context) -> Result<Self::State> {
+    fn initialize(mut context: Context) -> Result<Self::State, error::Error> {
         Ok(State(
             <Read<_> as Item>::initialize(context.owned())?,
             <Read<_> as Inject>::initialize(None, context.into())?,

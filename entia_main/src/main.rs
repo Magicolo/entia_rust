@@ -109,10 +109,11 @@ fn main() {
              children: Query<&Position>,
              _query: Query<Entity>| {
                 for family in &roots {
-                    if let Some(_child) =
-                        family.descend(|descendant| children.get(descendant), |_| None)
-                    {
-                    }
+                    // 'Err' interrupts the descent.
+                    if let Err(_child) = family.descend(
+                        |descendant| children.get(descendant).map_or(Ok(()), Err),
+                        |_| Ok(()),
+                    ) {}
                 }
                 for _child in roots
                     .into_iter()

@@ -1,87 +1,185 @@
 use crate::{
-    any::{self, Any},
-    generator::{
-        constant::{constant, Constant},
-        size::Size,
-        FullGenerator, Generator, IntoGenerator, State,
-    },
+    any::Any,
+    generator::{FullGenerate, Generate, IntoGenerate, State},
+    shrink::Shrink,
+    size::Size,
 };
+use entia_core::Change;
 use std::{
     convert::TryInto,
+    marker::PhantomData,
     mem::size_of,
     ops::{self, Bound, Deref},
 };
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub enum Full<T> {
-    Generate,
-    Shrink(Range<T>),
+#[derive(Copy, Clone, Debug, Default)]
+pub struct Full<T>(PhantomData<T>);
+
+#[derive(Copy, Clone, Debug, Default)]
+pub struct Range<T> {
+    pub start: T,
+    pub end: T,
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
-pub struct Range<T> {
-    start: T,
-    end: T,
-    shrink: bool,
+#[derive(Copy, Clone, Debug)]
+pub enum Direction {
+    None,
+    Left,
+    Right,
+}
+
+#[derive(Clone, Debug)]
+pub struct Shrinker<T> {
+    pub range: Range<T>,
+    pub item: T,
+    pub direction: Direction,
+}
+
+impl<T> Full<T> {
+    #[inline]
+    pub const fn new() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<T> Range<T> {
+    #[inline]
+    pub fn map<U, F: FnMut(T) -> U>(self, mut map: F) -> Range<U> {
+        Range {
+            start: map(self.start),
+            end: map(self.end),
+        }
+    }
+}
+
+impl<T> Shrinker<T> {
+    #[inline]
+    pub const fn new(range: Range<T>, item: T) -> Self {
+        Self {
+            range,
+            item,
+            direction: Direction::None,
+        }
+    }
+
+    #[inline]
+    pub fn map<U, F: FnMut(T) -> U>(self, mut map: F) -> Shrinker<U> {
+        let item = map(self.item);
+        Shrinker {
+            range: self.range.map(map),
+            item,
+            direction: self.direction,
+        }
+    }
+}
+
+impl From<Range<char>> for Range<u32> {
+    #[inline]
+    fn from(value: Range<char>) -> Self {
+        value.map(|value| value as u32)
+    }
+}
+
+impl From<Shrinker<char>> for Shrinker<u32> {
+    #[inline]
+    fn from(value: Shrinker<char>) -> Self {
+        value.map(|value| value as u32)
+    }
+}
+
+impl TryFrom<Range<u32>> for Range<char> {
+    type Error = <char as TryFrom<u32>>::Error;
+
+    #[inline]
+    fn try_from(value: Range<u32>) -> Result<Self, Self::Error> {
+        Ok(Self {
+            start: value.start.try_into()?,
+            end: value.end.try_into()?,
+        })
+    }
+}
+
+impl TryFrom<Shrinker<u32>> for Shrinker<char> {
+    type Error = <char as TryFrom<u32>>::Error;
+
+    #[inline]
+    fn try_from(value: Shrinker<u32>) -> Result<Self, Self::Error> {
+        Ok(Self {
+            range: value.range.try_into()?,
+            item: value.item.try_into()?,
+            direction: value.direction,
+        })
+    }
 }
 
 impl<T> ops::RangeBounds<T> for Range<T> {
+    #[inline]
     fn start_bound(&self) -> Bound<&T> {
         Bound::Included(&self.start)
     }
 
+    #[inline]
     fn end_bound(&self) -> Bound<&T> {
         Bound::Included(&self.end)
     }
 }
 
-impl FullGenerator for bool {
-    type Item = Self;
-    type Generator = Any<(Constant<bool>, Constant<bool>), any::p14::One<Constant<bool>>>;
-    fn generator() -> Self::Generator {
-        Any::from((false.into(), true.into()))
-    }
+macro_rules! constant {
+    ($t:ty) => {
+        impl Generate for $t {
+            type Item = Self;
+            type Shrink = Self;
+
+            fn generate(&self, _: &mut State) -> (Self::Item, Self::Shrink) {
+                (*self, *self)
+            }
+        }
+
+        impl Shrink for $t {
+            type Item = Self;
+
+            fn generate(&self) -> Self::Item {
+                *self
+            }
+
+            fn shrink(&mut self) -> Option<Self> {
+                None
+            }
+        }
+    };
 }
 
 macro_rules! range {
     ($t:ty, $r:ty) => {
-        impl IntoGenerator for $r {
+        impl IntoGenerate for $r {
             type Item = $t;
-            type Generator = Size<Range<$t>>;
-            fn generator(self) -> Self::Generator {
+            type Generate = Size<Range<$t>>;
+            fn generator(self) -> Self::Generate {
                 Range::<$t>::new(self).unwrap().size()
             }
         }
 
-        // impl Generator for $r {
-        //     type Item = <Size<Range<$t>> as Generator>::Item;
-        //     type State = <Size<Range<$t>> as Generator>::State;
+        impl Generate for $r {
+            type Item = <Size<Range<$t>> as Generate>::Item;
+            type Shrink = <Size<Range<$t>> as Generate>::Shrink;
 
-        //     fn generate(&self, state: &mut State) -> (Self::Item, Self::State) {
-        //         Range::<$t>::new(self.clone())
-        //             .unwrap()
-        //             .size()
-        //             .generate(state)
-        //     }
-
-        //     fn shrink(&self, state: &mut Self::State) -> Option<Self> {
-        //         Range::<$t>::new(self.clone())
-        //             .unwrap()
-        //             .size()
-        //             .shrink(state)?
-        //             .0
-        //     }
-        // }
+            fn generate(&self, state: &mut State) -> (Self::Item, Self::Shrink) {
+                Range::<$t>::new(self.clone())
+                    .unwrap()
+                    .size()
+                    .generate(state)
+            }
+        }
     };
 }
 
 macro_rules! ranges {
     ($t:ident) => {
-        impl FullGenerator for $t {
+        impl FullGenerate for $t {
             type Item = $t;
-            type Generator = Size<Full<$t>>;
-            fn generator() -> Self::Generator {
-                Full::Generate.size()
+            type Generate = Size<Full<$t>>;
+            fn generator() -> Self::Generate {
+                Full(PhantomData).size()
             }
         }
 
@@ -97,35 +195,117 @@ macro_rules! shrinked {
     ($t:ident) => {
         impl Range<$t> {
             pub(super) fn shrinked(&self, size: f64) -> Self {
-                if self.shrink {
-                    let start = self.start as f64;
-                    let end = self.end as f64;
-                    let range = end - start;
-                    let start_ratio = (end.min(0.) - start.min(0.)).abs() / range;
-                    let end_ratio = (end.max(0.) - start.max(0.)).abs() / range;
-                    let range_shrink = range * (1. - size);
-                    let start_shrink = start + range_shrink * start_ratio;
-                    let end_shrink = end - range_shrink * end_ratio;
-                    let shrink = Self {
-                        start: (start_shrink.min(end_shrink) as $t)
-                            .min(self.end)
-                            .max(self.start),
-                        end: (end_shrink.max(start_shrink) as $t)
-                            .max(self.start)
-                            .min(self.end),
-                        shrink: self.shrink,
-                    };
-                    shrink
-                } else {
-                    self.clone()
-                }
+                let start = self.start as f64;
+                let end = self.end as f64;
+                let range = end - start;
+                let start_ratio = (end.min(0.) - start.min(0.)).abs() / range;
+                let end_ratio = (end.max(0.) - start.max(0.)).abs() / range;
+                let range_shrink = range * (1. - size);
+                let start_shrink = start + range_shrink * start_ratio;
+                let end_shrink = end - range_shrink * end_ratio;
+                let shrink = Self {
+                    start: (start_shrink.min(end_shrink) as $t)
+                        .min(self.end)
+                        .max(self.start),
+                    end: (end_shrink.max(start_shrink) as $t)
+                        .max(self.start)
+                        .min(self.end),
+                };
+                shrink
             }
         }
     };
 }
 
+macro_rules! shrink {
+    ($s:expr, $t:ident) => {{
+        let range = &mut $s.range;
+        match $s.direction {
+            Direction::None if range.start < range.end && $s.item > 0 as $t => {
+                let delta = Range::<$t>::delta(range.start, $s.item, 2 as $t).max(1 as $t);
+                let item = ($s.item - delta).max(0 as $t).max(range.start);
+                range.end = $s.item;
+                $s.item = item;
+                $s.direction = Direction::Right;
+                Some(Self::new(range.clone(), $s.item))
+            }
+            Direction::None if range.start < range.end && $s.item < 0 as $t => {
+                let delta = Range::<$t>::delta(range.end, $s.item, 2 as $t).max(1 as $t);
+                let item = ($s.item + delta).min(0 as $t).min(range.end);
+                range.start = $s.item;
+                $s.item = item;
+                $s.direction = Direction::Left;
+                Some(Self::new(range.clone(), $s.item))
+            }
+            Direction::Left if $s.item > range.start => {
+                $s.item -= Range::<$t>::delta(range.start, $s.item, 2 as $t).max(1 as $t);
+                if $s.item > range.start {
+                    Some(Self::new(range.clone(), $s.item))
+                } else {
+                    None
+                }
+            }
+            Direction::Right if $s.item < range.end => {
+                $s.item += Range::<$t>::delta(range.end, $s.item, 2 as $t).max(1 as $t);
+                if $s.item < range.end {
+                    Some(Self::new(range.clone(), $s.item))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }};
+}
+
+mod boolean {
+    use super::*;
+
+    #[derive(Copy, Clone, Debug, Default)]
+    pub struct Shrinker(bool);
+
+    impl FullGenerate for bool {
+        type Item = Self;
+        type Generate = Full<bool>;
+        fn generator() -> Self::Generate {
+            Full::new()
+        }
+    }
+
+    impl Generate for Full<bool> {
+        type Item = bool;
+        type Shrink = Shrinker;
+
+        fn generate(&self, state: &mut State) -> (Self::Item, Self::Shrink) {
+            let item = state.random.bool();
+            (item, Shrinker(item))
+        }
+    }
+
+    impl Shrink for Shrinker {
+        type Item = bool;
+
+        fn generate(&self) -> Self::Item {
+            self.0
+        }
+
+        fn shrink(&mut self) -> Option<Self> {
+            if self.0.change(false) {
+                Some(self.clone())
+            } else {
+                None
+            }
+        }
+    }
+
+    constant!(bool);
+}
+
 mod character {
     use super::*;
+
+    #[derive(Clone, Debug)]
+    pub struct Shrinker(super::Shrinker<u32>);
 
     impl Range<char> {
         // TODO: Return a 'Result' instead of 'Option'.
@@ -145,162 +325,152 @@ mod character {
             if end < start {
                 None
             } else {
-                Some(Self {
-                    start,
-                    end,
-                    shrink: true,
-                })
-            }
-        }
-
-        #[inline]
-        pub(super) fn to(&self) -> Range<u32> {
-            Range {
-                start: self.start as u32,
-                end: self.end as u32,
-                shrink: self.shrink,
+                Some(Self { start, end })
             }
         }
     }
 
     impl Full<char> {
-        fn special() -> impl Generator<Item = char> {
-            const SPECIAL: [Constant<char>; 3] =
-                constant!['\u{0000}', char::MAX, char::REPLACEMENT_CHARACTER];
+        #[inline]
+        const fn low_range() -> Range<char> {
+            Range {
+                start: '\u{0000}',
+                end: '\u{D7FF}',
+            }
+        }
+
+        #[inline]
+        const fn high_range() -> Range<char> {
+            Range {
+                start: '\u{E000}',
+                end: char::MAX,
+            }
+        }
+
+        #[inline]
+        fn shrink(item: char) -> Shrinker {
+            let low = Self::low_range();
+            let range = if item <= low.end {
+                low
+            } else {
+                Self::high_range()
+            };
+            Shrinker(super::Shrinker::new(range.into(), item as u32))
+        }
+
+        fn special() -> impl Generate<Item = char> {
+            const SPECIAL: [char; 3] = ['\u{0000}', char::MAX, char::REPLACEMENT_CHARACTER];
             Any::from(&SPECIAL).map(Option::unwrap)
         }
     }
 
-    impl Generator for Range<char> {
-        type Item = char;
-        type State = char;
-
-        fn generate(&self, state: &mut State) -> (Self::Item, Self::State) {
-            let item = self.to().generate(state).0.try_into().unwrap();
-            (item, item)
-        }
-
-        fn shrink(&self, state: &mut Self::State) -> Option<Self> {
-            if self.start == self.end {
-                None
-            } else if *state < 0 as char {
-                Some(Range {
-                    start: *state,
-                    end: self.end,
-                    shrink: false,
-                })
+    impl Shrinker {
+        #[inline]
+        pub fn new(item: char) -> Self {
+            let mut low = Full::<char>::low_range();
+            let range = if item <= low.end {
+                low.end = item;
+                low
             } else {
-                Some(Range {
-                    start: self.start,
-                    end: *state,
-                    shrink: false,
-                })
+                let mut high = Full::<char>::high_range();
+                high.start = item;
+                high
+            };
+            Self(super::Shrinker::new(range.into(), item as u32))
+        }
+    }
+
+    impl Generate for char {
+        type Item = Self;
+        type Shrink = Self;
+
+        fn generate(&self, _: &mut State) -> (Self::Item, Self::Shrink) {
+            (*self, *self)
+        }
+    }
+
+    impl Shrink for char {
+        type Item = Self;
+
+        fn generate(&self) -> Self::Item {
+            *self
+        }
+
+        fn shrink(&mut self) -> Option<Self> {
+            None
+        }
+    }
+
+    impl Generate for Range<char> {
+        type Item = char;
+        type Shrink = Shrinker;
+
+        fn generate(&self, state: &mut State) -> (Self::Item, Self::Shrink) {
+            let (item, shrink) = Into::<Range<u32>>::into(self.clone()).generate(state);
+            (item.try_into().unwrap(), Shrinker(shrink))
+        }
+    }
+
+    impl Generate for Size<Range<char>> {
+        type Item = char;
+        type Shrink = Shrinker;
+
+        fn generate(&self, state: &mut State) -> (Self::Item, Self::Shrink) {
+            let (item, shrink) = Into::<Range<u32>>::into(self.deref().clone())
+                .size()
+                .generate(state);
+            (item.try_into().unwrap(), Shrinker(shrink))
+        }
+    }
+
+    impl Generate for Full<char> {
+        type Item = char;
+        type Shrink = Shrinker;
+
+        fn generate(&self, state: &mut State) -> (Self::Item, Self::Shrink) {
+            match state.random.u8(..) {
+                0..=250 => Self::low_range().generate(state),
+                251..=254 => Self::high_range().generate(state),
+                255 => {
+                    let (item, _) = Self::special().generate(state);
+                    (item, Full::<char>::shrink(item))
+                }
             }
         }
     }
 
-    impl Generator for Size<Range<char>> {
+    impl Generate for Size<Full<char>> {
         type Item = char;
-        type State = char;
+        type Shrink = Shrinker;
 
-        fn generate(&self, state: &mut State) -> (Self::Item, Self::State) {
-            let item = self
-                .to()
-                .shrinked(state.size)
-                .generate(state)
-                .0
-                .try_into()
-                .unwrap();
-            (item, item)
-        }
+        fn generate(&self, state: &mut State) -> (Self::Item, Self::Shrink) {
+            fn range(range: Range<char>, size: f64, state: &mut State) -> (char, Shrinker) {
+                let (item, shrink) = Into::<Range<u32>>::into(range)
+                    .shrinked(size.powi(size_of::<char>() as i32))
+                    .generate(state);
+                (item.try_into().unwrap(), Shrinker(shrink))
+            }
 
-        fn shrink(&self, state: &mut Self::State) -> Option<Self> {
-            Some(self.deref().shrink(state)?.size())
+            match state.random.u8(..) {
+                0..=250 => range(Full::<char>::low_range(), state.size, state),
+                251..=254 => range(Full::<char>::high_range(), state.size, state),
+                255 => {
+                    let (item, _) = Full::<char>::special().generate(state);
+                    (item, Full::<char>::shrink(item))
+                }
+            }
         }
     }
 
-    impl Generator for Full<char> {
+    impl Shrink for Shrinker {
         type Item = char;
-        type State = char;
 
-        fn generate(&self, state: &mut State) -> (Self::Item, Self::State) {
-            fn range(start: char, end: char, state: &mut State) -> char {
-                Range {
-                    start,
-                    end,
-                    shrink: true,
-                }
-                .to()
-                .generate(state)
-                .0
-                .try_into()
-                .unwrap()
-            }
-
-            match self {
-                Self::Generate => {
-                    let item = match state.random.u8(..) {
-                        0..=250 => range('\u{0000}', '\u{D7FF}', state),
-                        251..=254 => range('\u{E000}', char::MAX, state),
-                        255 => Full::<char>::special().generate(state).0,
-                    };
-                    (item, item)
-                }
-                Self::Shrink(range) => range.generate(state),
-            }
+        fn generate(&self) -> Self::Item {
+            self.0.generate().try_into().unwrap()
         }
 
-        fn shrink(&self, state: &mut Self::State) -> Option<Self> {
-            Some(Self::Shrink(match self {
-                Self::Generate if *state >= '\u{E000}' => Range {
-                    start: '\u{E000}',
-                    end: *state,
-                    shrink: false,
-                },
-                Self::Generate => Range {
-                    start: '\u{0000}',
-                    end: *state,
-                    shrink: false,
-                },
-                Self::Shrink(range) => range.shrink(state)?,
-            }))
-        }
-    }
-
-    impl Generator for Size<Full<char>> {
-        type Item = char;
-        type State = char;
-
-        fn generate(&self, state: &mut State) -> (Self::Item, Self::State) {
-            fn range(start: char, end: char, size: f64, state: &mut State) -> char {
-                Range {
-                    start,
-                    end,
-                    shrink: true,
-                }
-                .to()
-                .shrinked(size.powi(size_of::<char>() as i32))
-                .generate(state)
-                .0
-                .try_into()
-                .unwrap()
-            }
-
-            match self.deref() {
-                Full::Generate => {
-                    let item = match state.random.u8(..) {
-                        0..=250 => range('\u{0000}', '\u{D7FF}', state.size, state),
-                        251..=254 => range('\u{E000}', char::MAX, state.size, state),
-                        255 => Full::<char>::special().generate(state).0,
-                    };
-                    (item, item)
-                }
-                Full::Shrink(range) => range.generate(state),
-            }
-        }
-
-        fn shrink(&self, state: &mut Self::State) -> Option<Self> {
-            Some(self.deref().shrink(state)?.size())
+        fn shrink(&mut self) -> Option<Self> {
+            Some(Self(self.0.shrink()?))
         }
     }
 
@@ -313,8 +483,19 @@ mod number {
     macro_rules! integer {
         ($t:ident) => {
             impl Full<$t> {
-                fn special() -> impl Generator<Item = $t> {
-                    const SPECIAL: [Constant<$t>; 3] = constant![0 as $t, $t::MIN, $t::MAX];
+                #[inline]
+                const fn range() -> Range<$t> {
+                    Range { start: $t::MIN, end: $t::MAX }
+                }
+
+                #[inline]
+                const fn shrink(item: $t) -> Shrinker<$t> {
+                    Shrinker::new(Self::range(), item)
+                }
+
+                #[inline]
+                fn special() -> impl Generate<Item = $t> {
+                    const SPECIAL: [$t; 3] = [0 as $t, $t::MIN, $t::MAX];
                     Any::from(&SPECIAL).map(Option::unwrap)
                 }
             }
@@ -335,131 +516,77 @@ mod number {
                     if end < start {
                         None
                     } else {
-                        Some(Self {
-                            start,
-                            end,
-                            shrink: true,
-                        })
+                        Some(Self { start, end })
                     }
+                }
+
+                fn delta(left: $t, right: $t, ratio: $t) -> $t {
+                    let range = if left < right {
+                        (right as u128).wrapping_sub(left as u128)
+                    } else {
+                        (left as u128).wrapping_sub(right as u128)
+                    };
+                    (range / ratio as u128) as $t
                 }
             }
             shrinked!($t);
 
-            impl From<Full<$t>> for Range<$t> {
-                #[inline]
-                fn from(_: Full<$t>) -> Self {
-                    Self {
-                        start: $t::MIN,
-                        end: $t::MAX,
-                        shrink: true,
-                    }
-                }
-            }
-
-            impl Generator for Range<$t> {
+            impl Generate for Range<$t> {
                 type Item = $t;
-                type State = $t;
+                type Shrink = Shrinker<$t>;
 
-                fn generate(&self, state: &mut State) -> (Self::Item, Self::State) {
+                fn generate(&self, state: &mut State) -> (Self::Item, Self::Shrink) {
                     let item = state.random.$t(self.start..=self.end);
-                    (item, item)
+                    (item, Shrinker::new(self.clone(), item))
+                }
+            }
+
+            impl Shrink for Shrinker<$t> {
+                type Item = $t;
+
+                fn generate(&self) -> Self::Item {
+                    self.item
                 }
 
-                fn shrink(&self, state: &mut Self::State) -> Option<Self> {
-                    // TODO: Shrinking never stops...
-                    if self.start == self.end {
-                        None
-                    } else if *state < $t::default() {
-                        /*
-                        TODO:
-                        struct Shrink {
-                            range: Range<$t>,
-                            current: $t,
-                        }
+                fn shrink(&mut self) -> Option<Self> {
+                    shrink!(self, $t)
+                }
+            }
 
-                        generate(&mut self) -> self.current
+            impl Generate for Size<Range<$t>> {
+                type Item = $t;
+                type Shrink = Shrinker<$t>;
 
-                        { 0..10, 10 }
-                        { 0..5, x }, { 0..8, x }, { 0..9, 9 }
-                        { 0..5, x }, { 0..7, x }, { 0..8, x }
+                fn generate(&self, state: &mut State) -> (Self::Item, Self::Shrink) {
+                    self.shrinked(state.size).generate(state)
+                }
+            }
 
-                        { -10..10, 6 }, { -10..10, 8 }, { -10..10, 9 }
-                        { 0..6, x }, { 0..8, x }, {  }
-                         */
-                        // TODO:
-                        // - Take the middle point between 'last' and 'end.min(0)' and move gradually back towards 'last'.
-                        // - This strategy shrinks in a greedy way and reverts...
-                        Some(Range {
-                            start: *state,
-                            end: self.end,
-                            shrink: false,
-                        })
-                    } else {
-                        Some(Range {
-                            start: self.start,
-                            end: *state,
-                            shrink: false,
-                        })
+            impl Generate for Full<$t> {
+                type Item = $t;
+                type Shrink = Shrinker<$t>;
+
+                fn generate(&self, state: &mut State) -> (Self::Item, Self::Shrink) {
+                    match state.random.u8(..) {
+                        0..=254 => Self::range().generate(state),
+                        255 => { let (item, _) = Self::special().generate(state); (item, Self::shrink(item)) },
                     }
                 }
             }
 
-            impl Generator for Size<Range<$t>> {
+            impl Generate for Size<Full<$t>> {
                 type Item = $t;
-                type State = $t;
+                type Shrink = Shrinker<$t>;
 
-                fn generate(&self, state: &mut State) -> (Self::Item, Self::State) {
-                    let item = self.shrinked(state.size).generate(state).0;
-                    (item, item)
-                }
-
-                fn shrink(&self, state: &mut Self::State) -> Option<Self> {
-                    Some(self.deref().shrink(state)?.size())
-                }
-            }
-
-            impl Generator for Full<$t> {
-                type Item = $t;
-                type State = $t;
-
-                fn generate(&self, state: &mut State) -> (Self::Item, Self::State) {
-                    match self {
-                        Self::Generate => {
-                            let item = match state.random.u8(..) {
-                                0..=254 => Range::from(Self::Generate).generate(state).0,
-                                255 => Full::<$t>::special().generate(state).0,
-                            };
-                            (item, item)
-                        },
-                        Self::Shrink(range) => range.generate(state)
+                fn generate(&self, state: &mut State) -> (Self::Item, Self::Shrink) {
+                    match state.random.u8(..) {
+                        0..=254 => Full::<$t>::range().shrinked(state.size.powi(size_of::<$t>() as i32)).generate(state),
+                        255 => { let (item, _) = Full::<$t>::special().generate(state); (item, Full::<$t>::shrink(item)) },
                     }
                 }
-
-                fn shrink(&self, state: &mut Self::State) -> Option<Self> {
-                    Some(Self::Shrink(match self {
-                        Self::Generate => Range::from(Self::Generate).shrink(state)?,
-                        Self::Shrink(range) => range.shrink(state)?
-                    }))
-                }
             }
 
-            impl Generator for Size<Full<$t>> {
-                type Item = $t;
-                type State = $t;
-
-                fn generate(&self, state: &mut State) -> (Self::Item, Self::State) {
-                    let item = match state.random.u8(..) {
-                        0..=254 => Range::from(Full::<$t>::Generate).shrinked(state.size.powi(size_of::<$t>() as i32)).generate(state).0,
-                        255 => Full::<$t>::special().generate(state).0,
-                    };
-                    (item, item)
-                }
-
-                fn shrink(&self, state: &mut Self::State) -> Option<Self> {
-                    Some(self.deref().shrink(state)?.size())
-                }
-            }
-
+            constant!($t);
             ranges!($t);
         };
         ($($ts:ident),*) => { $(integer!($ts);)* };
@@ -468,9 +595,19 @@ mod number {
     macro_rules! floating {
         ($t:ident, $e:expr) => {
             impl Full<$t> {
-                fn special() -> impl Generator<Item = $t> {
-                    const SPECIAL: [Constant<$t>; 8] = constant![0 as $t, $t::MIN, $t::MAX, $t::EPSILON, $t::INFINITY, $t::NEG_INFINITY, $t::MIN_POSITIVE, $t::NAN];
+                fn special() -> impl Generate<Item = $t> {
+                    const SPECIAL: [$t; 8] = [0 as $t, $t::MIN, $t::MAX, $t::EPSILON, $t::INFINITY, $t::NEG_INFINITY, $t::MIN_POSITIVE, $t::NAN];
                     Any::from(&SPECIAL).map(Option::unwrap)
+                }
+
+                #[inline]
+                const fn range() -> Range<$t> {
+                    Range { start: $t::MIN, end: $t::MAX }
+                }
+
+                #[inline]
+                const fn shrink(item: $t) -> Shrinker<$t> {
+                    Shrinker::new(Self::range(), item)
                 }
             }
 
@@ -496,128 +633,85 @@ mod number {
                         let epsilon = (end.0 - start.0) * $e;
                         let start = if start.1 { start.0 + epsilon } else { start.0 };
                         let end = if end.1 { end.0 - epsilon } else { end.0 };
-                        Some(Self {
-                            start: start.min(end),
-                            end: end.max(start),
-                            shrink: true,
-                        })
+                        Some(Self { start: start.min(end), end: end.max(start) })
                     }
+                }
+
+                fn delta(left: $t, right: $t, ratio: $t) -> $t {
+                    let range = if left < right {
+                        right as f64 - left as f64
+                    } else {
+                        left as f64 - right as f64
+                    };
+                    (range / ratio as f64) as $t
                 }
             }
             shrinked!($t);
 
-            impl From<Full<$t>> for Range<$t> {
-                #[inline]
-                fn from(_: Full<$t>) -> Self {
-                    Self {
-                        start: $t::MIN,
-                        end: $t::MAX,
-                        shrink: true,
-                    }
-                }
-            }
-
-            impl Generator for Range<$t> {
+            impl Generate for Range<$t> {
                 type Item = $t;
-                type State = $t;
+                type Shrink = Shrinker<$t>;
 
-                fn generate(&self, state: &mut State) -> (Self::Item, Self::State) {
+                fn generate(&self, state: &mut State) -> (Self::Item, Self::Shrink) {
                     let ratio = state.random.$t();
                     let range = self.end - self.start;
                     let item = (range * ratio + self.start).max(self.start).min(self.end);
-                    (item, item)
+                    (item, Shrinker::new(self.clone(), item))
                 }
+            }
 
-                fn shrink(&self, state: &mut Self::State) -> Option<Self> {
-                    if self.start == self.end {
-                        None
-                    } else if *state < 0 as $t {
-                        Some(Range {
-                            start: *state,
-                            end: self.end,
-                            shrink: false,
-                        })
-                    } else {
-                        Some(Range {
-                            start: self.start,
-                            end: *state,
-                            shrink: false,
-                        })
+            impl Generate for Size<Range<$t>> {
+                type Item = $t;
+                type Shrink = Shrinker<$t>;
+
+                fn generate(&self, state: &mut State) -> (Self::Item, Self::Shrink) {
+                    self.shrinked(state.size).generate(state)
+                }
+            }
+
+            impl Generate for Full<$t> {
+                type Item = $t;
+                type Shrink = Shrinker<$t>;
+
+                fn generate(&self, state: &mut State) -> (Self::Item, Self::Shrink) {
+                    match state.random.u8(..) {
+                        0..=126 => Self::range().generate(state),
+                        127..=253 => Self::range().map(|value| 1 as $t / value).generate(state),
+                        254..=255 => { let (item, _) = Self::special().generate(state); (item, Self::shrink(item)) },
                     }
                 }
             }
 
-            impl Generator for Size<Range<$t>> {
+            impl Generate for Size<Full<$t>> {
                 type Item = $t;
-                type State = $t;
+                type Shrink = Shrinker<$t>;
 
-                fn generate(&self, state: &mut State) -> (Self::Item, Self::State) {
-                    let item = self.shrinked(state.size).generate(state).0;
-                    (item, item)
-                }
-
-                fn shrink(&self, state: &mut Self::State) -> Option<Self> {
-                    Some(self.deref().shrink(state)?.size())
-                }
-            }
-
-            impl Generator for Full<$t> {
-                type Item = $t;
-                type State = $t;
-
-                fn generate(&self, state: &mut State) -> (Self::Item, Self::State) {
-                    const FULL: Range<$t> = Range { start: $t::MIN, end: $t::MAX, shrink: true };
-
-                    match self {
-                        Self::Generate => {
-                            let item = match state.random.u8(..) {
-                                0..=126 => FULL.generate(state).0,
-                                127..=253 => FULL.map(|value| 1 as $t / value).generate(state).0,
-                                254..=255 => Full::<$t>::special().generate(state).0,
-                            };
-                            (item, item)
-                        },
-                        Self::Shrink(range) => range.generate(state),
-                    }
-                }
-
-                fn shrink(&self, state: &mut Self::State) -> Option<Self> {
-                    Some(Self::Shrink(match self {
-                        Self::Generate => Range::from(Self::Generate).shrink(state)?,
-                        Self::Shrink(range) => range.shrink(state)?,
-                    }))
-                }
-            }
-
-            impl Generator for Size<Full<$t>> {
-                type Item = $t;
-                type State = $t;
-
-                fn generate(&self, state: &mut State) -> (Self::Item, Self::State) {
+                fn generate(&self, state: &mut State) -> (Self::Item, Self::Shrink) {
                     fn range(size: f64) -> Range::<$t> {
-                        Range { start: -1 as $t / $t::EPSILON, end: 1 as $t / $t::EPSILON, shrink: true }
-                            .shrinked(size.powi(size_of::<$t>() as i32))
+                        Full::<$t>::range().shrinked(size.powi(size_of::<$t>() as i32))
                     }
 
-                    match self.deref() {
-                        Full::Generate => {
-                            let item = match state.random.u8(..) {
-                                0..=126 => range(state.size).generate(state).0,
-                                127..=253 => range(state.size).map(|value| 1 as $t / value).generate(state).0,
-                                254..=255 => Full::<$t>::special().generate(state).0,
-                            };
-                            (item, item)
-                        },
-                        Full::Shrink(range) => range.generate(state),
+                    match state.random.u8(..) {
+                        0..=126 => range(state.size).generate(state),
+                        127..=253 => range(state.size).map(|value| 1 as $t / value).generate(state),
+                        254..=255 => { let (item, _) = Full::<$t>::special().generate(state); (item, Full::<$t>::shrink(item)) },
                     }
-
-                }
-
-                fn shrink(&self, state: &mut Self::State) -> Option<Self> {
-                    Some(self.deref().shrink(state)?.size())
                 }
             }
 
+            impl Shrink for Shrinker<$t> {
+                type Item = $t;
+
+                fn generate(&self) -> Self::Item {
+                    self.item
+                }
+
+                fn shrink(&mut self) -> Option<Self> {
+                    shrink!(self, $t)
+                }
+            }
+
+            constant!($t);
             ranges!($t);
         };
     }

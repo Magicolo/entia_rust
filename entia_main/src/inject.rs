@@ -145,10 +145,10 @@ impl<I: Inject> Injector<I> {
         })
     }
 
-    pub fn run<T, F: FnMut(<I::State as Get<'_>>::Item) -> T>(
+    pub fn run<T, F: FnOnce(<I::State as Get<'_>>::Item) -> T>(
         &mut self,
         world: &mut World,
-        mut run: F,
+        run: F,
     ) -> Result<T> {
         self.update(world)?;
         let value = run(self.state.get(world));

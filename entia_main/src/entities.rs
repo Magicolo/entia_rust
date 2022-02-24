@@ -287,93 +287,115 @@ impl Entities {
 
     pub fn ancestors(&self, entity: Entity) -> impl DoubleEndedIterator<Item = Entity> {
         let mut entities = Vec::new();
-        self.ascend(
+        self.ascend::<(), _, _>(
             entity,
-            |parent| -> Option<()> {
+            |parent| {
                 entities.push(parent);
-                None
+                Ok(())
             },
-            |_| None,
-        );
+            |_| Ok(()),
+        )
+        .expect("Ascension cannot fail.");
         entities.into_iter()
     }
 
     pub fn descendants(&self, entity: Entity) -> impl DoubleEndedIterator<Item = Entity> {
         let mut entities = Vec::new();
-        self.descend(
+        self.descend::<(), _, _>(
             entity,
-            |child| -> Option<()> {
+            |child| {
                 entities.push(child);
-                None
+                Ok(())
             },
-            |_| None,
-        );
+            |_| Ok(()),
+        )
+        .expect("Descent cannot fail.");
         entities.into_iter()
     }
 
-    pub fn ascend<T>(
+    pub fn ascend<E, U: FnMut(Entity) -> Result<(), E>, D: FnMut(Entity) -> Result<(), E>>(
         &self,
         entity: Entity,
-        mut up: impl FnMut(Entity) -> Option<T>,
-        mut down: impl FnMut(Entity) -> Option<T>,
-    ) -> Option<T> {
-        fn next<T>(
+        mut up: U,
+        mut down: D,
+    ) -> Result<(), E> {
+        self.ascend_with(entity, (), |entity, _| up(entity), |entity, _| down(entity))
+    }
+
+    pub fn ascend_with<
+        S,
+        E,
+        U: FnMut(Entity, S) -> Result<S, E>,
+        D: FnMut(Entity, S) -> Result<S, E>,
+    >(
+        &self,
+        entity: Entity,
+        state: S,
+        mut up: U,
+        mut down: D,
+    ) -> Result<S, E> {
+        fn next<S, E>(
             entities: &Entities,
             entity: Entity,
-            up: &mut impl FnMut(Entity) -> Option<T>,
-            down: &mut impl FnMut(Entity) -> Option<T>,
-        ) -> Option<T> {
+            mut state: S,
+            up: &mut impl FnMut(Entity, S) -> Result<S, E>,
+            down: &mut impl FnMut(Entity, S) -> Result<S, E>,
+        ) -> Result<S, E> {
             if let Some(parent) = entities.parent(entity) {
-                if let Some(value) = up(parent) {
-                    return Some(value);
-                }
-                if let Some(value) = next(entities, parent, up, down) {
-                    return Some(value);
-                }
-                if let Some(value) = down(parent) {
-                    return Some(value);
-                }
+                state = up(parent, state)?;
+                state = next(entities, parent, state, up, down)?;
+                state = down(parent, state)?;
             }
-            None
+            Ok(state)
         }
 
         if self.has(entity) {
-            next(self, entity, &mut up, &mut down)
+            next(self, entity, state, &mut up, &mut down)
         } else {
-            None
+            Ok(state)
         }
     }
 
-    pub fn descend<T>(
+    pub fn descend<E, D: FnMut(Entity) -> Result<(), E>, U: FnMut(Entity) -> Result<(), E>>(
         &self,
         entity: Entity,
-        mut down: impl FnMut(Entity) -> Option<T>,
-        mut up: impl FnMut(Entity) -> Option<T>,
-    ) -> Option<T> {
-        fn next<T>(
+        mut down: D,
+        mut up: U,
+    ) -> Result<(), E> {
+        self.descend_with(entity, (), |entity, _| down(entity), |entity, _| up(entity))
+    }
+
+    pub fn descend_with<
+        S,
+        E,
+        D: FnMut(Entity, S) -> Result<S, E>,
+        U: FnMut(Entity, S) -> Result<S, E>,
+    >(
+        &self,
+        entity: Entity,
+        state: S,
+        mut down: D,
+        mut up: U,
+    ) -> Result<S, E> {
+        fn next<S, E>(
             entities: &Entities,
             entity: Entity,
-            down: &mut impl FnMut(Entity) -> Option<T>,
-            up: &mut impl FnMut(Entity) -> Option<T>,
-        ) -> Option<T> {
+            mut state: S,
+            down: &mut impl FnMut(Entity, S) -> Result<S, E>,
+            up: &mut impl FnMut(Entity, S) -> Result<S, E>,
+        ) -> Result<S, E> {
             for child in entities.children(entity) {
-                if let Some(value) = down(child) {
-                    return Some(value);
-                }
-                if let Some(value) = next(entities, child, down, up) {
-                    return Some(value);
-                }
-                if let Some(value) = up(child) {
-                    return Some(value);
-                }
+                state = down(child, state)?;
+                state = next(entities, child, state, down, up)?;
+                state = up(child, state)?;
             }
-            None
+            Ok(state)
         }
 
         if self.has(entity) {
-            next(self, entity, &mut down, &mut up)
+            next(self, entity, state, &mut down, &mut up)
         } else {
-            None
+            Ok(state)
         }
     }
 
@@ -538,13 +560,12 @@ impl Entities {
         }
 
         // An entity cannot adopt an ancestor.
-        if let Some(_) = self.ascend(
+        self.ascend(
             parent,
-            |parent| if parent == child { Some(()) } else { None },
-            |_| None,
-        ) {
-            return None;
-        }
+            |parent| if parent == child { Err(()) } else { Ok(()) },
+            |_| Ok(()),
+        )
+        .ok()?;
 
         let &Datum {
             parent,

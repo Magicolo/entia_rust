@@ -22,7 +22,7 @@ fn empty_range() {
 #[test]
 fn is_constant() {
     for value in char::generator().sample(COUNT) {
-        assert_that(&Constant(value).sample(1).next().unwrap()).is_equal_to(value);
+        assert_that(&value.sample(1).next().unwrap()).is_equal_to(value);
     }
 }
 
@@ -60,7 +60,7 @@ macro_rules! collection {
             #[test]
             fn has_constant_count() {
                 for i in 0..COUNT {
-                    let value = char::generator().collect_with::<_, $t>(Constant(i)).sample(1).next().unwrap();
+                    let value = char::generator().collect_with::<_, $t>(i).sample(1).next().unwrap();
                     assert!(value $(.$i())? .count() == i)
                 }
             }

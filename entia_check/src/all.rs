@@ -1,168 +1,143 @@
 use crate::{
-    generator::{FullGenerator, Generator, State},
+    array, collect,
+    generator::{FullGenerate, Generate, IntoGenerate, State},
     recurse,
+    shrink::Shrink,
 };
+use entia_core::Unzip;
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct All<G>(pub G);
 
-impl<G: FullGenerator, const N: usize> FullGenerator for [G; N] {
+impl<G: FullGenerate, const N: usize> FullGenerate for [G; N] {
     type Item = [G::Item; N];
-    type Generator = All<[G::Generator; N]>;
-    fn generator() -> Self::Generator {
+    type Generate = All<[G::Generate; N]>;
+    fn generator() -> Self::Generate {
         All::from([(); N].map(|_| G::generator()))
     }
 }
 
-impl<G: Generator, const N: usize> From<[G; N]> for All<[G; N]> {
-    fn from(generators: [G; N]) -> Self {
-        Self(generators)
+impl<G: Generate, const N: usize> From<[G; N]> for All<[G; N]> {
+    fn from(generates: [G; N]) -> Self {
+        Self(generates)
     }
 }
 
-impl<G: Generator, const N: usize> Generator for All<[G; N]> {
+impl<G: Generate, const N: usize> Generate for All<[G; N]> {
     type Item = [G::Item; N];
-    type State = [G::State; N];
+    type Shrink = array::Shrinker<G::Shrink, N>;
 
-    fn generate(&self, state: &mut State) -> (Self::Item, Self::State) {
-        let (items, states) = generate_array(|index| self.0[index].generate(state));
-        (items, states)
-    }
-
-    fn shrink(&self, state: &mut Self::State) -> Option<Self> {
-        shrink_array(&self.0, state).map(All)
-    }
-}
-
-pub(crate) fn generate_array<T, S, F: FnMut(usize) -> (T, S), const N: usize>(
-    mut map: F,
-) -> ([T; N], [S; N]) {
-    let mut items = [(); N].map(|_| None);
-    let mut states = [(); N].map(|_| None);
-    for i in 0..N {
-        let (item, state) = map(i);
-        items[i] = Some(item);
-        states[i] = Some(state);
-    }
-    (items.map(Option::unwrap), states.map(Option::unwrap))
-}
-
-pub(crate) fn shrink_array<G: Generator, const N: usize>(
-    array: &[G; N],
-    state: &mut [G::State; N],
-) -> Option<[G; N]> {
-    // Try to shrink each generator and succeed if any generator is shrunk.
-    let mut generators = array.clone();
-    let mut shrunk = false;
-    for i in 0..N {
-        if let Some(generator) = generators[i].shrink(&mut state[i]) {
-            generators[i] = generator;
-            shrunk = true;
-        }
-    }
-    if shrunk {
-        Some(generators)
-    } else {
-        None
+    fn generate(&self, state: &mut State) -> (Self::Item, Self::Shrink) {
+        let mut index = 0;
+        let (items, shrinks) = [(); N]
+            .map(|_| {
+                let pair = self.0[index].generate(state);
+                index += 1;
+                pair
+            })
+            .unzip();
+        (items, array::Shrinker(shrinks))
     }
 }
 
-impl<G: Generator> From<Vec<G>> for All<Vec<G>> {
-    fn from(generators: Vec<G>) -> Self {
-        Self(generators)
+impl<G: Generate> From<Vec<G>> for All<Vec<G>> {
+    fn from(generates: Vec<G>) -> Self {
+        Self(generates)
     }
 }
 
-impl<G: Generator> Generator for All<Vec<G>> {
+impl<G: Generate> Generate for All<Vec<G>> {
     type Item = Vec<G::Item>;
-    type State = (Vec<G::State>, usize);
+    type Shrink = collect::Shrinker<G::Shrink, Vec<G::Item>>;
 
-    fn generate(&self, state: &mut State) -> (Self::Item, Self::State) {
-        let (items, states) = self
+    fn generate(&self, state: &mut State) -> (Self::Item, Self::Shrink) {
+        let (items, shrinks) = self
             .0
             .iter()
-            .map(|generator| generator.generate(state))
+            .map(|generate| generate.generate(state))
             .unzip();
-        (items, (states, 0))
-    }
-
-    fn shrink(&self, state: &mut Self::State) -> Option<Self> {
-        shrink_vector(&self.0, state).map(All)
-    }
-}
-
-pub(crate) fn shrink_vector<G: Generator>(
-    vector: &Vec<G>,
-    state: &mut (Vec<G::State>, usize),
-) -> Option<Vec<G>> {
-    let mut generators = vector.clone();
-
-    // Try to remove irrelevant generators.
-    if state.1 < vector.len() {
-        generators.remove(state.1);
-        state.1 += 1;
-        return Some(generators);
-    }
-
-    // Try to shrink each generator and succeed if any generator is shrunk.
-    let mut shrunk = false;
-    for i in 0..generators.len() {
-        if let Some(generator) = generators[i].shrink(&mut state.0[i]) {
-            generators[i] = generator;
-            shrunk = true;
-        }
-    }
-
-    if shrunk {
-        Some(generators)
-    } else {
-        None
+        (items, collect::Shrinker::new(shrinks))
     }
 }
 
 macro_rules! tuple {
     () => {
-        impl FullGenerator for () {
-            type Item = <Self::Generator as Generator>::Item;
-            type Generator = ();
-            fn generator() -> Self::Generator { () }
+        impl FullGenerate for () {
+            type Item = <Self::Generate as Generate>::Item;
+            type Generate = ();
+            fn generator() -> Self::Generate { () }
         }
 
-        impl Generator for () {
+        impl IntoGenerate for () {
+            type Item = <Self::Generate as Generate>::Item;
+            type Generate = ();
+            fn generator(self) -> Self::Generate { self }
+        }
+
+        impl Generate for () {
             type Item = ();
-            type State = ();
-            fn generate(&self, _state: &mut State) -> (Self::Item, Self::State) { ((), ()) }
-            fn shrink(&self, _state: &mut Self::State) -> Option<Self> { None }
+            type Shrink = ();
+            fn generate(&self, _state: &mut State) -> (Self::Item, Self::Shrink) { ((), ()) }
+        }
+
+        impl Shrink for () {
+            type Item = ();
+            fn generate(&self) -> Self::Item { () }
+            fn shrink(&mut self) -> Option<Self> { None }
         }
     };
     ($($p:ident, $t:ident),*) => {
-        impl<$($t: FullGenerator,)*> FullGenerator for ($($t,)*) {
-            type Item = <Self::Generator as Generator>::Item;
-            type Generator = ($($t::Generator,)*);
-            fn generator() -> Self::Generator {
+        impl<$($t: FullGenerate,)*> FullGenerate for ($($t,)*) {
+            type Item = <Self::Generate as Generate>::Item;
+            type Generate = ($($t::Generate,)*);
+
+            fn generator() -> Self::Generate {
                 ($($t::generator(),)*)
             }
         }
 
-        impl<$($t: Generator,)*> Generator for ($($t,)*) {
-            type Item = ($($t::Item,)*);
-            type State = ($($t::State,)*);
+        impl<$($t: IntoGenerate,)*> IntoGenerate for ($($t,)*) {
+            type Item = <Self::Generate as Generate>::Item;
+            type Generate = ($($t::Generate,)*);
 
-            fn generate(&self, _state: &mut State) -> (Self::Item, Self::State) {
+            fn generator(self) -> Self::Generate {
+                let ($($p,)*) = self;
+                ($($p.generator(),)*)
+            }
+        }
+
+        impl<$($t: Generate,)*> Generate for ($($t,)*) {
+            type Item = ($($t::Item,)*);
+            type Shrink = ($($t::Shrink,)*);
+
+            fn generate(&self, _state: &mut State) -> (Self::Item, Self::Shrink) {
                 let ($($p,)*) = self;
                 $(let $p = $p.generate(_state);)*
                 (($($p.0,)*), ($($p.1,)*))
             }
+        }
 
-            fn shrink(&self, ($($t,)*): &mut Self::State) -> Option<Self> {
+        impl<$($t: Shrink,)*> Shrink for ($($t,)*) {
+            type Item = ($($t::Item,)*);
+
+            fn generate(&self) -> Self::Item {
+                let ($($p,)*) = self;
+                ($($p.generate(),)*)
+            }
+
+            fn shrink(&mut self) -> Option<Self> {
                 let ($($p,)*) = self;
                 let mut shrunk = false;
-                let ($($p,)*) = ($(match $p.shrink($t) { Some(generator) => { shrunk = true; generator }, None => $p.clone() },)*);
-                if shrunk {
-                    Some(($($p,)*))
-                } else {
-                    None
-                }
+                let ($($p,)*) = ($(
+                    if shrunk { $p.clone() }
+                    else {
+                        match $p.shrink() {
+                            Some(shrink) => { shrunk = true; shrink },
+                            None => $p.clone(),
+                        }
+                    },
+                )*);
+                if shrunk { Some(($($p,)*)) } else { None }
             }
         }
     };
