@@ -1,6 +1,6 @@
 use crate::{
     any::Any,
-    generator::{FullGenerate, Generate, IntoGenerate, State},
+    generate::{FullGenerate, Generate, IntoGenerate, State},
     shrink::Shrink,
     size::Size,
 };

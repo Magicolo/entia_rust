@@ -1,4 +1,4 @@
-use crate::generator::{Generate, State};
+use crate::generate::{Generate, State};
 
 #[derive(Clone, Debug, Default)]
 pub struct Filter<G, F = fn(&<G as Generate>::Item) -> bool>(G, F, usize);

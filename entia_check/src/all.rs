@@ -1,6 +1,6 @@
 use crate::{
     array, collect,
-    generator::{FullGenerate, Generate, IntoGenerate, State},
+    generate::{FullGenerate, Generate, IntoGenerate, State},
     recurse,
     shrink::Shrink,
 };

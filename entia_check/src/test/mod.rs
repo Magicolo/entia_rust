@@ -2,7 +2,7 @@ pub mod character;
 pub mod number;
 
 use super::*;
-use spectral::{boolean::*, numeric::*, result::*, *};
+use spectral::{boolean::*, numeric::*, *};
 
 pub const COUNT: usize = 256;
 

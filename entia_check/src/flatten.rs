@@ -1,4 +1,4 @@
-use crate::generator::{Generate, State};
+use crate::generate::{Generate, State};
 
 #[derive(Clone, Debug, Default)]
 pub struct Flatten<G>(G);

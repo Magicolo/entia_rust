@@ -4,7 +4,7 @@ mod range {
     use super::*;
 
     macro_rules! tests {
-        ($t:ident, [$c:expr], [$($f:ident)?], [$($m:ident)?]) => {
+        ($t:ident, [$c:expr], [$($f:ident)?], [$($m:ident),*]) => {
             mod $t {
                 use super::*;
 
@@ -92,8 +92,26 @@ mod range {
                     }
                 }
 
-                $($m!(INNER $t);)?
+                $($m!(INNER $t);)*
             }
+        };
+    }
+
+    macro_rules! tests_integer {
+        (INNER $t:ident) => {
+            #[test]
+            fn check_less_than_finds_minimum() {
+                for right in positive::<$t>().sample(COUNT) {
+                    match positive::<$t>().check(COUNT, None, |&left| left < right) {
+                        Err(report) => assert_that(&(right - *report.shrunk()))
+                            .is_less_than_or_equal_to(right / 100 as $t),
+                        _ => {}
+                    }
+                }
+            }
+        };
+        ($t:ident, $m:ident) => {
+            tests!($t, [|low, high| low == high], [], [$m, tests_integer]);
         };
     }
 
@@ -105,21 +123,24 @@ mod range {
                     assert_that(&value).is_less_than(0 as $t);
                 }
             }
-        };
-        ($($t:ident),*) => { $(tests!($t, [|low, high| low == high], [], [tests_signed]);)* };
-    }
 
-    macro_rules! tests_unsigned {
-        (INNER $t:ident) => {
             #[test]
-            fn check_less_than_finds_minimum() {
-                for right in <$t>::generator().sample(COUNT) {
-                    let result = <$t>::generator().check(COUNT * 10, None, |&left| left < right).map_err(|report| *report.shrunk());
-                    assert_that(&result).is_err_containing(&right);
+            fn check_greater_than_finds_maximum() {
+                for right in negative::<$t>().sample(COUNT) {
+                    match negative::<$t>().check(COUNT, None, |&left| left > right) {
+                        Err(report) => assert_that(&(*report.shrunk() - right))
+                            .is_less_than_or_equal_to(right.abs() / 100 as $t),
+                        _ => {}
+                    }
                 }
             }
         };
-        ($($t:ident),*) => { $(tests!($t, [|low, high| low == high], [], [tests_unsigned]);)* };
+        ($($t:ident),*) => { $(tests_integer!($t, tests_signed);)* };
+    }
+
+    macro_rules! tests_unsigned {
+        (INNER $t:ident) => {};
+        ($($t:ident),*) => { $(tests_integer!($t, tests_unsigned);)* };
     }
 
     macro_rules! tests_floating {

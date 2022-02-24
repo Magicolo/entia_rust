@@ -1,5 +1,5 @@
 use crate::{
-    generator::{Generate, State},
+    generate::{Generate, State},
     recurse,
     shrink::Shrink,
 };

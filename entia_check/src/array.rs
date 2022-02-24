@@ -1,5 +1,5 @@
 use crate::{
-    generator::{Generate, State},
+    generate::{Generate, State},
     shrink::Shrink,
 };
 use entia_core::Unzip;

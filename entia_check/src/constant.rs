@@ -1,13 +1,7 @@
-pub use crate::constant_expressions as constant;
 use crate::{
-    generator::{Generate, State},
+    generate::{Generate, State},
     shrink::Shrink,
 };
-
-#[macro_export]
-macro_rules! constant_expressions {
-        ($($e:expr),*) => { [$($crate::generator::constant::Constant($e)),*] };
-    }
 
 #[derive(Clone, Debug, Default)]
 pub struct Constant<T>(pub T);

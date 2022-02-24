@@ -7,18 +7,18 @@ pub mod filter;
 pub mod filter_map;
 pub mod flatten;
 pub mod function;
-pub mod generator;
+pub mod generate;
 pub mod map;
 pub mod option;
-// pub mod or;
 pub mod primitive;
+pub mod sample;
 pub mod shrink;
 pub mod size;
 pub mod wrap;
 
 use self::any::Any;
 pub use crate::{
-    generator::{FullGenerate, Generate, IntoGenerate},
+    generate::{FullGenerate, Generate, IntoGenerate},
     shrink::Shrink,
 };
 pub(crate) use entia_macro::recurse_16 as recurse;

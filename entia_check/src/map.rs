@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use crate::{
-    generator::{Generate, State},
+    generate::{Generate, State},
     shrink::Shrink,
 };
 
