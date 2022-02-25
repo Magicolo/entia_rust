@@ -1,5 +1,6 @@
 pub mod any;
 pub mod array;
+pub mod check;
 pub mod collect;
 pub mod constant;
 pub mod filter;
@@ -13,10 +14,10 @@ pub mod primitive;
 pub mod sample;
 pub mod shrink;
 pub mod size;
-pub mod wrap;
 
 use self::any::Any;
 pub use crate::{
+    check::Check,
     generate::{FullGenerate, Generate, IntoGenerate},
     shrink::Shrink,
 };

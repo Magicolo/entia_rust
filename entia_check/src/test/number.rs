@@ -102,10 +102,9 @@ mod range {
             #[test]
             fn check_less_than_finds_minimum() {
                 for right in positive::<$t>().sample(COUNT) {
-                    match positive::<$t>().check(COUNT, None, |&left| left < right) {
-                        Err(report) => assert_that(&(right - *report.shrunk()))
-                            .is_less_than_or_equal_to(right / 100 as $t),
-                        _ => {}
+                    if let Err(error) = positive::<$t>().check(COUNT, |&left| left > right) {
+                        assert_that(&(right - *error.shrunk()))
+                            .is_less_than_or_equal_to(right / 100 as $t)
                     }
                 }
             }
@@ -127,10 +126,9 @@ mod range {
             #[test]
             fn check_greater_than_finds_maximum() {
                 for right in negative::<$t>().sample(COUNT) {
-                    match negative::<$t>().check(COUNT, None, |&left| left > right) {
-                        Err(report) => assert_that(&(*report.shrunk() - right))
-                            .is_less_than_or_equal_to(right.abs() / 100 as $t),
-                        _ => {}
+                    if let Err(error) = negative::<$t>().check(COUNT, |&left| left > right) {
+                        assert_that(&(*error.shrunk() - right))
+                            .is_less_than_or_equal_to(right.abs() / 100 as $t)
                     }
                 }
             }

@@ -11,7 +11,6 @@ use crate::{
     sample::Sample,
     shrink::Shrink,
     size::Size,
-    wrap::Wrap,
 };
 use entia_core::Unzip;
 use fastrand::Rng;
@@ -19,17 +18,8 @@ use std::iter::FromIterator;
 
 #[derive(Clone, Debug)]
 pub struct State {
-    pub index: usize,
-    pub count: usize,
     pub size: f64,
     pub random: Rng,
-}
-
-#[derive(Clone, Debug)]
-pub struct Report<T> {
-    pub state: State,
-    pub original: T,
-    pub shrinks: Vec<T>,
 }
 
 pub trait FullGenerate {
@@ -50,15 +40,7 @@ pub trait Generate {
 
     fn generate(&self, state: &mut State) -> (Self::Item, Self::Shrink);
 
-    fn wrap<T, B: Fn() -> T, A: Fn(T)>(self, before: B, after: A) -> Wrap<Self, T, B, A>
-    where
-        Self: Sized,
-        Wrap<Self, T, B, A>: Generate,
-    {
-        Wrap::generator(self, before, after)
-    }
-
-    fn map<T, F: Fn(Self::Item) -> T + Clone>(self, map: F) -> Map<Self, T, F>
+    fn map<T, F: Fn(Self::Item) -> T>(self, map: F) -> Map<Self, T, F>
     where
         Self: Sized,
         Map<Self, T, F>: Generate,
@@ -66,7 +48,7 @@ pub trait Generate {
         Map::generator(self, map)
     }
 
-    fn filter<F: Fn(&Self::Item) -> bool + Clone>(
+    fn filter<F: Fn(&Self::Item) -> bool>(
         self,
         iterations: Option<usize>,
         filter: F,
@@ -78,7 +60,7 @@ pub trait Generate {
         Filter::new(self, filter, iterations.unwrap_or(256))
     }
 
-    fn filter_map<T, F: Fn(Self::Item) -> Option<T> + Clone>(
+    fn filter_map<T, F: Fn(Self::Item) -> Option<T>>(
         self,
         iterations: Option<usize>,
         map: F,
@@ -90,9 +72,10 @@ pub trait Generate {
         FilterMap::new(self, map, iterations.unwrap_or(256))
     }
 
-    fn bind<G: Generate, F: Fn(Self::Item) -> G + Clone>(self, bind: F) -> Flatten<Map<Self, G, F>>
+    fn bind<G: Generate, F: Fn(Self::Item) -> G>(self, bind: F) -> Flatten<Map<Self, G, F>>
     where
         Self: Sized,
+        Map<Self, G, F>: Generate<Item = G>,
         Flatten<Map<Self, G, F>>: Generate,
     {
         self.map(bind).flatten()
@@ -105,6 +88,14 @@ pub trait Generate {
         Flatten<Self>: Generate,
     {
         Flatten(self)
+    }
+
+    fn any(self) -> Any<Self>
+    where
+        Self: Sized,
+        Any<Self>: Generate,
+    {
+        Any(self)
     }
 
     fn array<const N: usize>(self) -> Array<Self, N>
@@ -142,97 +133,20 @@ pub trait Generate {
         Size(self)
     }
 
-    fn any(self) -> Any<Self>
-    where
-        Self: Sized,
-        Any<Self>: Generate,
-    {
-        Any(self)
-    }
-
     fn sample(&self, count: usize) -> Sample<Self>
     where
         Self: Sized,
     {
-        Sample::new(self, State::new(count))
-    }
-
-    fn check<F: Fn(&Self::Item) -> bool>(
-        &self,
-        checks: usize,
-        shrinks: Option<usize>,
-        check: F,
-    ) -> Result<(), Report<Self::Item>>
-    where
-        Self: Sized,
-    {
-        // TODO: Parallelize checking!
-        for mut state in State::new(checks) {
-            let (outer_item, mut outer_shrink) = self.generate(&mut state);
-            if check(&outer_item) {
-                continue;
-            }
-
-            let mut report = Report {
-                state,
-                original: outer_item,
-                shrinks: Vec::new(),
-            };
-            for _ in 0..shrinks.unwrap_or(usize::MAX) {
-                if let Some(inner_shrink) = outer_shrink.shrink() {
-                    let inner_item = inner_shrink.generate();
-                    if check(&inner_item) {
-                        continue;
-                    }
-
-                    report.shrinks.push(inner_item);
-                    outer_shrink = inner_shrink;
-                } else {
-                    break;
-                }
-            }
-            return Err(report);
-        }
-        Ok(())
+        Sample::new(self, count)
     }
 }
 
 impl State {
-    pub fn new(count: usize) -> Self {
+    pub fn new(index: usize, count: usize, seed: u64) -> Self {
         Self {
-            index: 0,
-            count,
-            size: 0.,
-            random: Rng::new(),
+            size: (index as f64 / count as f64 * 1.1).min(1.),
+            random: Rng::with_seed(seed),
         }
-    }
-}
-
-impl<T> Report<T> {
-    pub fn shrunk(&self) -> &T {
-        self.shrinks.last().unwrap_or(&self.original)
-    }
-}
-
-impl Iterator for State {
-    type Item = Self;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.index < self.count {
-            // 10% of states will have size 1.
-            self.size = (self.index as f64 / self.count as f64 * 1.1).min(1.);
-            self.index += 1;
-            Some(self.clone())
-        } else {
-            None
-        }
-    }
-}
-
-impl ExactSizeIterator for State {
-    #[inline]
-    fn len(&self) -> usize {
-        self.count - self.index
     }
 }
 
@@ -240,7 +154,15 @@ impl<G: Generate> Generate for &G {
     type Item = G::Item;
     type Shrink = G::Shrink;
     fn generate(&self, state: &mut State) -> (Self::Item, Self::Shrink) {
-        (*self).generate(state)
+        (&**self).generate(state)
+    }
+}
+
+impl<G: Generate> Generate for &mut G {
+    type Item = G::Item;
+    type Shrink = G::Shrink;
+    fn generate(&self, state: &mut State) -> (Self::Item, Self::Shrink) {
+        (&**self).generate(state)
     }
 }
 

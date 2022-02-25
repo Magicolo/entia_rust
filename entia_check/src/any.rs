@@ -8,8 +8,8 @@ use crate::{
 pub struct Any<T: ?Sized>(pub T);
 #[derive(Clone, PartialEq, PartialOrd, Debug)]
 pub struct Weight<T: ?Sized> {
-    pub weight: f64,
-    pub value: T,
+    weight: f64,
+    value: T,
 }
 
 fn indexed<'a, T>(items: &'a [T], state: &mut State) -> Option<&'a T> {
@@ -31,6 +31,13 @@ fn weighted<'a, T>(items: &'a [Weight<T>], state: &mut State) -> Option<&'a T> {
         }
     }
     None
+}
+
+impl<T> Weight<T> {
+    #[inline]
+    pub const fn new(value: T, weight: f64) -> Self {
+        Self { value, weight }
+    }
 }
 
 impl<G: FullGenerate> FullGenerate for Any<G>
