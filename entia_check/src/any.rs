@@ -1,13 +1,16 @@
 use crate::{
-    generate::{Generate, State},
+    generate::{FullGenerate, Generate, IntoGenerate, State},
     recurse,
     shrink::Shrink,
 };
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub struct Any<G>(G);
+pub struct Any<T: ?Sized>(pub T);
 #[derive(Clone, PartialEq, PartialOrd, Debug)]
-pub struct Weight<T>(pub T, pub f64);
+pub struct Weight<T: ?Sized> {
+    pub weight: f64,
+    pub value: T,
+}
 
 fn indexed<'a, T>(items: &'a [T], state: &mut State) -> Option<&'a T> {
     if items.len() == 0 {
@@ -18,27 +21,45 @@ fn indexed<'a, T>(items: &'a [T], state: &mut State) -> Option<&'a T> {
 }
 
 fn weighted<'a, T>(items: &'a [Weight<T>], state: &mut State) -> Option<&'a T> {
-    let total = items.iter().map(|weight| weight.1).sum::<f64>();
+    let total = items.iter().map(|weight| weight.weight).sum::<f64>();
     let mut random = state.random.f64() * total;
     for weight in items {
-        if random < weight.1 {
-            return Some(&weight.0);
+        if random < weight.weight {
+            return Some(&weight.value);
         } else {
-            random -= weight.1;
+            random -= weight.weight;
         }
     }
     None
 }
 
-macro_rules! collection {
-    ($t:ty, $i:ident, [$($l:lifetime)?], [$($a:tt)?], [$($n:ident)?]) => {
-        impl<$($l,)? T: Generate $(,const $n: usize)?> From<$(&$l)? $t> for Any<$(&$l)? $t> {
-            fn from(generates: $(&$l)? $t) -> Self {
-                Self(generates)
-            }
-        }
+impl<G: FullGenerate> FullGenerate for Any<G>
+where
+    Any<G::Generate>: Generate,
+{
+    type Item = <Any<G::Generate> as Generate>::Item;
+    type Generate = Any<G::Generate>;
 
-        impl<$($l,)? T: Generate $(,const $n: usize)?> Generate for Any<$(&$l)? $t> {
+    fn generator() -> Self::Generate {
+        Any(G::generator())
+    }
+}
+
+impl<G: IntoGenerate> IntoGenerate for Any<G>
+where
+    Any<G::Generate>: Generate,
+{
+    type Item = <Any<G::Generate> as Generate>::Item;
+    type Generate = Any<G::Generate>;
+
+    fn generator(self) -> Self::Generate {
+        Any(self.0.generator())
+    }
+}
+
+macro_rules! collection {
+    ($t:ty, $i:ident, [$($n:ident)?]) => {
+        impl<T: Generate $(,const $n: usize)?> Generate for Any<$t> {
             type Item = Option<T::Item>;
             type Shrink = Option<T::Shrink>;
 
@@ -55,43 +76,16 @@ macro_rules! collection {
     };
 }
 
-collection!([T], indexed, ['a], [], []);
-collection!([Weight<T>], weighted, ['a], [0], []);
-collection!([T; N], indexed, [], [], [N]);
-collection!([Weight<T>; N], weighted, [], [0], [N]);
-collection!([T; N], indexed, ['a], [], [N]);
-collection!([Weight<T>; N], weighted, ['a], [0], [N]);
-collection!(Vec<T>, indexed, [], [], []);
-collection!(Vec<Weight<T>>, weighted, [], [0], []);
-collection!(Vec<T>, indexed, ['a], [], []);
-collection!(Vec<Weight<T>>, weighted, ['a], [0], []);
+collection!([T], indexed, []);
+collection!([Weight<T>], weighted, []);
+collection!([T; N], indexed, [N]);
+collection!([Weight<T>; N], weighted, [N]);
+collection!(Vec<T>, indexed, []);
+collection!(Vec<Weight<T>>, weighted, []);
 
 macro_rules! tuple {
     () => {};
     ($p:ident, $t:ident $(,$ps:ident, $ts:ident)*) => {
-        impl<$t: Generate, $($ts: Generate<Item = $t::Item>,)*> From<($t, $($ts,)*)> for Any<($t, $($ts,)*)> {
-            fn from(generates: ($t, $($ts,)*)) -> Self {
-                Self(generates)
-            }
-        }
-
-        // impl<$t: IntoGenerate, $($ts: IntoGenerate<Item = $t::Item>,)*> IntoGenerate for ($t, $($ts,)*) {
-        //     type Item = $t::Item;
-        //     type Generate = Any<($t::Generate, $($ts::Generate,)*), $p::One<$t, $($ts,)*>>;
-        //     fn generator(self) -> Self::Generate {
-        //         let ($p, $($ps,)*) = self;
-        //         Any::Generate(($p.generator(), $($ps.generator(),)*))
-        //     }
-        // }
-
-        // impl<$t: FullGenerate, $($ts: FullGenerate<Item = $t::Item>,)*> FullGenerate for Any<($t, $($ts,)*), $p::One<$t, $($ts,)*>> {
-        //     type Item = <Self::Generate as Generate>::Item;
-        //     type Generate = Any<($t::Generate, $($ts::Generate,)*)>;
-        //     fn generator() -> Self::Generate {
-        //         Any(($t::generator(), $($ts::generator(),)*))
-        //     }
-        // }
-
         pub(crate) mod $p {
             use super::*;
 
@@ -151,11 +145,27 @@ macro_rules! tuple {
 
                 fn generate(&self, state: &mut State) -> (Self::Item, Self::Shrink) {
                     let ($p, $($ps,)*) = &self.0;
-                    let total = $p.1 $(+ $ps.1)*;
+                    let total = $p.weight $(+ $ps.weight)*;
                     let mut _weight = state.random.f64() * total;
                     let mut _index = 0;
-                    if _weight < $p.1 { let (item, shrink) = $p.0.generate(state); return (item, One::$t(shrink)); } else { _weight -= $p.1; }
-                    $(_index += 1; if _weight < $ps.1 { let (item, shrink) = $ps.0.generate(state); return (item, One::$ts(shrink)); } else { _weight -= $ps.1; })*
+
+                    if _weight < $p.weight {
+                        let (item, shrink) = $p.value.generate(state);
+                        return (item, One::$t(shrink));
+                    } else {
+                        _weight -= $p.weight;
+                    }
+
+                    $(
+                        _index += 1;
+                        if _weight < $ps.weight {
+                            let (item, shrink) = $ps.value.generate(state);
+                            return (item, One::$ts(shrink));
+                        } else {
+                            _weight -= $ps.weight;
+                        }
+                    )*
+
                     unreachable!();
                 }
             }

@@ -1,20 +1,23 @@
 use crate::{
-    sample::Sample,
-    array::Array,
-    collect::Collect,
+    any::Any,
+    array::{self, Array},
+    collect::{self, Collect},
     filter::Filter,
     filter_map::FilterMap,
     flatten::Flatten,
     map::Map,
     primitive::{Full, Range},
+    recurse,
+    sample::Sample,
     shrink::Shrink,
     size::Size,
     wrap::Wrap,
 };
+use entia_core::Unzip;
 use fastrand::Rng;
 use std::iter::FromIterator;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct State {
     pub index: usize,
     pub count: usize,
@@ -22,7 +25,7 @@ pub struct State {
     pub random: Rng,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Report<T> {
     pub state: State,
     pub original: T,
@@ -44,7 +47,7 @@ pub trait IntoGenerate {
     fn generator(self) -> Self::Generate;
 }
 
-pub trait Generate: Sized + Clone {
+pub trait Generate {
     type Item;
     type Shrink: Shrink<Item = Self::Item>;
 
@@ -86,6 +89,7 @@ pub trait Generate: Sized + Clone {
     ) -> FilterMap<Self, T, F>
     where
         Self: Sized,
+        FilterMap<Self, T, F>: Generate,
     {
         FilterMap::new(self, map, iterations.unwrap_or(256))
     }
@@ -93,6 +97,7 @@ pub trait Generate: Sized + Clone {
     fn bind<G: Generate, F: Fn(Self::Item) -> G + Clone>(self, bind: F) -> Flatten<Map<Self, G, F>>
     where
         Self: Sized,
+        Flatten<Map<Self, G, F>>: Generate,
     {
         self.map(bind).flatten()
     }
@@ -101,13 +106,15 @@ pub trait Generate: Sized + Clone {
     where
         Self: Sized,
         Self::Item: Generate,
+        Flatten<Self>: Generate,
     {
-        Flatten::new(self)
+        Flatten(self)
     }
 
     fn array<const N: usize>(self) -> Array<Self, N>
     where
         Self: Sized,
+        Array<Self, N>: Generate,
     {
         Array(self)
     }
@@ -115,6 +122,7 @@ pub trait Generate: Sized + Clone {
     fn collect<F: FromIterator<Self::Item>>(self) -> Collect<Self, Size<Range<usize>>, F>
     where
         Self: Sized,
+        Collect<Self, Size<Range<usize>>, F>: Generate,
     {
         self.collect_with((0..256 as usize).generator())
     }
@@ -125,6 +133,7 @@ pub trait Generate: Sized + Clone {
     ) -> Collect<Self, C, F>
     where
         Self: Sized,
+        Collect<Self, C, F>: Generate,
     {
         Collect::new(self, count)
     }
@@ -134,7 +143,15 @@ pub trait Generate: Sized + Clone {
         Self: Sized,
         Size<Self>: Generate,
     {
-        Size::from(self)
+        Size(self)
+    }
+
+    fn any(self) -> Any<Self>
+    where
+        Self: Sized,
+        Any<Self>: Generate,
+    {
+        Any(self)
     }
 
     fn sample(&self, count: usize) -> Sample<Self>
@@ -149,7 +166,10 @@ pub trait Generate: Sized + Clone {
         checks: usize,
         shrinks: Option<usize>,
         check: F,
-    ) -> Result<(), Report<Self::Item>> {
+    ) -> Result<(), Report<Self::Item>>
+    where
+        Self: Sized,
+    {
         // TODO: Parallelize checking!
         for mut state in State::new(checks) {
             let (outer_item, mut outer_shrink) = self.generate(&mut state);
@@ -220,11 +240,44 @@ impl ExactSizeIterator for State {
     }
 }
 
-impl FullGenerate for String {
-    type Item = Self;
-    type Generate = Collect<Size<Full<char>>, Size<Range<usize>>, Self::Item>;
+impl<G: Generate> Generate for &G {
+    type Item = G::Item;
+    type Shrink = G::Shrink;
+    fn generate(&self, state: &mut State) -> (Self::Item, Self::Shrink) {
+        (*self).generate(state)
+    }
+}
+
+impl<G: FullGenerate, const N: usize> FullGenerate for [G; N] {
+    type Item = [G::Item; N];
+    type Generate = [G::Generate; N];
     fn generator() -> Self::Generate {
-        char::generator().collect()
+        [(); N].map(|_| G::generator())
+    }
+}
+
+impl<G: IntoGenerate, const N: usize> IntoGenerate for [G; N] {
+    type Item = [G::Item; N];
+    type Generate = [G::Generate; N];
+    fn generator(self) -> Self::Generate {
+        self.map(|generate| generate.generator())
+    }
+}
+
+impl<G: Generate, const N: usize> Generate for [G; N] {
+    type Item = [G::Item; N];
+    type Shrink = array::Shrinker<G::Shrink, N>;
+
+    fn generate(&self, state: &mut State) -> (Self::Item, Self::Shrink) {
+        let mut index = 0;
+        let (items, shrinks) = [(); N]
+            .map(|_| {
+                let pair = self[index].generate(state);
+                index += 1;
+                pair
+            })
+            .unzip();
+        (items, array::Shrinker(shrinks))
     }
 }
 
@@ -235,3 +288,116 @@ impl<G: FullGenerate> FullGenerate for Vec<G> {
         G::generator().collect()
     }
 }
+
+impl<G: IntoGenerate> IntoGenerate for Vec<G> {
+    type Item = Vec<G::Item>;
+    type Generate = Vec<G::Generate>;
+    fn generator(self) -> Self::Generate {
+        self.into_iter()
+            .map(|generate| generate.generator())
+            .collect()
+    }
+}
+
+impl<G: Generate> Generate for Vec<G> {
+    type Item = Vec<G::Item>;
+    type Shrink = collect::Shrinker<G::Shrink, Vec<G::Item>>;
+
+    fn generate(&self, state: &mut State) -> (Self::Item, Self::Shrink) {
+        let (items, shrinks) = self.iter().map(|generate| generate.generate(state)).unzip();
+        (items, collect::Shrinker::new(shrinks))
+    }
+}
+
+impl FullGenerate for String {
+    type Item = Self;
+    type Generate = Collect<Size<Full<char>>, Size<Range<usize>>, Self::Item>;
+    fn generator() -> Self::Generate {
+        char::generator().collect()
+    }
+}
+
+macro_rules! tuple {
+    () => {
+        impl FullGenerate for () {
+            type Item = <Self::Generate as Generate>::Item;
+            type Generate = ();
+            fn generator() -> Self::Generate { () }
+        }
+
+        impl IntoGenerate for () {
+            type Item = <Self::Generate as Generate>::Item;
+            type Generate = ();
+            fn generator(self) -> Self::Generate { self }
+        }
+
+        impl Generate for () {
+            type Item = ();
+            type Shrink = ();
+            fn generate(&self, _state: &mut State) -> (Self::Item, Self::Shrink) { ((), ()) }
+        }
+
+        impl Shrink for () {
+            type Item = ();
+            fn generate(&self) -> Self::Item { () }
+            fn shrink(&mut self) -> Option<Self> { None }
+        }
+    };
+    ($($p:ident, $t:ident),*) => {
+        impl<$($t: FullGenerate,)*> FullGenerate for ($($t,)*) {
+            type Item = <Self::Generate as Generate>::Item;
+            type Generate = ($($t::Generate,)*);
+
+            fn generator() -> Self::Generate {
+                ($($t::generator(),)*)
+            }
+        }
+
+        impl<$($t: IntoGenerate,)*> IntoGenerate for ($($t,)*) {
+            type Item = <Self::Generate as Generate>::Item;
+            type Generate = ($($t::Generate,)*);
+
+            fn generator(self) -> Self::Generate {
+                let ($($p,)*) = self;
+                ($($p.generator(),)*)
+            }
+        }
+
+        impl<$($t: Generate,)*> Generate for ($($t,)*) {
+            type Item = ($($t::Item,)*);
+            type Shrink = ($($t::Shrink,)*);
+
+            fn generate(&self, _state: &mut State) -> (Self::Item, Self::Shrink) {
+                let ($($p,)*) = self;
+                $(let $p = $p.generate(_state);)*
+                (($($p.0,)*), ($($p.1,)*))
+            }
+        }
+
+        impl<$($t: Shrink,)*> Shrink for ($($t,)*) {
+            type Item = ($($t::Item,)*);
+
+            fn generate(&self) -> Self::Item {
+                let ($($p,)*) = self;
+                ($($p.generate(),)*)
+            }
+
+            fn shrink(&mut self) -> Option<Self> {
+                let ($($p,)*) = self;
+                let mut shrunk = false;
+                let ($($p,)*) = ($(
+                    if shrunk { $p.clone() }
+                    else {
+                        match $p.shrink() {
+                            Some(shrink) => { shrunk = true; shrink },
+                            None => $p.clone(),
+                        }
+                    },
+                )*);
+                if shrunk { Some(($($p,)*)) } else { None }
+            }
+        }
+    };
+}
+
+recurse!(tuple);

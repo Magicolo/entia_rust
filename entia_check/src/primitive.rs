@@ -1,5 +1,4 @@
 use crate::{
-    any::Any,
     generate::{FullGenerate, Generate, IntoGenerate, State},
     shrink::Shrink,
     size::Size,
@@ -360,7 +359,7 @@ mod character {
 
         fn special() -> impl Generate<Item = char> {
             const SPECIAL: [char; 3] = ['\u{0000}', char::MAX, char::REPLACEMENT_CHARACTER];
-            Any::from(&SPECIAL).map(Option::unwrap)
+            SPECIAL.any().map(Option::unwrap)
         }
     }
 
@@ -496,7 +495,7 @@ mod number {
                 #[inline]
                 fn special() -> impl Generate<Item = $t> {
                     const SPECIAL: [$t; 3] = [0 as $t, $t::MIN, $t::MAX];
-                    Any::from(&SPECIAL).map(Option::unwrap)
+                    SPECIAL.any().map(Option::unwrap)
                 }
             }
 
@@ -597,7 +596,7 @@ mod number {
             impl Full<$t> {
                 fn special() -> impl Generate<Item = $t> {
                     const SPECIAL: [$t; 8] = [0 as $t, $t::MIN, $t::MAX, $t::EPSILON, $t::INFINITY, $t::NEG_INFINITY, $t::MIN_POSITIVE, $t::NAN];
-                    Any::from(&SPECIAL).map(Option::unwrap)
+                    SPECIAL.any().map(Option::unwrap)
                 }
 
                 #[inline]

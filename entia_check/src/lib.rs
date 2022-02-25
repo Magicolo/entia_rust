@@ -1,4 +1,3 @@
-pub mod all;
 pub mod any;
 pub mod array;
 pub mod collect;
@@ -49,16 +48,16 @@ pub fn letter() -> impl Generate<Item = char> {
         's', 't', 'u', 'v', 'w', 'x', 'y', 'z', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J',
         'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
     ];
-    Any::from(&LETTERS).map(Option::unwrap)
+    LETTERS.any().map(Option::unwrap)
 }
 
 pub fn digit() -> impl Generate<Item = char> {
     const DIGITS: [char; 10] = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
-    Any::from(&DIGITS).map(Option::unwrap)
+    DIGITS.any().map(Option::unwrap)
 }
 
 pub fn ascii() -> impl Generate<Item = char> {
-    Any::from((
+    Any((
         letter(),
         digit(),
         (0..=0x7Fu8).generator().map(|value| value as char),
@@ -67,7 +66,7 @@ pub fn ascii() -> impl Generate<Item = char> {
 
 pub fn option<T: FullGenerate>() -> impl Generate<Item = Option<T::Item>> {
     let none: fn() -> Option<T::Item> = || None;
-    Any::from((T::generator().map(Some), none))
+    Any((T::generator().map(Some), none))
 }
 
 #[cfg(test)]

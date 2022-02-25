@@ -4,14 +4,7 @@ use crate::{
 };
 
 #[derive(Clone, Debug, Default)]
-pub struct Constant<T>(pub T);
-
-impl<T> From<T> for Constant<T> {
-    #[inline]
-    fn from(value: T) -> Self {
-        Self(value)
-    }
-}
+pub struct Constant<T: ?Sized>(pub T);
 
 impl<T: Clone> Generate for Constant<T> {
     type Item = T;

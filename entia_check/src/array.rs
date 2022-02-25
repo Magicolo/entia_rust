@@ -5,11 +5,11 @@ use crate::{
 use entia_core::Unzip;
 
 #[derive(Clone, Debug, Default)]
-pub struct Array<G, const N: usize>(pub G);
+pub struct Array<T: ?Sized, const N: usize>(pub T);
 #[derive(Clone, Debug)]
-pub struct Shrinker<S, const N: usize>(pub [S; N]);
+pub struct Shrinker<T, const N: usize>(pub [T; N]);
 
-impl<G: Generate, const N: usize> Generate for Array<G, N> {
+impl<G: Generate + ?Sized, const N: usize> Generate for Array<G, N> {
     type Item = [G::Item; N];
     type Shrink = Shrinker<G::Shrink, N>;
 
@@ -54,25 +54,3 @@ impl<S: Shrink, const N: usize> Shrink for Shrinker<S, N> {
         }
     }
 }
-
-// macro_rules! array {
-//     ($t:ty, [$($n:ident)?]) => {
-//         impl<T: Clone $(, const $n: usize)?> Generator for $t {
-//             type Item = T;
-//             type State = usize;
-
-//             fn generate(&self, state: &mut State) -> (Self::Item, Self::State) {
-//                 let index = state.random.usize(0..self.len());
-//                 (self[index].clone(), index)
-//             }
-
-//             fn shrink(&self, state: &mut Self::State) -> Option<Self> {
-//                 Some(Constant::new(self[*state].clone()))
-//             }
-//         }
-//     };
-// }
-
-// array!([T; N], [N]);
-// array!(&'_ [T; N], [N]);
-// array!(&'_ [T], []);
