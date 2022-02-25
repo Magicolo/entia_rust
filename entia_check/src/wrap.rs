@@ -23,7 +23,7 @@ impl<I: Clone, T, B: Clone, A: Clone> Clone for Wrap<I, T, B, A> {
     }
 }
 
-impl<G: Generate, T, B: FnMut() -> T + Clone, A: FnMut(T) + Clone> Wrap<G, T, B, A> {
+impl<G: Generate, T, B: Fn() -> T, A: Fn(T)> Wrap<G, T, B, A> {
     #[inline]
     pub fn generator(generate: G, before: B, after: A) -> Self {
         Self {
@@ -35,7 +35,7 @@ impl<G: Generate, T, B: FnMut() -> T + Clone, A: FnMut(T) + Clone> Wrap<G, T, B,
     }
 }
 
-impl<S: Shrink, T, B: FnMut() -> T + Clone, A: FnMut(T) + Clone> Wrap<S, T, B, A> {
+impl<S: Shrink, T, B: Fn() -> T, A: Fn(T)> Wrap<S, T, B, A> {
     #[inline]
     pub fn shrinker(shrink: S, before: B, after: A) -> Self {
         Self {

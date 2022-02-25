@@ -5,15 +5,17 @@ pub trait Shrink: Clone {
     fn generate(&self) -> Self::Item;
     fn shrink(&mut self) -> Option<Self>;
 
-    fn wrap<T, B: FnMut() -> T + Clone, A: FnMut(T) + Clone>(
-        self,
-        before: B,
-        after: A,
-    ) -> Wrap<Self, T, B, A> {
+    fn wrap<T, B: Fn() -> T, A: Fn(T)>(self, before: B, after: A) -> Wrap<Self, T, B, A>
+    where
+        Wrap<Self, T, B, A>: Shrink,
+    {
         Wrap::shrinker(self, before, after)
     }
 
-    fn map<T, F: Fn(Self::Item) -> T + Clone>(self, map: F) -> Map<Self, T, F> {
+    fn map<T, F: Fn(Self::Item) -> T>(self, map: F) -> Map<Self, T, F>
+    where
+        Map<Self, T, F>: Shrink,
+    {
         Map::shrink(self, map)
     }
 }

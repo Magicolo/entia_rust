@@ -43,7 +43,7 @@ impl<I: Clone, T, F: Clone> Clone for Shrinker<I, T, F> {
     }
 }
 
-impl<G: Generate, T, F: Fn(G::Item) -> Option<T> + Clone> FilterMap<G, T, F> {
+impl<G: Generate, T, F: Fn(G::Item) -> Option<T>> FilterMap<G, T, F> {
     #[inline]
     pub fn new(generate: G, map: F, iterations: usize) -> Self {
         Self {

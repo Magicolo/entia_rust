@@ -38,9 +38,6 @@ pub trait FullGenerate {
     fn generator() -> Self::Generate;
 }
 
-// TODO: Review all 'shrink' implementations and ensure that only one 'shrink' happens per call (ex: tuples must shrink only 1 item at a time).
-// TODO: Replace 'Generator' implementations that operate directly on values (such as 'Vec<T>' and '[T; N]') with 'IntoGenerate'
-// implementations?
 pub trait IntoGenerate {
     type Item;
     type Generate: Generate<Item = Self::Item>;
@@ -53,13 +50,10 @@ pub trait Generate {
 
     fn generate(&self, state: &mut State) -> (Self::Item, Self::Shrink);
 
-    fn wrap<T, B: FnMut() -> T + Clone, A: FnMut(T) + Clone>(
-        self,
-        before: B,
-        after: A,
-    ) -> Wrap<Self, T, B, A>
+    fn wrap<T, B: Fn() -> T, A: Fn(T)>(self, before: B, after: A) -> Wrap<Self, T, B, A>
     where
         Self: Sized,
+        Wrap<Self, T, B, A>: Generate,
     {
         Wrap::generator(self, before, after)
     }
@@ -67,6 +61,7 @@ pub trait Generate {
     fn map<T, F: Fn(Self::Item) -> T + Clone>(self, map: F) -> Map<Self, T, F>
     where
         Self: Sized,
+        Map<Self, T, F>: Generate,
     {
         Map::generator(self, map)
     }
@@ -78,6 +73,7 @@ pub trait Generate {
     ) -> Filter<Self, F>
     where
         Self: Sized,
+        Filter<Self, F>: Generate,
     {
         Filter::new(self, filter, iterations.unwrap_or(256))
     }

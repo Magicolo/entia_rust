@@ -12,7 +12,7 @@ use std::{
 };
 
 #[derive(Copy, Clone, Debug, Default)]
-pub struct Full<T>(PhantomData<T>);
+pub struct Full<T: ?Sized>(PhantomData<T>);
 
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Range<T> {
@@ -34,7 +34,7 @@ pub struct Shrinker<T> {
     pub direction: Direction,
 }
 
-impl<T> Full<T> {
+impl<T: ?Sized> Full<T> {
     #[inline]
     pub const fn new() -> Self {
         Self(PhantomData)
@@ -163,10 +163,7 @@ macro_rules! range {
             type Shrink = <Size<Range<$t>> as Generate>::Shrink;
 
             fn generate(&self, state: &mut State) -> (Self::Item, Self::Shrink) {
-                Range::<$t>::new(self.clone())
-                    .unwrap()
-                    .size()
-                    .generate(state)
+                self.clone().generator().generate(state)
             }
         }
     };
