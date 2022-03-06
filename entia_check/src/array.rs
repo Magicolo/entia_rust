@@ -1,6 +1,7 @@
 use crate::{
     generate::{Generate, State},
     shrink::Shrink,
+    FullGenerate, IntoGenerate,
 };
 use entia_core::Unzip;
 
@@ -52,5 +53,38 @@ impl<S: Shrink, const N: usize> Shrink for Shrinker<S, N> {
         } else {
             None
         }
+    }
+}
+
+impl<G: FullGenerate, const N: usize> FullGenerate for [G; N] {
+    type Item = [G::Item; N];
+    type Generate = [G::Generate; N];
+    fn generator() -> Self::Generate {
+        [(); N].map(|_| G::generator())
+    }
+}
+
+impl<G: IntoGenerate, const N: usize> IntoGenerate for [G; N] {
+    type Item = [G::Item; N];
+    type Generate = [G::Generate; N];
+    fn generator(self) -> Self::Generate {
+        self.map(|generate| generate.generator())
+    }
+}
+
+impl<G: Generate, const N: usize> Generate for [G; N] {
+    type Item = [G::Item; N];
+    type Shrink = Shrinker<G::Shrink, N>;
+
+    fn generate(&self, state: &mut State) -> (Self::Item, Self::Shrink) {
+        let mut index = 0;
+        let (items, shrinks) = [(); N]
+            .map(|_| {
+                let pair = self[index].generate(state);
+                index += 1;
+                pair
+            })
+            .unzip();
+        (items, Shrinker(shrinks))
     }
 }

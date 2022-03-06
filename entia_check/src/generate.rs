@@ -1,18 +1,8 @@
 use crate::{
-    any::Any,
-    array::{self, Array},
-    collect::{self, Collect},
-    filter::Filter,
-    filter_map::FilterMap,
-    flatten::Flatten,
-    map::Map,
-    primitive::{Full, Range},
-    recurse,
-    sample::Sample,
-    shrink::Shrink,
+    any::Any, array::Array, collect::Collect, filter::Filter, filter_map::FilterMap,
+    flatten::Flatten, map::Map, primitive::Range, recurse, sample::Sample, shrink::Shrink,
     size::Size,
 };
-use entia_core::Unzip;
 use fastrand::Rng;
 use std::iter::FromIterator;
 
@@ -150,6 +140,38 @@ impl State {
     }
 }
 
+impl<G: FullGenerate> FullGenerate for &G {
+    type Item = G::Item;
+    type Generate = G::Generate;
+    fn generator() -> Self::Generate {
+        G::generator()
+    }
+}
+
+impl<G: FullGenerate> FullGenerate for &mut G {
+    type Item = G::Item;
+    type Generate = G::Generate;
+    fn generator() -> Self::Generate {
+        G::generator()
+    }
+}
+
+impl<G: IntoGenerate + Clone> IntoGenerate for &G {
+    type Item = G::Item;
+    type Generate = G::Generate;
+    fn generator(self) -> Self::Generate {
+        self.clone().generator()
+    }
+}
+
+impl<G: IntoGenerate + Clone> IntoGenerate for &mut G {
+    type Item = G::Item;
+    type Generate = G::Generate;
+    fn generator(self) -> Self::Generate {
+        self.clone().generator()
+    }
+}
+
 impl<G: Generate> Generate for &G {
     type Item = G::Item;
     type Shrink = G::Shrink;
@@ -163,75 +185,6 @@ impl<G: Generate> Generate for &mut G {
     type Shrink = G::Shrink;
     fn generate(&self, state: &mut State) -> (Self::Item, Self::Shrink) {
         (&**self).generate(state)
-    }
-}
-
-impl<G: FullGenerate, const N: usize> FullGenerate for [G; N] {
-    type Item = [G::Item; N];
-    type Generate = [G::Generate; N];
-    fn generator() -> Self::Generate {
-        [(); N].map(|_| G::generator())
-    }
-}
-
-impl<G: IntoGenerate, const N: usize> IntoGenerate for [G; N] {
-    type Item = [G::Item; N];
-    type Generate = [G::Generate; N];
-    fn generator(self) -> Self::Generate {
-        self.map(|generate| generate.generator())
-    }
-}
-
-impl<G: Generate, const N: usize> Generate for [G; N] {
-    type Item = [G::Item; N];
-    type Shrink = array::Shrinker<G::Shrink, N>;
-
-    fn generate(&self, state: &mut State) -> (Self::Item, Self::Shrink) {
-        let mut index = 0;
-        let (items, shrinks) = [(); N]
-            .map(|_| {
-                let pair = self[index].generate(state);
-                index += 1;
-                pair
-            })
-            .unzip();
-        (items, array::Shrinker(shrinks))
-    }
-}
-
-impl<G: FullGenerate> FullGenerate for Vec<G> {
-    type Item = Vec<G::Item>;
-    type Generate = Collect<G::Generate, Size<Range<usize>>, Self::Item>;
-    fn generator() -> Self::Generate {
-        G::generator().collect()
-    }
-}
-
-impl<G: IntoGenerate> IntoGenerate for Vec<G> {
-    type Item = Vec<G::Item>;
-    type Generate = Vec<G::Generate>;
-    fn generator(self) -> Self::Generate {
-        self.into_iter()
-            .map(|generate| generate.generator())
-            .collect()
-    }
-}
-
-impl<G: Generate> Generate for Vec<G> {
-    type Item = Vec<G::Item>;
-    type Shrink = collect::Shrinker<G::Shrink, Vec<G::Item>>;
-
-    fn generate(&self, state: &mut State) -> (Self::Item, Self::Shrink) {
-        let (items, shrinks) = self.iter().map(|generate| generate.generate(state)).unzip();
-        (items, collect::Shrinker::new(shrinks))
-    }
-}
-
-impl FullGenerate for String {
-    type Item = Self;
-    type Generate = Collect<Size<Full<char>>, Size<Range<usize>>, Self::Item>;
-    fn generator() -> Self::Generate {
-        char::generator().collect()
     }
 }
 
