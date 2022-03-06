@@ -102,7 +102,7 @@ mod range {
             #[test]
             fn check_less_than_finds_minimum() {
                 for right in positive::<$t>().sample(COUNT) {
-                    if let Err(error) = positive::<$t>().check(COUNT, |&left| left > right) {
+                    if let Err(error) = positive::<$t>().check(COUNT, |&left| left < right) {
                         assert_that(&(right - *error.shrunk()))
                             .is_less_than_or_equal_to(right / 100 as $t)
                     }

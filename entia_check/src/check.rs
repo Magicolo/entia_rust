@@ -19,6 +19,10 @@ pub struct Error<P, T> {
 }
 
 impl<P, T> Error<P, T> {
+    pub fn original(&self) -> &T {
+        &self.original.0
+    }
+
     pub fn shrunk(&self) -> &T {
         &self.shrunk.as_ref().unwrap_or(&self.original).0
     }
