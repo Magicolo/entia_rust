@@ -4,7 +4,7 @@ mod range {
     use super::*;
 
     macro_rules! tests {
-        ($t:ident, [$c:expr], [$($f:ident)?], [$($m:ident),*]) => {
+        ($t:ident, [$f:expr], [$($m:ident),*]) => {
             mod $t {
                 use super::*;
 
@@ -29,17 +29,17 @@ mod range {
 
                 #[test]
                 fn is_constant() {
-                    for value in $t::generator().sample(COUNT) $(.filter(|value| value.$f()))? {
+                    for value in number::<$t>().sample(COUNT) {
                         assert_that(&value.sample(1).next().unwrap()).is_equal_to(value);
                     }
                 }
 
                 #[test]
                 fn is_in_range() {
-                    for pair in <($t, $t)>::generator().sample(COUNT) $(.filter(|(low, high)| low.$f() && high.$f()))? {
+                    for pair in (number::<$t>(), number::<$t>()).sample(COUNT) {
                         let (low, high) = (pair.0.min(pair.1), pair.0.max(pair.1));
-                        if $c(low, high) { continue; }
-                        for value in (low..high).generator().sample(COUNT) $(.filter(|value| value.$f()))? {
+                        if $f(low, high) { continue; }
+                        for value in (low..high).generator().sample(COUNT) {
                             assert_that(&value).is_greater_than_or_equal_to(low);
                             assert_that(&value).is_less_than(high);
                         }
@@ -48,9 +48,9 @@ mod range {
 
                 #[test]
                 fn is_in_range_inclusive() {
-                    for pair in <($t, $t)>::generator().sample(COUNT) $(.filter(|(low, high)| low.$f() && high.$f()))? {
+                    for pair in (number::<$t>(), number::<$t>()).sample(COUNT) {
                         let (low, high) = (pair.0.min(pair.1), pair.0.max(pair.1));
-                        for value in (low..=high).generator().sample(COUNT) $(.filter(|value| value.$f()))? {
+                        for value in (low..=high).generator().sample(COUNT) {
                             assert_that(&value).is_greater_than_or_equal_to(low);
                             assert_that(&value).is_less_than_or_equal_to(high);
                         }
@@ -59,8 +59,8 @@ mod range {
 
                 #[test]
                 fn is_in_range_from() {
-                    for low in <$t>::generator().sample(COUNT) $(.filter(|value| value.$f()))? {
-                        for value in (low..).generator().sample(COUNT) $(.filter(|value| value.$f()))? {
+                    for low in number::<$t>().sample(COUNT) {
+                        for value in (low..).generator().sample(COUNT) {
                             assert_that(&value).is_greater_than_or_equal_to(low);
                         }
                     }
@@ -68,9 +68,9 @@ mod range {
 
                 #[test]
                 fn is_in_range_to() {
-                    for high in <$t>::generator().sample(COUNT) $(.filter(|value| value.$f()))? {
-                        if $c($t::MIN, high) { continue; }
-                        for value in (..high).generator().sample(COUNT) $(.filter(|value| value.$f()))? {
+                    for high in number::<$t>().sample(COUNT) {
+                        if $f($t::MIN, high) { continue; }
+                        for value in (..high).generator().sample(COUNT) {
                             assert_that(&value).is_less_than(high);
                         }
                     }
@@ -78,8 +78,8 @@ mod range {
 
                 #[test]
                 fn is_in_range_to_inclusive() {
-                    for high in <$t>::generator().sample(COUNT) $(.filter(|value| value.$f()))? {
-                        for value in (..=high).generator().sample(COUNT) $(.filter(|value| value.$f()))? {
+                    for high in number::<$t>().sample(COUNT) {
+                        for value in (..=high).generator().sample(COUNT) {
                             assert_that(&value).is_less_than_or_equal_to(high);
                         }
                     }
@@ -108,9 +108,20 @@ mod range {
                     }
                 }
             }
+
+            #[test]
+            fn check_tuple_shrinks_irrelevant_items() {
+                for right in positive::<$t>().sample(COUNT) {
+                    if let Err(error) =
+                        (positive::<$t>(), positive::<$t>()).check(COUNT, |&(left, _)| left < right)
+                    {
+                        assert_that(&error.shrunk().1).is_equal_to(0 as $t);
+                    }
+                }
+            }
         };
         ($t:ident, $m:ident) => {
-            tests!($t, [|low, high| low == high], [], [$m, tests_integer]);
+            tests!($t, [|low, high| low == high], [$m, tests_integer]);
         };
     }
 
@@ -150,7 +161,7 @@ mod range {
                 }
             }
         };
-        ($($t:ident),*) => { $(tests!($t, [|low: $t, high: $t| high - low < $t::EPSILON], [is_finite], [tests_floating]);)* };
+        ($($t:ident),*) => { $(tests!($t, [|low: $t, high: $t| high - low < $t::EPSILON], [tests_floating]);)* };
     }
 
     tests_signed!(i8, i16, i32, i64, i128);

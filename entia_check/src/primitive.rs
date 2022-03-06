@@ -21,6 +21,13 @@ pub struct Range<T> {
 }
 
 #[derive(Copy, Clone, Debug)]
+pub enum Error {
+    Overflow,
+    Empty,
+    Invalid,
+}
+
+#[derive(Copy, Clone, Debug)]
 pub enum Direction {
     None,
     Left,
@@ -150,11 +157,19 @@ macro_rules! constant {
 
 macro_rules! range {
     ($t:ty, $r:ty) => {
+        impl TryFrom<$r> for Range<$t> {
+            type Error = Error;
+            #[inline]
+            fn try_from(range: $r) -> Result<Self, Self::Error> {
+                Range::<$t>::new(range)
+            }
+        }
+
         impl IntoGenerate for $r {
             type Item = $t;
             type Generate = Size<Range<$t>>;
             fn generator(self) -> Self::Generate {
-                Range::<$t>::new(self).unwrap().size()
+                Range::<$t>::try_from(self).unwrap().size()
             }
         }
 
@@ -176,6 +191,14 @@ macro_rules! ranges {
             type Generate = Size<Full<$t>>;
             fn generator() -> Self::Generate {
                 Full(PhantomData).size()
+            }
+        }
+
+        impl TryFrom<ops::RangeFull> for Range<$t> {
+            type Error = Error;
+            #[inline]
+            fn try_from(range: ops::RangeFull) -> Result<Self, Self::Error> {
+                Range::<$t>::new(range)
             }
         }
 
@@ -304,24 +327,31 @@ mod character {
     pub struct Shrinker(super::Shrinker<u32>);
 
     impl Range<char> {
-        // TODO: Return a 'Result' instead of 'Option'.
-        pub fn new(range: impl ops::RangeBounds<char>) -> Option<Self> {
+        pub fn new(range: impl ops::RangeBounds<char>) -> Result<Self, Error> {
             let start = match range.start_bound() {
                 Bound::Included(&bound) => bound,
-                Bound::Excluded(&bound) => (bound as u32).checked_add(1)?.try_into().ok()?,
+                Bound::Excluded(&bound) => (bound as u32)
+                    .checked_add(1)
+                    .ok_or(Error::Overflow)?
+                    .try_into()
+                    .map_err(|_| Error::Invalid)?,
                 Bound::Unbounded => '\u{0000}',
             };
             let end = match range.end_bound() {
                 Bound::Included(&bound) => bound,
-                Bound::Excluded(&bound) => (bound as u32).checked_sub(1)?.try_into().ok()?,
+                Bound::Excluded(&bound) => (bound as u32)
+                    .checked_sub(1)
+                    .ok_or(Error::Overflow)?
+                    .try_into()
+                    .map_err(|_| Error::Invalid)?,
                 Bound::Unbounded if start <= '\u{D7FF}' => '\u{D7FF}',
                 Bound::Unbounded if start >= '\u{E000}' => char::MAX,
-                Bound::Unbounded => return None,
+                Bound::Unbounded => return Err(Error::Invalid),
             };
             if end < start {
-                None
+                Err(Error::Empty)
             } else {
-                Some(Self { start, end })
+                Ok(Self { start, end })
             }
         }
     }
@@ -497,22 +527,21 @@ mod number {
             }
 
             impl Range<$t> {
-                // TODO: Return a 'Result' instead of 'Option'.
-                pub fn new(range: impl ops::RangeBounds<$t>) -> Option<Self> {
+                pub fn new(range: impl ops::RangeBounds<$t>) -> Result<Self, Error> {
                     let start = match range.start_bound() {
                         Bound::Included(&bound) => bound,
-                        Bound::Excluded(&bound) => bound.checked_add(1 as $t)?,
+                        Bound::Excluded(&bound) => bound.checked_add(1 as $t).ok_or(Error::Overflow)?,
                         Bound::Unbounded => $t::MIN,
                     };
                     let end = match range.end_bound() {
                         Bound::Included(&bound) => bound,
-                        Bound::Excluded(&bound) => bound.checked_sub(1 as $t)?,
+                        Bound::Excluded(&bound) => bound.checked_sub(1 as $t).ok_or(Error::Overflow)?,
                         Bound::Unbounded => $t::MAX,
                     };
                     if end < start {
-                        None
+                        Err(Error::Empty)
                     } else {
-                        Some(Self { start, end })
+                        Ok(Self { start, end })
                     }
                 }
 
@@ -608,8 +637,7 @@ mod number {
             }
 
             impl Range<$t> {
-                // TODO: Return a 'Result' instead of 'Option'.
-                pub fn new(range: impl ops::RangeBounds<$t>) -> Option<Self> {
+                pub fn new(range: impl ops::RangeBounds<$t>) -> Result<Self, Error> {
                     let start = match range.start_bound() {
                         Bound::Included(&bound) => (bound, false),
                         Bound::Excluded(&bound) => (bound, true),
@@ -622,14 +650,14 @@ mod number {
                     };
 
                     if end.0 < start.0 {
-                        None
+                        Err(Error::Empty)
                     } else if (start.1 || end.1) && start.0 == end.0 {
-                        None
+                        Err(Error::Empty)
                     } else {
                         let epsilon = (end.0 - start.0) * $e;
                         let start = if start.1 { start.0 + epsilon } else { start.0 };
                         let end = if end.1 { end.0 - epsilon } else { end.0 };
-                        Some(Self { start: start.min(end), end: end.max(start) })
+                        Ok(Self { start: start.min(end), end: end.max(start) })
                     }
                 }
 

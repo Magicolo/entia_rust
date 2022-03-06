@@ -22,11 +22,24 @@ pub use crate::{
     shrink::Shrink,
 };
 pub(crate) use entia_macro::recurse_16 as recurse;
-use std::ops::{self, Neg};
+use primitive::Range;
+use std::{
+    fmt,
+    ops::{self, Neg},
+};
 
 pub fn default<T: Default>() -> impl Generate<Item = T> {
     let default: fn() -> T = T::default;
     default
+}
+
+pub fn number<T>() -> impl Generate<Item = T>
+where
+    ops::RangeFull: TryInto<Range<T>>,
+    <ops::RangeFull as TryInto<Range<T>>>::Error: fmt::Debug,
+    Range<T>: Generate<Item = T>,
+{
+    (..).try_into().unwrap()
 }
 
 pub fn positive<T: Default>() -> impl Generate<Item = T>
