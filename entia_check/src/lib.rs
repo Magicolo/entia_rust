@@ -24,6 +24,7 @@ pub use crate::{
 };
 pub(crate) use entia_macro::recurse_16 as recurse;
 use primitive::Range;
+use size::Size;
 use std::{
     fmt,
     ops::{self, Neg},
@@ -36,11 +37,11 @@ pub fn default<T: Default>() -> impl Generate<Item = T> {
 
 pub fn number<T>() -> impl Generate<Item = T>
 where
-    ops::RangeFull: TryInto<Range<T>>,
-    <ops::RangeFull as TryInto<Range<T>>>::Error: fmt::Debug,
-    Range<T>: Generate<Item = T>,
+    Size<Range<T>>: Generate<Item = T>,
+    Size<Range<T>>: TryFrom<ops::RangeFull>,
+    <Size<Range<T>> as TryFrom<ops::RangeFull>>::Error: fmt::Debug,
 {
-    (..).try_into().unwrap()
+    Size::<Range<T>>::try_from(..).unwrap()
 }
 
 pub fn positive<T: Default>() -> impl Generate<Item = T>

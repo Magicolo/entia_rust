@@ -165,11 +165,19 @@ macro_rules! range {
             }
         }
 
+        impl TryFrom<$r> for Size<Range<$t>> {
+            type Error = Error;
+            #[inline]
+            fn try_from(range: $r) -> Result<Self, Self::Error> {
+                Ok(Range::<$t>::try_from(range)?.size())
+            }
+        }
+
         impl IntoGenerate for $r {
             type Item = $t;
             type Generate = Size<Range<$t>>;
             fn generator(self) -> Self::Generate {
-                Range::<$t>::try_from(self).unwrap().size()
+                self.try_into().unwrap()
             }
         }
 
@@ -199,6 +207,14 @@ macro_rules! ranges {
             #[inline]
             fn try_from(range: ops::RangeFull) -> Result<Self, Self::Error> {
                 Range::<$t>::new(range)
+            }
+        }
+
+        impl TryFrom<ops::RangeFull> for Size<Range<$t>> {
+            type Error = Error;
+            #[inline]
+            fn try_from(range: ops::RangeFull) -> Result<Self, Self::Error> {
+                Ok(Range::<$t>::try_from(range)?.size())
             }
         }
 
