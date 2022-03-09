@@ -10,6 +10,3 @@ edition = "2021"
 entia_macro = { path = "../entia_macro" }
 entia_core = { path = "../entia_core" }
 fastrand = "*"
-
-[dev-dependencies]
-spectral = "*"

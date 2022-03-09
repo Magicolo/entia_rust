@@ -1,55 +1,40 @@
 use super::*;
-
-#[test]
-fn has_sample() {
-    char::generator().sample(1).next().unwrap();
-}
-
-#[test]
-fn sample_has_count() {
-    for i in 0..COUNT {
-        assert_that(&char::generator().sample(i).len()).is_equal_to(i);
-    }
-}
+use std::{collections::VecDeque, rc::Rc, sync::Arc};
 
 #[test]
 #[should_panic]
 fn empty_range() {
-    let value = char::generator().sample(1).next().unwrap();
-    (value..value).generator().sample(1).next().unwrap();
+    char::generator()
+        .bind(|value| value..value)
+        .check(1, |_| true)
+        .unwrap();
 }
 
 #[test]
-fn is_constant() {
-    for value in char::generator().sample(COUNT) {
-        assert_that(&value.sample(1).next().unwrap()).is_equal_to(value);
-    }
+fn is_constant() -> Result<(char, char)> {
+    char::generator()
+        .bind(|value| (value, Constant(value)))
+        .check(COUNT, |&(left, right)| left == right)
 }
 
 #[test]
-fn is_ascii() {
-    for value in ascii().sample(COUNT) {
-        assert_that(&value.is_ascii()).is_true();
-    }
+fn is_ascii() -> Result<char> {
+    ascii().check(COUNT, |value| value.is_ascii())
 }
 
 #[test]
-fn is_digit() {
-    for value in digit().sample(COUNT) {
-        assert_that(&value.is_ascii_digit()).is_true();
-    }
+fn is_digit() -> Result<char> {
+    digit().check(COUNT, |value| value.is_ascii_digit())
 }
 
 #[test]
-fn is_alphabetic() {
-    for value in letter().sample(COUNT) {
-        assert_that(&value.is_ascii_alphabetic()).is_true();
-    }
+fn is_alphabetic() -> Result<char> {
+    letter().check(COUNT, |value| value.is_ascii_alphabetic())
 }
 
 #[test]
-fn full_does_not_panic() {
-    for _ in <char>::generator().sample(COUNT) {}
+fn full_does_not_panic() -> Result<char> {
+    char::generator().check(COUNT, |_| true)
 }
 
 macro_rules! collection {
@@ -58,35 +43,25 @@ macro_rules! collection {
             use super::*;
 
             #[test]
-            fn has_constant_count() {
-                for i in 0..COUNT {
-                    let value = char::generator().collect_with::<_, $t>(i).sample(1).next().unwrap();
-                    assert!(value $(.$i())? .count() == i)
-                }
+            fn has_constant_count() -> Result<(usize, $t)> {
+                (0..COUNT)
+                    .bind(|count| (count, char::generator().collect_with::<_, $t>(count)))
+                    .check(COUNT, |(count, value)| value $(.$i())? .count() == *count)
             }
 
             #[test]
-            fn is_ascii() {
-                assert!(ascii()
-                    .collect::<$t>()
-                    .sample(COUNT)
-                    .all(|value| value $(.$i())? .all(|value| value.is_ascii())))
+            fn is_ascii() -> Result<$t> {
+                ascii().collect::<$t>().check(COUNT, |value| value $(.$i())? .all(|value| value.is_ascii()))
             }
 
             #[test]
-            fn is_digit() {
-                assert!(digit()
-                    .collect::<$t>()
-                    .sample(COUNT)
-                    .all(|value| value $(.$i())? .all(|value| value.is_ascii_digit())))
+            fn is_digit() -> Result<$t> {
+                digit().collect::<$t>().check(COUNT, |value| value $(.$i())? .all(|value| value.is_ascii_digit()))
             }
 
             #[test]
-            fn is_alphabetic() {
-                assert!(letter()
-                    .collect::<$t>()
-                    .sample(COUNT)
-                    .all(|value| value $(.$i())? .all(|value| value.is_ascii_alphabetic())))
+            fn is_alphabetic() -> Result<$t> {
+                letter().collect::<$t>().check(COUNT, |value| value $(.$i())? .all(|value| value.is_ascii_alphabetic()))
             }
         }
     };
@@ -94,4 +69,7 @@ macro_rules! collection {
 
 collection!(string, String, chars);
 collection!(vec_char, Vec<char>, into_iter);
+collection!(vecdeque_char, VecDeque<char>, into_iter);
 collection!(box_char, Box<[char]>, into_iter);
+collection!(rc_char, Rc<[char]>, into_iter);
+collection!(arc_char, Arc<[char]>, into_iter);

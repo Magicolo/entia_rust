@@ -51,9 +51,9 @@ where
 
 pub fn negative<T: Neg + Default>() -> impl Generate<Item = T>
 where
-    ops::RangeTo<T>: IntoGenerate<Item = T>,
+    ops::RangeToInclusive<T>: IntoGenerate<Item = T>,
 {
-    (..T::default()).generator()
+    (..=T::default()).generator()
 }
 
 pub fn letter() -> impl Generate<Item = char> {
