@@ -59,7 +59,7 @@ mod range {
                 #[test]
                 fn is_in_range_to() -> Result<($t, $t)> {
                     number::<$t>()
-                        .map(|high| high.max($t::MIN + 1 as $t))
+                        .map(|high| high.max($t::MIN + $t::MAX / 100 as $t))
                         .bind(|high| (..high, high))
                         .check(COUNT, |&(low, high)| low < high)
                 }

@@ -38,10 +38,10 @@ pub fn default<T: Default>() -> impl Generate<Item = T> {
 pub fn number<T>() -> impl Generate<Item = T>
 where
     Size<Range<T>>: Generate<Item = T>,
-    Size<Range<T>>: TryFrom<ops::RangeFull>,
-    <Size<Range<T>> as TryFrom<ops::RangeFull>>::Error: fmt::Debug,
+    ops::RangeFull: TryInto<Size<Range<T>>>,
+    <ops::RangeFull as TryInto<Size<Range<T>>>>::Error: fmt::Debug,
 {
-    Size::<Range<T>>::try_from(..).unwrap()
+    (..).try_into().unwrap()
 }
 
 pub fn positive<T: Default>() -> impl Generate<Item = T>
