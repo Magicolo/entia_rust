@@ -8,6 +8,7 @@ pub mod filter_map;
 pub mod flatten;
 pub mod function;
 pub mod generate;
+pub mod keep;
 pub mod map;
 pub mod option;
 pub mod primitive;

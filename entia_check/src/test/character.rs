@@ -1,5 +1,9 @@
 use super::*;
-use std::{collections::VecDeque, rc::Rc, sync::Arc};
+use std::{
+    collections::{LinkedList, VecDeque},
+    rc::Rc,
+    sync::Arc,
+};
 
 #[test]
 #[should_panic]
@@ -70,6 +74,7 @@ macro_rules! collection {
 collection!(string, String, chars);
 collection!(vec_char, Vec<char>, into_iter);
 collection!(vecdeque_char, VecDeque<char>, into_iter);
+collection!(linked_list, LinkedList<char>, into_iter);
 collection!(box_char, Box<[char]>, into_iter);
 collection!(rc_char, Rc<[char]>, into_iter);
 collection!(arc_char, Arc<[char]>, into_iter);

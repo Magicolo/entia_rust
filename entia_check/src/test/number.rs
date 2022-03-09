@@ -74,6 +74,14 @@ mod range {
                     positive::<$t>().check(COUNT, |&value| value >= 0 as $t)
                 }
 
+                #[test]
+                fn keeps_value() -> Result<$t> {
+                    match number::<$t>().keep().check(COUNT, |&value| value < 100 as $t) {
+                        Err(error) if error.original() == error.shrunk() => Ok(()),
+                        result => result,
+                    }
+                }
+
                 $($m!(INNER $t);)*
             }
         };
@@ -83,8 +91,7 @@ mod range {
         (INNER $t:ident) => {
             #[test]
             fn check_finds_minimum() -> Result<($t, $t)> {
-                match positive::<$t>()
-                    .bind(|right| (positive::<$t>(), right))
+                match (positive::<$t>(), positive::<$t>().keep())
                     .check(COUNT, |&(left, right)| left < right)
                 {
                     Err(error) => {
@@ -101,8 +108,7 @@ mod range {
 
             #[test]
             fn check_shrinks_irrelevant_items() -> Result<($t, $t, $t)> {
-                match positive::<$t>()
-                    .bind(|right| (positive::<$t>(), right, positive::<$t>()))
+                match (positive::<$t>(), positive::<$t>().keep(), positive::<$t>())
                     .check(COUNT, |&(left, right, _)| left < right)
                 {
                     Err(error) if error.shrunk().2 == 0 as $t => Ok(()),
@@ -124,9 +130,9 @@ mod range {
 
             #[test]
             fn check_finds_maximum() -> Result<($t, $t)> {
-                match negative::<$t>()
-                    .bind(|right| (negative::<$t>(), right))
-                    .check(COUNT, |&(left, right)| left > right) {
+                match (negative::<$t>(), negative::<$t>().keep())
+                    .check(COUNT, |&(left, right)| left > right)
+                {
                     Err(error) => {
                         let &(left, right) = error.shrunk();
                         if left - right <= right.abs() / 100 as $t {

@@ -1,7 +1,7 @@
 use crate::{
     any::Any, array::Array, collect::Collect, filter::Filter, filter_map::FilterMap,
-    flatten::Flatten, map::Map, primitive::Range, recurse, sample::Sample, shrink::Shrink,
-    size::Size,
+    flatten::Flatten, keep::Keep, map::Map, primitive::Range, recurse, sample::Sample,
+    shrink::Shrink, size::Size,
 };
 use fastrand::Rng;
 use std::iter::FromIterator;
@@ -121,6 +121,14 @@ pub trait Generate {
         Size<Self>: Generate,
     {
         Size(self)
+    }
+
+    fn keep(self) -> Keep<Self>
+    where
+        Self: Sized,
+        Keep<Self>: Generate,
+    {
+        Keep(self)
     }
 
     fn sample(&self, count: usize) -> Sample<Self>
