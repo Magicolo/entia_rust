@@ -26,18 +26,6 @@ pub trait Deserializer: Sized {
     fn f32(self) -> Result<f32, Self::Error>;
     fn f64(self) -> Result<f64, Self::Error>;
 
-    // #[inline]
-    // fn shared<'a, T: ?Sized>(self) -> Result<&'a T, Self::Error> {
-    //     Ok(self.exclusive()?)
-    // }
-    // fn exclusive<'a, T: ?Sized>(self) -> Result<&'a mut T, Self::Error>;
-
-    // #[inline]
-    // fn constant<T: ?Sized>(self) -> Result<*const T, Self::Error> {
-    //     Ok(self.mutable()?)
-    // }
-    // fn mutable<T: ?Sized>(self) -> Result<*mut T, Self::Error>;
-
     fn list(self) -> Result<Self::List, Self::Error>;
     fn map(self) -> Result<Self::Map, Self::Error>;
 
@@ -206,6 +194,7 @@ pub trait List: Sized {
 
 pub trait Item: Sized {
     type Error;
+
     fn value<V: Deserialize>(self, value: V) -> Result<V::Value, Self::Error>;
 
     #[inline]

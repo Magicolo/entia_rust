@@ -1,5 +1,4 @@
 use crate::{recurse, serializer::*};
-use entia_macro::count;
 use std::{
     marker::PhantomData,
     ops::{Bound, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive},
@@ -28,11 +27,8 @@ impl<T: Serialize> Serialize for Option<T> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Value, S::Error> {
         let enumeration = serializer.enumeration::<Self>()?;
         match self {
-            None => enumeration.variant::<0, 2>("None")?.unit(),
-            Some(value) => enumeration
-                .variant::<1, 2>("Some")?
-                .tuple::<1>()?
-                .items([value]),
+            None => enumeration.variant("None", 0)?.unit(),
+            Some(value) => enumeration.variant("Some", 1)?.tuple()?.item(value)?.end(),
         }
     }
 }
@@ -42,14 +38,8 @@ impl<T: Serialize, E: Serialize> Serialize for Result<T, E> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Value, S::Error> {
         let enumeration = serializer.enumeration::<Self>()?;
         match self {
-            Ok(value) => enumeration
-                .variant::<1, 2>("Ok")?
-                .tuple::<1>()?
-                .items([value]),
-            Err(error) => enumeration
-                .variant::<1, 2>("Err")?
-                .tuple::<1>()?
-                .items([error]),
+            Ok(value) => enumeration.variant("Ok", 0)?.tuple()?.item(value)?.end(),
+            Err(error) => enumeration.variant("Err", 1)?.tuple()?.item(error)?.end(),
         }
     }
 }
@@ -108,7 +98,7 @@ impl<T: Serialize> Serialize for Range<T> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Value, S::Error> {
         serializer
             .structure::<Self>()?
-            .map::<2>()?
+            .map()?
             .pairs([("start", &self.start), ("end", &self.end)])
     }
 }
@@ -118,7 +108,7 @@ impl<T: Serialize> Serialize for RangeInclusive<T> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Value, S::Error> {
         serializer
             .structure::<Self>()?
-            .map::<2>()?
+            .map()?
             .pairs([("start", self.start()), ("end", self.end())])
     }
 }
@@ -128,8 +118,9 @@ impl<T: Serialize> Serialize for RangeTo<T> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Value, S::Error> {
         serializer
             .structure::<Self>()?
-            .map::<2>()?
-            .pairs([("end", &self.end)])
+            .map()?
+            .pair("end", &self.end)?
+            .end()
     }
 }
 
@@ -138,8 +129,9 @@ impl<T: Serialize> Serialize for RangeToInclusive<T> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Value, S::Error> {
         serializer
             .structure::<Self>()?
-            .map::<2>()?
-            .pairs([("end", &self.end)])
+            .map()?
+            .pair("end", &self.end)?
+            .end()
     }
 }
 
@@ -148,8 +140,9 @@ impl<T: Serialize> Serialize for RangeFrom<T> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Value, S::Error> {
         serializer
             .structure::<Self>()?
-            .map::<2>()?
-            .pairs([("start", &self.start)])
+            .map()?
+            .pair("start", &self.start)?
+            .end()
     }
 }
 
@@ -159,14 +152,16 @@ impl<T: Serialize> Serialize for Bound<T> {
         let enumeration = serializer.enumeration::<Self>()?;
         match self {
             Bound::Included(value) => enumeration
-                .variant::<0, 3>("Included")?
-                .tuple::<1>()?
-                .items([value]),
+                .variant("Included", 0)?
+                .tuple()?
+                .item(value)?
+                .end(),
             Bound::Excluded(value) => enumeration
-                .variant::<1, 3>("Excluded")?
-                .tuple::<1>()?
-                .items([value]),
-            Bound::Unbounded => enumeration.variant::<2, 3>("Unbounded")?.unit(),
+                .variant("Excluded", 1)?
+                .tuple()?
+                .item(value)?
+                .end(),
+            Bound::Unbounded => enumeration.variant("Unbounded", 2)?.unit(),
         }
     }
 }
@@ -201,7 +196,7 @@ macro_rules! tuple {
             #[inline]
             fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Value, S::Error> {
                 let ($($p,)*) = self;
-                serializer.tuple::<{ count!($($p),*) }>()? $(.item($p)?)* .end()
+                serializer.tuple()? $(.item($p)?)* .end()
             }
         }
     };

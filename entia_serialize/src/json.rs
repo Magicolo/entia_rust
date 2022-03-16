@@ -86,6 +86,281 @@ impl Node {
     }
 }
 
+mod node {
+    use super::*;
+    use crate::deserialize::*;
+    use crate::deserializer::*;
+    use std::str::Utf8Error;
+
+    pub struct NodeDeserializer<'a>(&'a Node);
+    pub struct MapDeserializer<'a>(&'a [(Node, Node)], usize);
+    pub struct ListDeserializer<'a>(&'a [Node], usize);
+
+    pub enum Error {
+        ExpectedArrayNode,
+        ExpectedObjectNode,
+        Utf8(Utf8Error),
+    }
+
+    impl From<Utf8Error> for Error {
+        #[inline]
+        fn from(error: Utf8Error) -> Self {
+            Error::Utf8(error)
+        }
+    }
+
+    impl NodeDeserializer<'_> {
+        #[inline]
+        pub fn deserialize<T>(node: &Node) -> Result<<New<T> as Deserialize>::Value, Error>
+        where
+            New<T>: Deserialize,
+        {
+            New::<T>::new().deserialize(NodeDeserializer(node))
+        }
+    }
+
+    impl<'a> Deserializer for NodeDeserializer<'a> {
+        type Error = Error;
+        type Structure = Self;
+        type Enumeration = Self;
+        type List = ListDeserializer<'a>;
+        type Map = MapDeserializer<'a>;
+
+        #[inline]
+        fn unit(self) -> Result<(), Self::Error> {
+            Ok(())
+        }
+        #[inline]
+        fn bool(self) -> Result<bool, Self::Error> {
+            Ok(self.0.boolean().unwrap_or_default())
+        }
+        #[inline]
+        fn char(self) -> Result<char, Self::Error> {
+            Ok(self.0.character().unwrap_or_default())
+        }
+        #[inline]
+        fn u8(self) -> Result<u8, Self::Error> {
+            Ok(self.isize()? as _)
+        }
+        #[inline]
+        fn u16(self) -> Result<u16, Self::Error> {
+            Ok(self.isize()? as _)
+        }
+        #[inline]
+        fn u32(self) -> Result<u32, Self::Error> {
+            Ok(self.isize()? as _)
+        }
+        #[inline]
+        fn u64(self) -> Result<u64, Self::Error> {
+            Ok(self.isize()? as _)
+        }
+        #[inline]
+        fn u128(self) -> Result<u128, Self::Error> {
+            Ok(self.isize()? as _)
+        }
+        #[inline]
+        fn usize(self) -> Result<usize, Self::Error> {
+            Ok(self.isize()? as _)
+        }
+        #[inline]
+        fn i8(self) -> Result<i8, Self::Error> {
+            Ok(self.isize()? as _)
+        }
+        #[inline]
+        fn i16(self) -> Result<i16, Self::Error> {
+            Ok(self.isize()? as _)
+        }
+        #[inline]
+        fn i32(self) -> Result<i32, Self::Error> {
+            Ok(self.isize()? as _)
+        }
+        #[inline]
+        fn i64(self) -> Result<i64, Self::Error> {
+            Ok(self.isize()? as _)
+        }
+        #[inline]
+        fn i128(self) -> Result<i128, Self::Error> {
+            Ok(self.isize()? as _)
+        }
+        #[inline]
+        fn isize(self) -> Result<isize, Self::Error> {
+            Ok(self.0.integer().unwrap_or_default())
+        }
+        #[inline]
+        fn f32(self) -> Result<f32, Self::Error> {
+            Ok(self.f64()? as _)
+        }
+        #[inline]
+        fn f64(self) -> Result<f64, Self::Error> {
+            Ok(self.0.floating().unwrap_or_default())
+        }
+        #[inline]
+        fn list(self) -> Result<Self::List, Self::Error> {
+            todo!()
+        }
+        #[inline]
+        fn map(self) -> Result<Self::Map, Self::Error> {
+            todo!()
+        }
+        #[inline]
+        fn structure<T: ?Sized>(self) -> Result<Self::Structure, Self::Error> {
+            Ok(self)
+        }
+        #[inline]
+        fn enumeration<T: ?Sized>(self) -> Result<Self::Enumeration, Self::Error> {
+            Ok(self)
+        }
+    }
+
+    impl<'a> Structure for NodeDeserializer<'a> {
+        type Error = Error;
+        type List = ListDeserializer<'a>;
+        type Map = MapDeserializer<'a>;
+
+        fn unit(self) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        fn tuple<const N: usize>(self) -> Result<Self::List, Self::Error> {
+            match self.0 {
+                Node::Array(nodes) => Ok(ListDeserializer(nodes, 0)),
+                _ => Err(Error::ExpectedArrayNode),
+            }
+        }
+
+        fn map<const N: usize>(self) -> Result<Self::Map, Self::Error> {
+            match self.0 {
+                Node::Object(pairs) => Ok(MapDeserializer(pairs, 0)),
+                _ => Err(Error::ExpectedObjectNode),
+            }
+        }
+    }
+
+    impl Enumeration for NodeDeserializer<'_> {
+        type Error = Error;
+        type Variant = Self;
+
+        // TODO: Is this right?
+        #[inline]
+        fn never<K: Deserialize>(self, key: K) -> Result<K::Value, Self::Error> {
+            key.deserialize(self)
+        }
+
+        #[inline]
+        fn variant<K: Deserialize, const N: usize>(
+            self,
+            key: K,
+        ) -> Result<(K::Value, Self::Variant), Self::Error> {
+            match self.0 {
+                Node::Object(pairs) if pairs.len() > 0 => {
+                    let pair = &pairs[0];
+                    let key = key.deserialize(NodeDeserializer(&pair.0))?;
+                    Ok((key, self))
+                }
+                _ => Err(Error::ExpectedObjectNode),
+            }
+        }
+    }
+
+    impl<'a> Variant for NodeDeserializer<'a> {
+        type Error = Error;
+        type Map = MapDeserializer<'a>;
+        type List = ListDeserializer<'a>;
+
+        fn unit(self, name: &'static str, index: usize) -> Result<(), Self::Error> {
+            todo!()
+        }
+
+        fn map<const N: usize>(
+            self,
+            name: &'static str,
+            index: usize,
+        ) -> Result<Self::Map, Self::Error> {
+            todo!()
+        }
+
+        fn tuple<const N: usize>(
+            self,
+            name: &'static str,
+            index: usize,
+        ) -> Result<Self::List, Self::Error> {
+            todo!()
+        }
+
+        #[inline]
+        fn excess<V: Deserialize>(self, value: V) -> Result<V::Value, Self::Error> {
+            value.deserialize(self)
+        }
+    }
+
+    impl<'a> Map for MapDeserializer<'a> {
+        type Error = Error;
+        type Field = NodeDeserializer<'a>;
+
+        fn field<K: Deserialize>(
+            &mut self,
+            key: K,
+        ) -> Result<Option<(K::Value, Self::Field)>, Self::Error> {
+            match self.0.get(self.1) {
+                Some(pair) => {
+                    self.1 += 1;
+                    let key = key.deserialize(NodeDeserializer(&pair.0))?;
+                    let field = NodeDeserializer(&pair.1);
+                    Ok(Some((key, field)))
+                }
+                None => Ok(None),
+            }
+        }
+
+        fn miss<K, V: Deserialize>(&mut self, _: K, value: V) -> Result<V::Value, Self::Error> {
+            value.deserialize(NodeDeserializer(&Node::Null))
+        }
+    }
+
+    impl Field for NodeDeserializer<'_> {
+        type Error = Error;
+
+        fn value<V: Deserialize>(self, value: V) -> Result<V::Value, Self::Error> {
+            value.deserialize(self)
+        }
+
+        fn excess(self) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+
+    impl<'a> List for ListDeserializer<'a> {
+        type Error = Error;
+        type Item = NodeDeserializer<'a>;
+
+        fn item(&mut self) -> Result<Option<Self::Item>, Self::Error> {
+            match self.0.get(self.1) {
+                Some(node) => {
+                    self.1 += 1;
+                    Ok(Some(NodeDeserializer(node)))
+                }
+                None => Ok(None),
+            }
+        }
+
+        fn miss<V: Deserialize>(&mut self, value: V) -> Result<V::Value, Self::Error> {
+            value.deserialize(NodeDeserializer(&Node::Null))
+        }
+    }
+
+    impl Item for NodeDeserializer<'_> {
+        type Error = Error;
+
+        fn value<V: Deserialize>(self, value: V) -> Result<V::Value, Self::Error> {
+            value.deserialize(self)
+        }
+
+        fn excess(self) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+}
+
 // impl Visit for Node {
 //     #[inline]
 //     fn visit<V: Visitor>(&self, visitor: V) -> V::Result {
