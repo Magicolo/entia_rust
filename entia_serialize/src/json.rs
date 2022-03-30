@@ -1,7 +1,4 @@
-use std::{
-    fmt::Write,
-    str::{self},
-};
+use std::str::{self};
 
 pub struct Boba {
     a: bool,
@@ -90,23 +87,15 @@ mod node {
     use super::*;
     use crate::deserialize::*;
     use crate::deserializer::*;
-    use std::str::Utf8Error;
 
     pub struct NodeDeserializer<'a>(&'a Node);
     pub struct MapDeserializer<'a>(&'a [(Node, Node)], usize);
     pub struct ListDeserializer<'a>(&'a [Node], usize);
 
     pub enum Error {
+        Never,
         ExpectedArrayNode,
         ExpectedObjectNode,
-        Utf8(Utf8Error),
-    }
-
-    impl From<Utf8Error> for Error {
-        #[inline]
-        fn from(error: Utf8Error) -> Self {
-            Error::Utf8(error)
-        }
     }
 
     impl NodeDeserializer<'_> {
@@ -203,11 +192,11 @@ mod node {
             todo!()
         }
         #[inline]
-        fn structure<T: ?Sized>(self) -> Result<Self::Structure, Self::Error> {
+        fn structure(self) -> Result<Self::Structure, Self::Error> {
             Ok(self)
         }
         #[inline]
-        fn enumeration<T: ?Sized>(self) -> Result<Self::Enumeration, Self::Error> {
+        fn enumeration(self) -> Result<Self::Enumeration, Self::Error> {
             Ok(self)
         }
     }
@@ -221,14 +210,14 @@ mod node {
             Ok(())
         }
 
-        fn tuple<const N: usize>(self) -> Result<Self::List, Self::Error> {
+        fn tuple(self) -> Result<Self::List, Self::Error> {
             match self.0 {
                 Node::Array(nodes) => Ok(ListDeserializer(nodes, 0)),
                 _ => Err(Error::ExpectedArrayNode),
             }
         }
 
-        fn map<const N: usize>(self) -> Result<Self::Map, Self::Error> {
+        fn map(self) -> Result<Self::Map, Self::Error> {
             match self.0 {
                 Node::Object(pairs) => Ok(MapDeserializer(pairs, 0)),
                 _ => Err(Error::ExpectedObjectNode),
@@ -240,17 +229,13 @@ mod node {
         type Error = Error;
         type Variant = Self;
 
-        // TODO: Is this right?
         #[inline]
-        fn never<K: Deserialize>(self, key: K) -> Result<K::Value, Self::Error> {
-            key.deserialize(self)
+        fn never(self) -> Self::Error {
+            Error::Never
         }
 
         #[inline]
-        fn variant<K: Deserialize, const N: usize>(
-            self,
-            key: K,
-        ) -> Result<(K::Value, Self::Variant), Self::Error> {
+        fn variant<K: Deserialize>(self, key: K) -> Result<(K::Value, Self::Variant), Self::Error> {
             match self.0 {
                 Node::Object(pairs) if pairs.len() > 0 => {
                     let pair = &pairs[0];
@@ -267,40 +252,32 @@ mod node {
         type Map = MapDeserializer<'a>;
         type List = ListDeserializer<'a>;
 
-        fn unit(self, name: &'static str, index: usize) -> Result<(), Self::Error> {
+        fn unit(self, name: &str, index: usize) -> Result<(), Self::Error> {
             todo!()
         }
 
-        fn map<const N: usize>(
-            self,
-            name: &'static str,
-            index: usize,
-        ) -> Result<Self::Map, Self::Error> {
+        fn map(self, name: &str, index: usize) -> Result<Self::Map, Self::Error> {
             todo!()
         }
 
-        fn tuple<const N: usize>(
-            self,
-            name: &'static str,
-            index: usize,
-        ) -> Result<Self::List, Self::Error> {
+        fn tuple(self, name: &str, index: usize) -> Result<Self::List, Self::Error> {
             todo!()
         }
 
         #[inline]
-        fn excess<V: Deserialize>(self, value: V) -> Result<V::Value, Self::Error> {
+        fn miss<V: Deserialize>(self, value: V) -> Result<V::Value, Self::Error> {
             value.deserialize(self)
         }
     }
 
     impl<'a> Map for MapDeserializer<'a> {
         type Error = Error;
-        type Field = NodeDeserializer<'a>;
+        type Item = NodeDeserializer<'a>;
 
-        fn field<K: Deserialize>(
+        fn pair<K: Deserialize>(
             &mut self,
             key: K,
-        ) -> Result<Option<(K::Value, Self::Field)>, Self::Error> {
+        ) -> Result<Option<(K::Value, Self::Item)>, Self::Error> {
             match self.0.get(self.1) {
                 Some(pair) => {
                     self.1 += 1;
@@ -312,20 +289,8 @@ mod node {
             }
         }
 
-        fn miss<K, V: Deserialize>(&mut self, _: K, value: V) -> Result<V::Value, Self::Error> {
+        fn miss<V: Deserialize>(&mut self, value: V) -> Result<V::Value, Self::Error> {
             value.deserialize(NodeDeserializer(&Node::Null))
-        }
-    }
-
-    impl Field for NodeDeserializer<'_> {
-        type Error = Error;
-
-        fn value<V: Deserialize>(self, value: V) -> Result<V::Value, Self::Error> {
-            value.deserialize(self)
-        }
-
-        fn excess(self) -> Result<(), Self::Error> {
-            Ok(())
         }
     }
 
@@ -505,13 +470,6 @@ mod node {
 
 //     pub enum Error {
 //         ExpectedObjectNode,
-//         Utf8(Utf8Error),
-//     }
-
-//     impl From<Utf8Error> for Error {
-//         fn from(error: Utf8Error) -> Self {
-//             Error::Utf8(error)
-//         }
 //     }
 
 //     impl NodeDeserializer<'_> {

@@ -1,8 +1,5 @@
 use crate::{deserializer::*, recurse};
-use std::{
-    marker::PhantomData,
-    str::{self},
-};
+use std::marker::PhantomData;
 
 pub trait Deserialize {
     type Value;
@@ -62,7 +59,18 @@ impl<T: Deserialize, const N: usize> Deserialize for [T; N] {
 
     #[inline]
     fn deserialize<D: Deserializer>(self, deserializer: D) -> Result<Self::Value, D::Error> {
-        deserializer.array(self)
+        let mut list = deserializer.list()?;
+        let mut values = [(); N].map(|_| None);
+        let mut index = 0;
+        for value in self {
+            values[index] = Some(match list.item()? {
+                Some(item) => item.value(value)?,
+                None => list.miss(value)?,
+            });
+            index += 1;
+        }
+        list.drain()?;
+        Ok(values.map(Option::unwrap))
     }
 }
 
@@ -74,7 +82,7 @@ where
 
     #[inline]
     fn deserialize<D: Deserializer>(self, deserializer: D) -> Result<Self::Value, D::Error> {
-        deserializer.array([New::<T>::new(); N])
+        [New::<T>::new(); N].deserialize(deserializer)
     }
 }
 
@@ -85,9 +93,10 @@ where
     type Value = [<&'a mut T as Deserialize>::Value; N];
 
     fn deserialize<D: Deserializer>(self, deserializer: D) -> Result<Self::Value, D::Error> {
-        // TODO: Use 'self.0.each_mut' when it stabilizes.
         let mut iterator = self.iter_mut();
-        deserializer.array([(); N].map(|_| iterator.next().unwrap()))
+        [(); N]
+            .map(|_| iterator.next().unwrap())
+            .deserialize(deserializer)
     }
 }
 
@@ -98,15 +107,15 @@ where
     type Value = &'a mut [T];
 
     fn deserialize<D: Deserializer>(self, deserializer: D) -> Result<Self::Value, D::Error> {
-        deserializer.slice::<T>(self, false)
-    }
-}
-
-impl<'a> Deserialize for &'a mut str {
-    type Value = &'a mut str;
-
-    fn deserialize<D: Deserializer>(self, deserializer: D) -> Result<Self::Value, D::Error> {
-        deserializer.string(self, false)
+        let mut list = deserializer.list()?;
+        for i in 0..self.len() {
+            match list.item()? {
+                Some(item) => item.value(&mut self[i])?,
+                None => return Ok(&mut self[..i]),
+            };
+        }
+        list.drain()?;
+        Ok(self)
     }
 }
 
@@ -154,11 +163,8 @@ impl Deserialize for New<String> {
     type Value = String;
 
     fn deserialize<D: Deserializer>(self, deserializer: D) -> Result<Self::Value, D::Error> {
-        let mut list = deserializer.list()?;
         let mut value = String::new();
-        while let Some(item) = list.item()? {
-            value.push(item.value(New::<char>::new())?);
-        }
+        value.deserialize(deserializer)?;
         Ok(value)
     }
 }
@@ -167,8 +173,8 @@ impl Deserialize for &mut String {
     type Value = ();
 
     fn deserialize<D: Deserializer>(self, deserializer: D) -> Result<Self::Value, D::Error> {
-        let mut list = deserializer.list()?;
         self.clear();
+        let mut list = deserializer.list()?;
         while let Some(item) = list.item()? {
             self.push(item.value(New::<char>::new())?);
         }
@@ -221,30 +227,8 @@ macro_rules! tuple {
                 deserializer.unit()
             }
         }
-
-        impl Deserialize for New<()> {
-            type Value = ();
-
-            #[inline]
-            fn deserialize<D: Deserializer>(
-                self,
-                deserializer: D,
-            ) -> Result<Self::Value, D::Error> {
-                ().deserialize(deserializer)
-            }
-        }
-
-        impl Deserialize for &mut () {
-            type Value = ();
-
-            #[inline]
-            fn deserialize<D: Deserializer>(
-                self,
-                deserializer: D,
-            ) -> Result<Self::Value, D::Error> {
-                ().deserialize(deserializer)
-            }
-        }
+        tuple!([NEW]);
+        tuple!([MUT]);
     };
     ($($p:ident, $t:ident),*) => {
         impl<$($t: Deserialize,)*> Deserialize for ($($t,)*) {
@@ -258,13 +242,15 @@ macro_rules! tuple {
                 let ($($p,)*) = self;
                 let mut list = deserializer.list()?;
                 $(let $p = match list.item()? { Some(item) => item.value($p)?, None => list.miss($p)?, };)*
-                while let Some(item) = list.item()? {
-                    item.excess()?;
-                }
+                list.drain()?;
                 Ok(($($p,)*))
             }
         }
 
+        tuple!([NEW] $($p, $t),*);
+        tuple!([MUT] $($p, $t),*);
+    };
+    ([NEW] $($p:ident, $t:ident),*) => {
         impl<$($t,)*> Deserialize for New<($($t,)*)>
         where
             $(New<$t>: Deserialize,)*
@@ -279,7 +265,8 @@ macro_rules! tuple {
                 ($(New::<$t>::new(),)*).deserialize(deserializer)
             }
         }
-
+    };
+    ([MUT] $($p:ident, $t:ident),*) => {
         impl<'a, $($t,)*> Deserialize for &'a mut ($($t,)*)
         where
             $(&'a mut $t: Deserialize,)*

@@ -1,12 +1,12 @@
 use crate::deserialize::*;
-use std::str::{self, Utf8Error};
+use std::str;
 
 pub trait Deserializer: Sized {
-    type Error: From<Utf8Error>;
-    type Structure: Structure<Error = Self::Error>;
-    type Enumeration: Enumeration<Error = Self::Error>;
+    type Error;
     type List: List<Error = Self::Error>;
     type Map: Map<Error = Self::Error>;
+    type Structure: Structure<Error = Self::Error>;
+    type Enumeration: Enumeration<Error = Self::Error>;
 
     fn unit(self) -> Result<(), Self::Error>;
     fn bool(self) -> Result<bool, Self::Error>;
@@ -28,90 +28,8 @@ pub trait Deserializer: Sized {
 
     fn list(self) -> Result<Self::List, Self::Error>;
     fn map(self) -> Result<Self::Map, Self::Error>;
-
-    #[inline]
-    fn tuple<const N: usize>(self) -> Result<Self::List, Self::Error> {
-        self.list()
-    }
-
-    #[inline]
-    fn string(self, value: &mut str, fill: bool) -> Result<&mut str, Self::Error> {
-        let value = unsafe { value.as_bytes_mut() };
-        let (index, error) = match self.bytes(value, fill) {
-            Ok(value) => match str::from_utf8_mut(value) {
-                Ok(value) => (value.len(), None),
-                Err(error) => {
-                    // TODO: Do I really want to recover from an invalid 'str'?
-                    if fill {
-                        (error.valid_up_to(), Some(error.into()))
-                    } else {
-                        (error.valid_up_to(), None)
-                    }
-                }
-            },
-            Err(error) => (0, Some(error)),
-        };
-
-        // Ensures that no invalid byte remains in the 'str'.
-        value[index..].fill(0);
-        match error {
-            Some(error) => Err(error),
-            // SAFETY: 'str' has been validated up to the index which is guarateed by 'error.valid_up_to'.
-            None => Ok(unsafe { str::from_utf8_unchecked_mut(&mut value[..index]) }),
-        }
-    }
-
-    #[inline]
-    fn bytes(self, value: &mut [u8], fill: bool) -> Result<&mut [u8], Self::Error> {
-        self.slice::<u8>(value, fill)
-    }
-
-    #[inline]
-    fn array<T: Deserialize, const N: usize>(
-        self,
-        value: [T; N],
-    ) -> Result<[T::Value; N], Self::Error> {
-        let mut list = self.list()?;
-        let mut values = [(); N].map(|_| None);
-        let mut index = 0;
-        for value in value {
-            values[index] = Some(match list.item()? {
-                Some(item) => item.value(value)?,
-                None => list.miss(value)?,
-            });
-            index += 1;
-        }
-        list.drain()?;
-        Ok(values.map(Option::unwrap))
-    }
-
-    #[inline]
-    fn slice<T>(self, value: &mut [T], fill: bool) -> Result<&mut [T], Self::Error>
-    where
-        for<'a> &'a mut T: Deserialize,
-    {
-        let mut list = self.list()?;
-        let mut index = 0;
-        while let Some(item) = list.item()? {
-            match value.get_mut(index) {
-                Some(value) => {
-                    item.value(value)?;
-                    index += 1;
-                }
-                None => item.excess()?,
-            }
-        }
-
-        if fill {
-            for value in &mut value[index..] {
-                list.miss(value)?;
-            }
-        }
-        Ok(&mut value[..index])
-    }
-
-    fn structure<T: ?Sized>(self) -> Result<Self::Structure, Self::Error>;
-    fn enumeration<T: ?Sized>(self) -> Result<Self::Enumeration, Self::Error>;
+    fn structure(self) -> Result<Self::Structure, Self::Error>;
+    fn enumeration(self) -> Result<Self::Enumeration, Self::Error>;
 }
 
 pub trait Structure {
@@ -120,19 +38,16 @@ pub trait Structure {
     type Map: Map<Error = Self::Error>;
 
     fn unit(self) -> Result<(), Self::Error>;
-    fn tuple<const N: usize>(self) -> Result<Self::List, Self::Error>;
-    fn map<const N: usize>(self) -> Result<Self::Map, Self::Error>;
+    fn tuple(self) -> Result<Self::List, Self::Error>;
+    fn map(self) -> Result<Self::Map, Self::Error>;
 }
 
 pub trait Enumeration {
     type Error;
     type Variant: Variant<Error = Self::Error>;
 
-    fn never<K: Deserialize>(self, key: K) -> Result<K::Value, Self::Error>;
-    fn variant<K: Deserialize, const N: usize>(
-        self,
-        key: K,
-    ) -> Result<(K::Value, Self::Variant), Self::Error>;
+    fn never(self) -> Self::Error;
+    fn variant<K: Deserialize>(self, key: K) -> Result<(K::Value, Self::Variant), Self::Error>;
 }
 
 pub trait Variant {
@@ -140,43 +55,54 @@ pub trait Variant {
     type Map: Map<Error = Self::Error>;
     type List: List<Error = Self::Error>;
 
-    fn unit(self, name: &'static str, index: usize) -> Result<(), Self::Error>;
-    fn map<const N: usize>(
-        self,
-        name: &'static str,
-        index: usize,
-    ) -> Result<Self::Map, Self::Error>;
-    fn tuple<const N: usize>(
-        self,
-        name: &'static str,
-        index: usize,
-    ) -> Result<Self::List, Self::Error>;
-    fn excess<V: Deserialize>(self, value: V) -> Result<V::Value, Self::Error>;
+    fn unit(self, name: &str, index: usize) -> Result<(), Self::Error>;
+    fn map(self, name: &str, index: usize) -> Result<Self::Map, Self::Error>;
+    fn tuple(self, name: &str, index: usize) -> Result<Self::List, Self::Error>;
+    fn miss<V: Deserialize>(self, value: V) -> Result<V::Value, Self::Error>;
 }
 
 pub trait Map {
     type Error;
-    type Field: Field<Error = Self::Error>;
+    type Item: Item<Error = Self::Error>;
 
-    fn field<K: Deserialize>(
+    fn pair<K: Deserialize>(
         &mut self,
         key: K,
-    ) -> Result<Option<(K::Value, Self::Field)>, Self::Error>;
-    fn miss<K, V: Deserialize>(&mut self, key: K, value: V) -> Result<V::Value, Self::Error>;
-}
-
-pub trait Field: Sized {
-    type Error;
-
-    fn value<V: Deserialize>(self, value: V) -> Result<V::Value, Self::Error>;
+    ) -> Result<Option<(K::Value, Self::Item)>, Self::Error>;
+    fn miss<V: Deserialize>(&mut self, value: V) -> Result<V::Value, Self::Error>;
 
     #[inline]
-    fn excess(self) -> Result<(), Self::Error> {
-        Ok(())
+    fn pairs<K: Deserialize, V: Deserialize, I: IntoIterator<Item = (K, V)>>(
+        mut self,
+        key: K,
+        values: I,
+    ) -> Result<(), Self::Error>
+    where
+        Self: Sized,
+    {
+        for (key, value) in values {
+            match self.pair(key)? {
+                Some((_, item)) => item.value(value)?,
+                None => self.miss(value)?,
+            };
+        }
+        self.drain(key)
+    }
+
+    #[inline]
+    fn drain<K: Deserialize>(mut self, key: K) -> Result<(), Self::Error>
+    where
+        Self: Sized,
+    {
+        todo!()
+        // while let Some((_, item)) = self.pair(key)? {
+        //     item.excess()?;
+        // }
+        // Ok(())
     }
 }
 
-pub trait List: Sized {
+pub trait List {
     type Error;
     type Item: Item<Error = Self::Error>;
 
@@ -184,7 +110,27 @@ pub trait List: Sized {
     fn miss<V: Deserialize>(&mut self, value: V) -> Result<V::Value, Self::Error>;
 
     #[inline]
-    fn drain(mut self) -> Result<(), Self::Error> {
+    fn items<V: Deserialize, I: IntoIterator<Item = V>>(
+        mut self,
+        values: I,
+    ) -> Result<(), Self::Error>
+    where
+        Self: Sized,
+    {
+        for value in values {
+            match self.item()? {
+                Some(item) => item.value(value)?,
+                None => self.miss(value)?,
+            };
+        }
+        self.drain()
+    }
+
+    #[inline]
+    fn drain(mut self) -> Result<(), Self::Error>
+    where
+        Self: Sized,
+    {
         while let Some(item) = self.item()? {
             item.excess()?;
         }
@@ -192,13 +138,16 @@ pub trait List: Sized {
     }
 }
 
-pub trait Item: Sized {
+pub trait Item {
     type Error;
 
     fn value<V: Deserialize>(self, value: V) -> Result<V::Value, Self::Error>;
 
     #[inline]
-    fn excess(self) -> Result<(), Self::Error> {
+    fn excess(self) -> Result<(), Self::Error>
+    where
+        Self: Sized,
+    {
         Ok(())
     }
 }

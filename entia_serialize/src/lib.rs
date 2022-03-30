@@ -1,6 +1,7 @@
 pub mod deserialize;
 pub mod deserializer;
 pub mod json;
+pub mod meta;
 pub mod node;
 pub mod serialize;
 pub mod serializer;
@@ -25,27 +26,28 @@ pub enum Fett {
 mod example {
     use super::*;
     use crate::{deserialize::*, deserializer::*};
-    use std::str;
 
     macro_rules! new_map {
-        ($f:expr, $l:expr $(,$p:ident: $t:ty)*) => {{
+        ($f:expr, $l:expr $(,$p:ident, $n:expr, $t:ty)*) => {{
             $(let mut $p = None;)*
-            while let Some((key, field)) = $f.field(unsafe { str::from_utf8_unchecked_mut(&mut [0; $l]) })? {
+            let key = &mut [0 as u8; $l];
+            while let Some((key, item)) = $f.pair(&mut key[..])? {
                 match &*key {
-                    $(stringify!($p) => $p = Some(field.value(New::<$t>::new())?),)*
-                    _ => field.excess()?,
+                    $($n => $p = Some(item.value(New::<$t>::new())?),)*
+                    _ => item.excess()?,
                 }
             }
-            ($(match $p { Some($p) => $p, None => $f.miss(stringify!($p), New::<$t>::new())? },)*)
+            ($(match $p { Some($p) => $p, None => $f.miss(New::<$t>::new())? },)*)
         }};
     }
 
     macro_rules! use_map {
-        ($f:expr, $l:expr $(,$p:ident)*) => {{
-            while let Some((key, field)) = $f.field(unsafe { str::from_utf8_unchecked_mut(&mut [0; $l]) })? {
+        ($f:expr, $l:expr $(,$p:ident, $n:expr)*) => {{
+            let key = &mut [0 as u8; $l];
+            while let Some((key, item)) = $f.pair(&mut key[..])? {
                 match &*key {
-                    $(stringify!($p) => field.value(&mut *$p)?,)*
-                    _ => field.excess()?,
+                    $($n => item.value(&mut *$p)?,)*
+                    _ => item.excess()?,
                 }
             }
         }};
@@ -55,8 +57,8 @@ mod example {
         type Value = Boba;
 
         fn deserialize<D: Deserializer>(self, deserializer: D) -> Result<Self::Value, D::Error> {
-            let mut map = deserializer.structure::<Boba>()?.map::<3>()?;
-            let (a, b, c) = new_map!(map, 1, a: bool, b: usize, c: bool);
+            let mut map = deserializer.structure()?.map()?;
+            let (a, b, c) = new_map!(map, 1, a, b"a", bool, b, b"b", usize, c, b"c", bool);
             Ok(Boba { a, b, c })
         }
     }
@@ -65,9 +67,9 @@ mod example {
         type Value = ();
 
         fn deserialize<D: Deserializer>(self, deserializer: D) -> Result<Self::Value, D::Error> {
-            let mut map = deserializer.structure::<Boba>()?.map::<3>()?;
+            let mut map = deserializer.structure()?.map()?;
             let Boba { a, b, c } = self;
-            use_map!(map, 1, a, b, c);
+            use_map!(map, 1, a, b"a", b, b"b", c, b"c");
             Ok(())
         }
     }
@@ -76,29 +78,27 @@ mod example {
         type Value = Fett;
 
         fn deserialize<D: Deserializer>(self, deserializer: D) -> Result<Self::Value, D::Error> {
-            let key = &mut [0];
-            let (key, variant) = deserializer
-                .enumeration::<Fett>()?
-                .variant::<_, 3>(unsafe { str::from_utf8_unchecked_mut(key) })?;
+            let key = &mut [0 as u8];
+            let (key, variant) = deserializer.enumeration()?.variant(&mut key[..])?;
             match &*key {
-                "A" => {
+                b"A" => {
                     variant.unit("A", 0)?;
                     Ok(Fett::A)
                 }
-                "B" => {
-                    let mut list = variant.tuple::<3>("B", 1)?;
+                b"B" => {
+                    let mut list = variant.tuple("B", 1)?;
                     let a = value_or_miss(&mut list, New::<bool>::new())?;
                     let b = value_or_miss(&mut list, New::<usize>::new())?;
                     let c = value_or_miss(&mut list, New::<Boba>::new())?;
                     list.drain()?;
                     Ok(Fett::B(a, b, c))
                 }
-                "C" => {
-                    let mut map = variant.map::<3>("C", 2)?;
-                    let (a, b, c) = new_map!(map, 1, a: bool, b: char, c: String);
+                b"C" => {
+                    let mut map = variant.map("C", 2)?;
+                    let (a, b, c) = new_map!(map, 1, a, b"a", bool, b, b"b", char, c, b"c", String);
                     Ok(Fett::C { a, b, c })
                 }
-                _ => variant.excess(self),
+                _ => variant.miss(self),
             }
         }
     }
@@ -108,18 +108,16 @@ mod example {
 
         #[inline]
         fn deserialize<D: Deserializer>(self, deserializer: D) -> Result<Self::Value, D::Error> {
-            let key = &mut [0];
-            let (key, variant) = deserializer
-                .enumeration::<Fett>()?
-                .variant::<_, 3>(unsafe { str::from_utf8_unchecked_mut(key) })?;
+            let key = &mut [0 as u8];
+            let (key, variant) = deserializer.enumeration()?.variant(&mut key[..])?;
             match &*key {
-                "A" => {
+                b"A" => {
                     variant.unit("A", 0)?;
                     *self = Fett::A;
                     Ok(())
                 }
-                "B" => {
-                    let mut list = variant.tuple::<3>("B", 1)?;
+                b"B" => {
+                    let mut list = variant.tuple("B", 1)?;
                     match self {
                         Fett::B(a, b, c) => {
                             value_or_skip(&mut list, a)?;
@@ -135,20 +133,21 @@ mod example {
                     }
                     list.drain()
                 }
-                "C" => {
-                    let mut map = variant.map::<3>("C", 2)?;
+                b"C" => {
+                    let mut map = variant.map("C", 2)?;
                     match self {
                         Fett::C { a, b, c } => {
-                            use_map!(map, 1, a, b, c);
+                            use_map!(map, 1, a, b"a", b, b"b", c, b"c");
                         }
                         value => {
-                            let (a, b, c) = new_map!(map, 1, a: bool, b: char, c: String);
+                            let (a, b, c) =
+                                new_map!(map, 1, a, b"a", bool, b, b"b", char, c, b"c", String);
                             *value = Fett::C { a, b, c };
                         }
                     }
                     Ok(())
                 }
-                _ => Variant::excess(variant, self),
+                _ => Variant::miss(variant, self),
             }
         }
     }

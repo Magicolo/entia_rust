@@ -2,6 +2,7 @@ pub mod append;
 pub mod bits;
 pub mod call;
 pub mod change;
+pub mod each;
 pub mod flags;
 pub mod marker;
 pub mod maybe;

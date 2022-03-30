@@ -136,8 +136,8 @@ pub trait Serializer {
         self.list()?.items(value)
     }
 
-    fn structure<T: ?Sized>(self) -> Result<Self::Structure, Self::Error>;
-    fn enumeration<T: ?Sized>(self) -> Result<Self::Enumeration, Self::Error>;
+    fn structure(self) -> Result<Self::Structure, Self::Error>;
+    fn enumeration(self) -> Result<Self::Enumeration, Self::Error>;
 
     #[inline]
     fn state<T>(self, state: T) -> State<Self, T>
@@ -178,7 +178,7 @@ pub trait Enumeration {
     type Structure: Structure<Value = Self::Value, Error = Self::Error>;
 
     fn never(self) -> Result<Self::Value, Self::Error>;
-    fn variant(self, name: &'static str, index: usize) -> Result<Self::Structure, Self::Error>;
+    fn variant(self, name: &str, index: usize) -> Result<Self::Structure, Self::Error>;
 }
 
 pub trait Map: Sized {
@@ -358,14 +358,14 @@ macro_rules! tuple {
                 Ok(($($p.bytes(_value)?,)*))
             }
             #[inline]
-            fn structure<T: ?Sized>(self) -> Result<Self::Structure, Self::Error> {
+            fn structure(self) -> Result<Self::Structure, Self::Error> {
                 let ($($p,)*) = self;
-                Ok(($($p.structure::<T>()?,)*))
+                Ok(($($p.structure()?,)*))
             }
             #[inline]
-            fn enumeration<T: ?Sized>(self) -> Result<Self::Enumeration, Self::Error> {
+            fn enumeration(self) -> Result<Self::Enumeration, Self::Error> {
                 let ($($p,)*) = self;
-                Ok(($($p.enumeration::<T>()?,)*))
+                Ok(($($p.enumeration()?,)*))
             }
         }
 
@@ -449,7 +449,7 @@ macro_rules! tuple {
             #[inline]
             fn variant(
                 self,
-                _name: &'static str,
+                _name: &str,
                 _index: usize,
             ) -> Result<Self::Structure, Self::Error> {
                 let ($($p,)*) = self;
@@ -581,12 +581,12 @@ pub mod state {
             Ok((self.0.bytes(value)?, self.1))
         }
         #[inline]
-        fn structure<T: ?Sized>(self) -> Result<Self::Structure, Self::Error> {
-            Ok(State::new(self.0.structure::<T>()?, self.1))
+        fn structure(self) -> Result<Self::Structure, Self::Error> {
+            Ok(State::new(self.0.structure()?, self.1))
         }
         #[inline]
-        fn enumeration<T: ?Sized>(self) -> Result<Self::Enumeration, Self::Error> {
-            Ok(State::new(self.0.enumeration::<T>()?, self.1))
+        fn enumeration(self) -> Result<Self::Enumeration, Self::Error> {
+            Ok(State::new(self.0.enumeration()?, self.1))
         }
     }
 
@@ -668,7 +668,7 @@ pub mod state {
             Ok((self.0.never()?, self.1))
         }
         #[inline]
-        fn variant(self, name: &'static str, index: usize) -> Result<Self::Structure, Self::Error> {
+        fn variant(self, name: &str, index: usize) -> Result<Self::Structure, Self::Error> {
             Ok(State::new(self.0.variant(name, index)?, self.1))
         }
     }
@@ -805,12 +805,12 @@ pub mod adapt {
             self.1(self.0.bytes(value))
         }
         #[inline]
-        fn structure<T: ?Sized>(self) -> Result<Self::Structure, Self::Error> {
-            Ok(Adapt::new(self.0.structure::<T>()?, self.1))
+        fn structure(self) -> Result<Self::Structure, Self::Error> {
+            Ok(Adapt::new(self.0.structure()?, self.1))
         }
         #[inline]
-        fn enumeration<T: ?Sized>(self) -> Result<Self::Enumeration, Self::Error> {
-            Ok(Adapt::new(self.0.enumeration::<T>()?, self.1))
+        fn enumeration(self) -> Result<Self::Enumeration, Self::Error> {
+            Ok(Adapt::new(self.0.enumeration()?, self.1))
         }
     }
 
@@ -908,7 +908,7 @@ pub mod adapt {
             self.1(self.0.never())
         }
         #[inline]
-        fn variant(self, name: &'static str, index: usize) -> Result<Self::Structure, Self::Error> {
+        fn variant(self, name: &str, index: usize) -> Result<Self::Structure, Self::Error> {
             Ok(Adapt::new(self.0.variant(name, index)?, self.1))
         }
     }
