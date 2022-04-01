@@ -7,8 +7,6 @@ pub trait Unzip {
 }
 
 macro_rules! tuple {
-    () => {};
-    ($p:ident, $t:ident) => {};
     ($($p:ident, $t:ident),*) => {
         impl<$($t,)* const N: usize> Unzip for [($($t,)*); N] {
             type Target = ($([$t; N],)*);
@@ -18,13 +16,11 @@ macro_rules! tuple {
                 $(let mut $p = MaybeUninit::<[$t; N]>::uninit();)*
                 {
                     $(let $p = $p.as_mut_ptr() as *mut $t;)*
-                    let mut index = 0;
-                    for ($($t,)*) in self {
-                        unsafe { $($p.add(index).write($t);)* }
-                        index += 1;
+                    for (_i, ($($t,)*)) in self.into_iter().enumerate() {
+                        $(unsafe { $p.add(_i).write($t); })*
                     }
                 }
-                unsafe { ($($p.assume_init(),)*) }
+                ($(unsafe { $p.assume_init() },)*)
             }
         }
     };

@@ -3,6 +3,7 @@ pub mod bits;
 pub mod call;
 pub mod change;
 pub mod each;
+pub mod few;
 pub mod flags;
 pub mod marker;
 pub mod maybe;

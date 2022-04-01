@@ -14,4 +14,4 @@ entia_serialize = { path = "./entia_serialize" }
 entia_check = { path = "./entia_check" }
 
 [workspace]
-members = ["entia_check", "entia_core", "entia_example_01", "entia_macro", "entia_main", "entia_main_derive", "entia_serialize", "entia_serialize_derive"]
+members = ["entia_check", "entia_core", "entia_example_01", "entia_macro", "entia_main", "entia_main_derive", "entia_meta", "entia_meta_derive", "entia_serialize", "entia_serialize_derive"]
