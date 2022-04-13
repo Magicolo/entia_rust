@@ -2,7 +2,7 @@ use proc_macro::TokenStream;
 use quote::{__private::Span, quote};
 use syn::{
     parse_macro_input, punctuated::Punctuated, Attribute, Data, DataEnum, DataStruct, DeriveInput,
-    Field, Ident, Path,
+    Field, Fields, Ident, Path,
 };
 
 #[proc_macro_derive(Meta)]
@@ -22,6 +22,7 @@ pub fn filter(input: TokenStream) -> TokenStream {
         let type_path = full_path(ident.span(), ["entia_meta", "meta", "Type"]);
         let type_structure_path =
             full_path(ident.span(), ["entia_meta", "meta", "Type", "Structure"]);
+        let structure_macro_path = full_path(ident.span(), ["entia_meta", "structure"]);
         let structure_path = full_path(ident.span(), ["entia_meta", "meta", "Structure"]);
         let structures_path = full_path(ident.span(), ["entia_meta", "meta", "Structures"]);
         let attribute_path = full_path(ident.span(), ["entia_meta", "meta", "Attribute"]);
@@ -45,8 +46,7 @@ pub fn filter(input: TokenStream) -> TokenStream {
                         let index = fields.named
                             .iter()
                             .enumerate()
-                            .map(|(i, Field { ident, .. })| quote! { stringify!(#ident) | stringify!(#i) => Some(#i), } )
-                            ;
+                            .map(|(i, Field { ident, .. })| quote! { stringify!(#ident) | stringify!(#i) => Some(#i), } );
                         (
                             fields
                                 .named
