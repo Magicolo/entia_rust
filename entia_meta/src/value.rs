@@ -1,11 +1,16 @@
-use crate::meta::{Enumeration, Meta, Primitives, Structure, Type, Variant};
+use crate::{
+    enumeration::{Enumeration, Variant},
+    meta::{Data, Meta},
+    primitive::Primitives,
+    structure::Structure,
+};
 use std::{
     any::{Any, TypeId},
     mem::{forget, transmute_copy},
+    ops::{Deref, DerefMut},
 };
 
-#[derive(Debug)]
-pub enum Value {
+pub enum Value<T = Box<dyn Any>> {
     Unit(()),
     Bool(bool),
     Char(char),
@@ -23,14 +28,15 @@ pub enum Value {
     I128(i128),
     F32(f32),
     F64(f64),
-    Structure(Box<dyn Any>, &'static Structure),
-    Variant(Box<dyn Any>, &'static Enumeration, &'static Variant),
+    // TODO: Allow for unboxed &'static and &mut 'static values?
+    Structure(T, &'static Structure),
+    Variant(T, &'static Enumeration, &'static Variant),
 }
 
 impl Value {
-    pub fn from<T: Meta>(value: T) -> Self {
+    pub fn from<T: Meta + 'static>(value: T) -> Self {
         match T::meta() {
-            Type::Primitive(primitive) => match primitive.kind {
+            Data::Primitive(primitive) => match primitive.kind {
                 Primitives::Unit => Self::Unit(unsafe { transmute_copy(&value) }),
                 Primitives::Bool => Self::Bool(unsafe { transmute_copy(&value) }),
                 Primitives::Char => Self::Char(unsafe { transmute_copy(&value) }),
@@ -49,19 +55,15 @@ impl Value {
                 Primitives::F32 => Self::F32(unsafe { transmute_copy(&value) }),
                 Primitives::F64 => Self::F64(unsafe { transmute_copy(&value) }),
             },
-            Type::Structure(structure) => Self::Structure(Box::new(value), structure),
-            Type::Enumeration(enumeration) => match enumeration.variant_of(&value) {
+            Data::Structure(structure) => Self::Structure(Box::new(value), structure),
+            Data::Enumeration(enumeration) => match enumeration.variant_of(&value) {
                 Some((_, variant)) => Self::Variant(Box::new(value), enumeration, variant),
                 None => unreachable!(),
             },
         }
     }
 
-    pub fn into<T: Meta>(self) -> Option<T> {
-        T::meta().from(self)?.downcast().ok()
-    }
-
-    pub fn meta(&self) -> Type {
+    pub fn meta(&self) -> Data {
         match self {
             Self::Unit(_) => <()>::meta(),
             Self::Bool(_) => bool::meta(),
@@ -80,8 +82,8 @@ impl Value {
             Self::I128(_) => i128::meta(),
             Self::F32(_) => f32::meta(),
             Self::F64(_) => f64::meta(),
-            Self::Structure(_, structure) => Type::Structure(structure),
-            Self::Variant(_, enumeration, _) => Type::Enumeration(enumeration),
+            Self::Structure(_, structure) => Data::Structure(structure),
+            Self::Variant(_, enumeration, _) => Data::Enumeration(enumeration),
         }
     }
 
@@ -156,5 +158,61 @@ impl Value {
     #[inline]
     pub fn clone(&self) -> Option<Self> {
         self.meta().clone(self)
+    }
+}
+
+impl Deref for Value {
+    type Target = dyn Any;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Value::Unit(value) => value,
+            Value::Bool(value) => value,
+            Value::Char(value) => value,
+            Value::U8(value) => value,
+            Value::U16(value) => value,
+            Value::U32(value) => value,
+            Value::U64(value) => value,
+            Value::Usize(value) => value,
+            Value::U128(value) => value,
+            Value::I8(value) => value,
+            Value::I16(value) => value,
+            Value::I32(value) => value,
+            Value::I64(value) => value,
+            Value::Isize(value) => value,
+            Value::I128(value) => value,
+            Value::F32(value) => value,
+            Value::F64(value) => value,
+            Value::Structure(value, _) => value,
+            Value::Variant(value, _, _) => value,
+        }
+    }
+}
+
+impl DerefMut for Value {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            Value::Unit(value) => value,
+            Value::Bool(value) => value,
+            Value::Char(value) => value,
+            Value::U8(value) => value,
+            Value::U16(value) => value,
+            Value::U32(value) => value,
+            Value::U64(value) => value,
+            Value::Usize(value) => value,
+            Value::U128(value) => value,
+            Value::I8(value) => value,
+            Value::I16(value) => value,
+            Value::I32(value) => value,
+            Value::I64(value) => value,
+            Value::Isize(value) => value,
+            Value::I128(value) => value,
+            Value::F32(value) => value,
+            Value::F64(value) => value,
+            Value::Structure(value, _) => value,
+            Value::Variant(value, _, _) => value,
+        }
     }
 }

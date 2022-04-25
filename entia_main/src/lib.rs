@@ -64,5 +64,9 @@ pub use crate::{
 pub(crate) use entia_macro::recurse_16 as recurse;
 pub use entia_main_derive::{Component, Depend, Filter, Message, Resource, Template};
 
+pub mod meta {
+    pub use entia_meta::*;
+}
+
 #[cfg(test)]
 mod test;

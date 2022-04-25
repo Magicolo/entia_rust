@@ -7,3 +7,4 @@ edition = "2021"
 
 [dependencies]
 entia_core = { path = "../entia_core" }
+entia_meta_macro = { path = "../entia_meta_macro" }
