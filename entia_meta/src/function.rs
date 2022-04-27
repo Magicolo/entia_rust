@@ -36,7 +36,9 @@ pub struct Parameter {
 pub struct Function {
     pub access: Access,
     pub signature: Signature,
-    pub invoke: for<'a> fn(&mut dyn Iterator<Item = Argument<'a>>) -> Option<Argument<'a>>,
+    // SAFETY: Since this 'invoke' may call an unsafe function, it is conservatively tagged as 'unsafe'.
+    // Check the 'signature' or the pointed to function to ensure safety.
+    pub invoke: for<'a> unsafe fn(&mut dyn Iterator<Item = Argument<'a>>) -> Option<Argument<'a>>,
     pub attributes: &'static [Attribute],
 }
 

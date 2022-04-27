@@ -161,7 +161,6 @@ pub fn meta(attribute: TokenStream, item: TokenStream) -> TokenStream {
                 let meta_path = &context.meta;
                 content.push(parse_quote! { pub static META: #meta_path::Module = #meta; });
             }
-            println!("{}", module.to_token_stream());
             module.to_token_stream().into()
         }
         // Item::Const(_) => todo!(),

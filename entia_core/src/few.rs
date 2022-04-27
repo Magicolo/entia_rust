@@ -22,20 +22,6 @@ pub enum Iterator<T> {
     More(vec::IntoIter<T>),
 }
 
-impl<T> Few<T> {
-    #[inline]
-    pub fn len(&self) -> usize {
-        match self {
-            Few::Zero => 0,
-            Few::One(values) => values.len(),
-            Few::Two(values) => values.len(),
-            Few::Three(values) => values.len(),
-            Few::Four(values) => values.len(),
-            Few::More(values) => values.len(),
-        }
-    }
-}
-
 impl<T> Deref for Few<T> {
     type Target = [T];
 
@@ -103,25 +89,28 @@ impl<T> FromIterator<T> for Few<T> {
     #[inline]
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
         let mut iterator = iter.into_iter();
-        match iterator.next() {
-            Some(_1) => match iterator.next() {
-                Some(_2) => match iterator.next() {
-                    Some(_3) => match iterator.next() {
-                        Some(_4) => match iterator.next() {
-                            Some(_5) => {
-                                let mut values = vec![_1, _2, _3, _4, _5];
-                                values.extend(iterator);
-                                Self::More(values.into_boxed_slice())
-                            }
-                            None => Self::Four([_1, _2, _3, _4]),
-                        },
-                        None => Self::Three([_1, _2, _3]),
-                    },
-                    None => Self::Two([_1, _2]),
-                },
-                None => Self::One([_1]),
-            },
-            None => Self::Zero,
-        }
+        let _1 = match iterator.next() {
+            Some(_1) => _1,
+            None => return Self::Zero,
+        };
+        let _2 = match iterator.next() {
+            Some(_2) => _2,
+            None => return Self::One([_1]),
+        };
+        let _3 = match iterator.next() {
+            Some(_3) => _3,
+            None => return Self::Two([_1, _2]),
+        };
+        let _4 = match iterator.next() {
+            Some(_4) => _4,
+            None => return Self::Three([_1, _2, _3]),
+        };
+        let _5 = match iterator.next() {
+            Some(_5) => _5,
+            None => return Self::Four([_1, _2, _3, _4]),
+        };
+        let mut values = vec![_1, _2, _3, _4, _5];
+        values.extend(iterator);
+        Self::More(values.into_boxed_slice())
     }
 }
