@@ -32,12 +32,14 @@ pub trait Inject {
     type Input;
     type State: for<'a> Get<'a> + Depend;
 
+    #[inline]
     fn name() -> String {
         short_type_name::<Self>()
     }
 
     fn initialize(input: Self::Input, context: Context) -> Result<Self::State>;
 
+    #[inline]
     fn update(_: &mut Self::State, _: Context) -> Result {
         Ok(())
     }

@@ -198,11 +198,11 @@ fn run() -> Result<(), Box<dyn error::Error>> {
                     ..
                 }),
                 _,
-            ) => inputs.run(&mut world, |mut emit| match key {
-                Key::Left => emit.one(Input::Left(state == ButtonState::Press)),
-                Key::Right => emit.one(Input::Right(state == ButtonState::Press)),
-                Key::Down => emit.one(Input::Down(state == ButtonState::Press)),
-                Key::Up => emit.one(Input::Up(state == ButtonState::Press)),
+            ) => inputs.run(&mut world, |mut inputs| match key {
+                Key::Left => inputs.one(Input::Left(state == ButtonState::Press)),
+                Key::Right => inputs.one(Input::Right(state == ButtonState::Press)),
+                Key::Down => inputs.one(Input::Down(state == ButtonState::Press)),
+                Key::Up => inputs.one(Input::Up(state == ButtonState::Press)),
                 _ => {}
             })?,
             Event::Loop(Loop::Update(UpdateArgs { dt })) => {

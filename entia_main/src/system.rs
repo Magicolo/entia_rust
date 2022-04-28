@@ -124,19 +124,19 @@ impl System {
             identifier,
             run: {
                 let state = State(state.0.clone());
-                Box::new(move |world| unsafe { run(state.get(), &*(world as *const _)) })
+                Box::new(move |world| run(state.get(), &*(world as *const _)))
             },
             update: {
                 let state = State(state.0.clone());
-                Box::new(move |world| unsafe { update(state.get(), &mut *(world as *mut _)) })
+                Box::new(move |world| update(state.get(), &mut *(world as *mut _)))
             },
             resolve: {
                 let state = State(state.0.clone());
-                Box::new(move |world| unsafe { resolve(state.get(), &mut *(world as *mut _)) })
+                Box::new(move |world| resolve(state.get(), &mut *(world as *mut _)))
             },
             depend: {
                 let state = State(state.0.clone());
-                Box::new(move |world| unsafe { depend(state.get(), &*(world as *const _)) })
+                Box::new(move |world| depend(state.get(), &*(world as *const _)))
             },
         }
     }
