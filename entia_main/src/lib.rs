@@ -23,26 +23,6 @@ pub mod core {
     pub use entia_core::*;
 }
 
-/*
-{
-    metas: {
-        { $i: 0 }: { name: "Time", ... },
-        { $i: 1 }: { name: "Position", ... },
-        { $i: 2 }: { name: "Mass", ... },
-    },
-    resources: {
-        { $r: 0 }: { delta: 0.1, frames: 100 },
-    },
-    segments: {
-        [{ $r: 1 }, { $r: 2 }]: {
-            { $i: 3 }: [{ x: 1, y: 2, z: 3 }, { mass: 100 }],
-            { $i: 4 }: [{ x: 5, y: 6, z: 7 }, { mass: 80 }],
-            { $i: 5 }: [{ x: 8, y: 9, z: 0 }, { mass: 0 }],
-        }
-    }
-}
-*/
-
 pub use crate::{
     create::Create,
     defer::Defer,

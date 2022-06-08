@@ -106,7 +106,10 @@ impl Duplicate<'_> {
 impl Slot {
     fn get(segment: &Segment, index: usize) -> Result<Slot, error::Error> {
         if index >= segment.count() {
-            Err(error::Error::SegmentIndexOutOfRange(index, segment.index()))
+            Err(error::Error::SegmentIndexOutOfRange {
+                index,
+                segment: segment.index(),
+            })
         } else if segment.can_clone() {
             let sources = segment.component_stores();
             let mut targets = Vec::with_capacity(sources.len());
@@ -115,7 +118,9 @@ impl Slot {
             }
             Ok(Slot(targets))
         } else {
-            Err(error::Error::SegmentMustBeClonable(segment.index()))
+            Err(error::Error::SegmentMustBeClonable {
+                segment: segment.index(),
+            })
         }
     }
 

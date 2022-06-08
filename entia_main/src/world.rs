@@ -47,8 +47,15 @@ pub trait Component: Sized + Send + Sync + 'static {
     fn meta() -> Meta;
 }
 
-pub trait Resource: Sized + Default + Send + Sync + 'static {
+pub trait Resource: Sized + Send + Sync + 'static {
     fn meta() -> Meta;
+
+    fn initialize(_: &mut World) -> Result<Self> {
+        Err(Error::MissingResource {
+            name: type_name::<Self>(),
+            identifier: TypeId::of::<Self>(),
+        })
+    }
 }
 
 impl World {
@@ -105,20 +112,22 @@ impl World {
 
     pub fn get_meta<T: Send + Sync + 'static>(&self) -> Result<Arc<Meta>> {
         let key = TypeId::of::<T>();
-        let index = *self
-            .type_to_meta
-            .get(&key)
-            .ok_or(Error::MissingMeta(type_name::<T>()))?;
-        Ok(self.metas[index].clone())
+        match self.type_to_meta.get(&key) {
+            Some(&index) => Ok(self.metas[index].clone()),
+            None => Err(Error::MissingMeta {
+                name: type_name::<T>(),
+                identifier: key,
+            }),
+        }
     }
 
-    pub fn get_or_add_meta<T: Send + Sync + 'static, F: FnOnce() -> Meta>(
+    pub fn get_or_add_meta<T: Send + Sync + 'static, M: FnOnce() -> Meta>(
         &mut self,
-        provide: F,
+        meta: M,
     ) -> Arc<Meta> {
         match self.get_meta::<T>() {
             Ok(meta) => meta,
-            Err(_) => self.set_meta(provide()),
+            Err(_) => self.set_meta(meta()),
         }
     }
 
@@ -144,22 +153,27 @@ impl World {
         &mut self.segments[index]
     }
 
-    pub(crate) fn get_or_add_resource_store<R: Resource>(
+    pub(crate) fn get_or_add_resource_store<
+        T: Send + Sync + 'static,
+        M: FnOnce() -> Meta,
+        I: FnOnce(&mut World) -> Result<T>,
+    >(
         &mut self,
-        default: Option<R>,
-    ) -> Arc<Store> {
-        let meta = self.get_or_add_meta::<R, _>(R::meta);
+        meta: M,
+        initialize: I,
+    ) -> Result<Arc<Store>> {
+        let meta = self.get_or_add_meta::<T, _>(meta);
         let identifier = meta.identifier();
-        let store = match self.resources.get(&identifier) {
-            Some(store) => store.clone(),
+        match self.resources.get(&identifier) {
+            Some(store) => Ok(store.clone()),
             None => {
+                let resource = initialize(self)?;
                 let store = Arc::new(Store::new(meta, 1));
-                unsafe { store.set(0, default.unwrap_or_default()) };
+                unsafe { store.set(0, resource) };
                 self.resources.insert(identifier, store.clone());
-                store
+                Ok(store)
             }
-        };
-        store
+        }
     }
 
     fn get_segment_index(&self, types: &HashSet<TypeId>) -> Option<usize> {
@@ -386,7 +400,7 @@ pub mod segment {
         count: usize,
         flags: Flags<Flag>,
         entity_store: Arc<Store>,
-        component_stores: Vec<Arc<Store>>,
+        component_stores: Box<[Arc<Store>]>,
         component_types: HashSet<TypeId>,
         reserved: AtomicUsize,
         capacity: usize,
@@ -412,7 +426,7 @@ pub mod segment {
                 .expect("Entity meta must be included.");
 
             // Iterate over all metas in order to have them consistently ordered.
-            let component_stores: Vec<_> = metas
+            let component_stores: Box<_> = metas
                 .iter()
                 .filter(|meta| types.contains(&meta.identifier()))
                 .map(|meta| Arc::new(Store::new(meta.clone(), capacity)))
@@ -498,11 +512,16 @@ pub mod segment {
         }
 
         pub fn component_store(&self, meta: &Meta) -> Result<Arc<Store>> {
+            let identifier = meta.identifier();
             self.component_stores
                 .iter()
-                .find(|store| store.meta().identifier() == meta.identifier())
+                .find(|store| store.meta().identifier() == identifier)
                 .cloned()
-                .ok_or(Error::MissingStore(meta.name(), self.index))
+                .ok_or(Error::MissingStore {
+                    name: meta.name(),
+                    identifier,
+                    segment: self.index,
+                })
         }
 
         pub fn stores(&self) -> impl Iterator<Item = &Store> {
@@ -594,7 +613,9 @@ pub mod store {
         ) -> Result {
             debug_assert_eq!(source.0.meta().identifier(), target.0.meta().identifier());
             let metas = (source.0.meta(), target.0.meta());
-            let error = Error::MissingClone(metas.0.name());
+            let error = Error::MissingClone {
+                name: metas.0.name(),
+            };
             let cloner = metas
                 .0
                 .cloner
@@ -613,7 +634,9 @@ pub mod store {
         pub unsafe fn fill(source: (&Self, usize), target: (&Self, usize), count: usize) -> Result {
             debug_assert_eq!(source.0.meta().identifier(), target.0.meta().identifier());
             let metas = (source.0.meta(), target.0.meta());
-            let error = Error::MissingClone(metas.0.name());
+            let error = Error::MissingClone {
+                name: metas.0.name(),
+            };
             let cloner = metas
                 .0
                 .cloner

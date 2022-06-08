@@ -14,6 +14,11 @@ impl<T> Write<T> {
     pub const fn segment(&self) -> usize {
         self.1
     }
+
+    #[inline]
+    pub fn store(&self) -> &Store {
+        &self.0
+    }
 }
 
 impl<R: Resource> Inject for &mut R {
@@ -30,7 +35,12 @@ impl<R: Resource> Inject for Write<R> {
     type State = Self;
 
     fn initialize(input: Self::Input, mut context: inject::Context) -> Result<Self::State> {
-        let store = context.world().get_or_add_resource_store(input);
+        let store = context
+            .world()
+            .get_or_add_resource_store(R::meta, |world| match input {
+                Some(resource) => Ok(resource),
+                None => R::initialize(world),
+            })?;
         Ok(Self(store, usize::MAX, PhantomData))
     }
 }

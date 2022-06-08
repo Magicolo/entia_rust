@@ -4,15 +4,20 @@ use crate::{
     inject::{self, Get, Inject},
     query::item::{self, At, Item},
     world::{store::Store, Component, Resource, World},
+    write::Write,
 };
-use std::{marker::PhantomData, sync::Arc};
 
-pub struct Read<T>(Arc<Store>, usize, PhantomData<T>);
+pub struct Read<T>(Write<T>);
 
 impl<T> Read<T> {
     #[inline]
     pub const fn segment(&self) -> usize {
-        self.1
+        self.0.segment()
+    }
+
+    #[inline]
+    pub fn store(&self) -> &Store {
+        self.0.store()
     }
 }
 
@@ -26,12 +31,11 @@ impl<R: Resource> Inject for &R {
 }
 
 impl<R: Resource> Inject for Read<R> {
-    type Input = Option<R>;
+    type Input = <Write<R> as Inject>::Input;
     type State = Self;
 
-    fn initialize(input: Self::Input, mut context: inject::Context) -> Result<Self::State> {
-        let store = context.world().get_or_add_resource_store(input);
-        Ok(Self(store, usize::MAX, PhantomData))
+    fn initialize(input: Self::Input, context: inject::Context) -> Result<Self::State> {
+        <Write<_> as Inject>::initialize(input, context).map(Read)
     }
 }
 
@@ -55,11 +59,8 @@ impl<C: Component> Item for &C {
 impl<T: Send + Sync + 'static> Item for Read<T> {
     type State = Self;
 
-    fn initialize(mut context: item::Context) -> Result<Self::State> {
-        let meta = context.world().get_meta::<T>()?;
-        let segment = context.segment();
-        let store = segment.component_store(&meta)?;
-        Ok(Self(store, segment.index(), PhantomData))
+    fn initialize(context: item::Context) -> Result<Self::State> {
+        <Write<T> as Item>::initialize(context).map(Read)
     }
 }
 
@@ -70,7 +71,7 @@ impl<'a, T: 'static> At<'a> for Read<T> {
 
     #[inline]
     fn get(&'a self, _: &'a World) -> Self::State {
-        self.0.data()
+        self.store().data() as _
     }
 
     #[inline]
@@ -86,13 +87,13 @@ impl<'a, T: 'static> At<'a> for Read<T> {
 
 unsafe impl<T: 'static> Depend for Read<T> {
     fn depend(&self, _: &World) -> Vec<Dependency> {
-        vec![Dependency::read::<T>().at(self.1)]
+        vec![Dependency::read::<T>().at(self.segment())]
     }
 }
 
 impl<T: 'static> AsRef<T> for Read<T> {
     #[inline]
     fn as_ref(&self) -> &T {
-        unsafe { self.0.get(0) }
+        unsafe { self.store().get(0) }
     }
 }

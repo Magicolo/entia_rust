@@ -49,13 +49,6 @@ pub enum Dependency {
     Ignore(Scope, Box<Dependency>),
 }
 
-#[derive(Debug)]
-pub enum Has {
-    All,
-    None,
-    Indices(HashSet<usize>),
-}
-
 #[derive(Debug, Default)]
 pub struct Conflict {
     unknown: bool,
@@ -71,6 +64,13 @@ pub enum Error {
     WriteWriteConflict(Scope, String, Option<usize>),
     ReadDeferConflict(Scope, String, Option<usize>),
     WriteDeferConflict(Scope, String, Option<usize>),
+}
+
+#[derive(Debug)]
+enum Has {
+    All,
+    None,
+    Indices(HashSet<usize>),
 }
 
 error::error!(Error, error::Error::Depend);

@@ -1,5 +1,5 @@
 use crate::{depend, duplicate};
-use std::result;
+use std::{any::TypeId, result};
 
 #[derive(Debug)]
 pub enum Error {
@@ -7,12 +7,29 @@ pub enum Error {
     WrongSegment,
     MutexPoison,
     MissingSystem,
-    MissingEntityStore(usize),
-    MissingStore(&'static str, usize),
-    MissingMeta(&'static str),
-    MissingClone(&'static str),
-    SegmentIndexOutOfRange(usize, usize),
-    SegmentMustBeClonable(usize),
+    MissingStore {
+        name: &'static str,
+        identifier: TypeId,
+        segment: usize,
+    },
+    MissingMeta {
+        name: &'static str,
+        identifier: TypeId,
+    },
+    MissingResource {
+        name: &'static str,
+        identifier: TypeId,
+    },
+    MissingClone {
+        name: &'static str,
+    },
+    SegmentIndexOutOfRange {
+        index: usize,
+        segment: usize,
+    },
+    SegmentMustBeClonable {
+        segment: usize,
+    },
     StaticCountMustBeTrue,
     Depend(depend::Error),
     Duplicate(duplicate::Error),
