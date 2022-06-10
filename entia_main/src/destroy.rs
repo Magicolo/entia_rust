@@ -86,7 +86,7 @@ impl Resolve for Inner {
                     {
                         previous_sibling.next_sibling = datum.next_sibling;
                     } else if let Some(parent) = entities.get_datum_at_mut(datum.parent) {
-                        // Only an entity with no 'previous_sibling' can ever be the 'first_child' of its parent.
+                        // Only an entity with no 'previous_sibling' can not be the 'first_child' of its parent.
                         parent.first_child = datum.next_sibling;
                     }
 
@@ -97,8 +97,6 @@ impl Resolve for Inner {
 
                 let segment = &mut world.segments[datum.segment_index as usize];
                 if segment.remove_at(datum.store_index as usize) {
-                    // SAFETY: When it exists, the entity store is always the first. This segment must have
-                    // an entity store since the destroyed entity was in it.
                     let entity = *unsafe {
                         segment
                             .entity_store()

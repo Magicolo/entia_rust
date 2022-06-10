@@ -147,9 +147,8 @@ impl<T: Template> Inner<T> {
             return Families::EMPTY;
         }
 
-        let (index, success) = self.reserve(count, entities, world);
-        if success {
-            apply(
+        match self.reserve(count, entities, world) {
+            (_, true) => apply(
                 &self.initial_state,
                 self.initial_roots.drain(..),
                 &self.entity_roots,
@@ -157,17 +156,16 @@ impl<T: Template> Inner<T> {
                 &self.entity_indices,
                 entities,
                 &self.segment_indices,
-            );
-        } else {
-            defer.one(Defer {
+            ),
+            (index, false) => defer.one(Defer {
                 index,
                 initial_roots: self.initial_roots.drain(..).collect(),
                 entity_roots: self.entity_roots.clone(),
                 entity_instances: self.entity_instances.clone(),
                 entity_indices: self.entity_indices.clone(),
                 segment_indices: self.segment_indices.clone(),
-            });
-        }
+            }),
+        };
 
         Families::new(
             &self.entity_roots,
@@ -345,8 +343,7 @@ fn apply<T: Template>(
     entities: &mut Entities,
     segment_indices: &[SegmentIndices],
 ) {
-    for (i, root) in initial_roots.into_iter().enumerate() {
-        let (entity_root, mut entity_count) = entity_roots[i];
+    for (root, &(entity_root, mut entity_count)) in initial_roots.into_iter().zip(entity_roots) {
         root.apply(
             initial_state,
             ApplyContext::new(

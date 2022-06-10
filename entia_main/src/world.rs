@@ -487,7 +487,7 @@ pub mod segment {
                     false
                 } else {
                     for store in self.stores() {
-                        unsafe { store.squash(self.count, index) };
+                        unsafe { store.squash(self.count, index, 1) };
                     }
                     true
                 }
@@ -682,11 +682,12 @@ pub mod store {
         }
 
         /// SAFETY: Both the 'source' and 'target' indices must be within the bounds of the store.
-        pub unsafe fn squash(&self, source_index: usize, target_index: usize) {
+        /// The ranges 'source_index..source_index + count' and 'target_index..target_index + count' must not overlap.
+        pub unsafe fn squash(&self, source_index: usize, target_index: usize, count: usize) {
             let meta = self.meta();
             let pointer = self.pointer();
-            (meta.drop)(pointer, target_index, 1);
-            (meta.copy)((pointer, source_index), (pointer, target_index), 1);
+            (meta.drop)(pointer, target_index, count);
+            (meta.copy)((pointer, source_index), (pointer, target_index), count);
         }
 
         pub unsafe fn drop(&self, index: usize, count: usize) {
