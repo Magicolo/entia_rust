@@ -71,8 +71,9 @@ where
     fn update(state: &mut Self::State, mut context: inject::Context) -> Result {
         let identifier = context.identifier();
         let world = context.world();
+        let segments = world.segments();
         let inner = state.inner.as_mut();
-        while let Some(segment) = world.segments.get(inner.segments.len()) {
+        while let Some(segment) = segments.get(inner.segments.len()) {
             if F::filter(segment, world) {
                 let segment = segment.index();
                 if let Ok(item) = I::initialize(Context::new(identifier, segment, world)) {
@@ -111,7 +112,7 @@ where
         let mut dependencies = self.entities.depend(world);
         let inner = self.inner.as_ref();
         for (item, segment) in inner.states.iter() {
-            dependencies.push(Dependency::read::<Entity>().at(*segment));
+            dependencies.push(Dependency::read::<Entity>().segment(*segment));
             dependencies.append(&mut item.depend(world));
         }
         dependencies
@@ -127,8 +128,9 @@ macro_rules! iterator {
             }
 
             pub fn $each(& $($mut)? self, mut each: impl FnMut(<I::State as At<'a>>::$item)) {
+                let segments = self.world.segments();
                 for (state, segment) in &self.inner.states {
-                    let segment = &self.world.segments[*segment];
+                    let segment = &segments[*segment];
                     let $($mut)? state = state.get(self.world);
                     for i in 0..segment.count() {
                         each(I::State::$at(& $($mut)? state, i));
@@ -157,6 +159,7 @@ macro_rules! iterator {
             type Item = <I::State as At<'a>>::$item;
             type IntoIter = $t<'a, 'b, I, F>;
 
+            #[inline]
             fn into_iter(self) -> Self::IntoIter {
                 $t {
                     index: 0,
@@ -164,7 +167,7 @@ macro_rules! iterator {
                     state: None,
                     segment: 0,
                     query: self,
-                }
+               }
             }
         }
 
@@ -172,35 +175,28 @@ macro_rules! iterator {
             type Item = <I::State as At<'a>>::$item;
 
             fn next(&mut self) -> Option<Self::Item> {
-                if self.index < self.count {
-                    if let Some(state) = & $($mut)? self.state {
+                loop {
+                    if self.index < self.count {
+                        // SAFETY: In order to pass the 'self.index < self.count' check, 'self.state' had to be set.
+                        // This holds as long as 'self.count' was initialized to 0.
+                        let state = unsafe { self.state.as_mut().unwrap_unchecked() };
                         let item = I::State::$at(state, self.index);
                         self.index += 1;
-                        return Some(item);
+                        break Some(item);
+                    }
+                    else if let Some((state, segment)) = self.query.inner.states.get(self.segment) {
+                        let segments = self.query.world.segments();
+                        // SAFETY: The 'segment' index has already been checked to be in range and the 'world.segments' vector never shrinks..
+                        let segment = unsafe { segments.get_unchecked(*segment) };
+                        self.segment += 1;
+                        self.state = Some(state.get(self.query.world));
+                        self.index = 0;
+                        self.count = segment.count();
+                    }
+                    else {
+                        break None;
                     }
                 }
-
-                while let Some((state, segment)) = self.query.inner.states.get(self.segment) {
-                    let segment = &self.query.world.segments[*segment];
-                    self.segment += 1;
-                    match segment.count() {
-                        0 => continue,
-                        1 => {
-                            let $($mut)? state = state.get(self.query.world);
-                            return Some(I::State::$at(& $($mut)? state, 0));
-                        }
-                        count => {
-                            let $($mut)? state = state.get(self.query.world);
-                            let item = I::State::$at(& $($mut)? state, 0);
-                            self.index = 1;
-                            self.state = Some(state);
-                            self.count = count;
-                            return Some(item);
-                        }
-                    }
-                }
-
-                None
             }
         }
     };
@@ -245,7 +241,7 @@ pub mod item {
         }
 
         pub fn segment(&self) -> &Segment {
-            &self.world.segments[self.segment]
+            &self.world.segments()[self.segment]
         }
 
         pub fn world(&mut self) -> &mut World {

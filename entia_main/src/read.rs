@@ -57,7 +57,7 @@ impl<C: Component> Item for &C {
     type State = <Read<C> as Item>::State;
 
     fn initialize(context: item::Context) -> Result<Self::State> {
-        Read::<C>::initialize(context)
+        <Read<_> as Item>::initialize(context)
     }
 }
 
@@ -65,7 +65,7 @@ impl<T: Send + Sync + 'static> Item for Read<T> {
     type State = Self;
 
     fn initialize(context: item::Context) -> Result<Self::State> {
-        <Write<T> as Item>::initialize(context).map(Read)
+        <Write<_> as Item>::initialize(context).map(Read)
     }
 }
 
@@ -75,8 +75,8 @@ impl<'a, T: 'static> At<'a> for Read<T> {
     type Mut = Self::Ref;
 
     #[inline]
-    fn get(&'a self, _: &'a World) -> Self::State {
-        self.store().data() as _
+    fn get(&'a self, world: &'a World) -> Self::State {
+        self.0.get(world) as _
     }
 
     #[inline]
@@ -92,13 +92,13 @@ impl<'a, T: 'static> At<'a> for Read<T> {
 
 unsafe impl<T: 'static> Depend for Read<T> {
     fn depend(&self, _: &World) -> Vec<Dependency> {
-        vec![Dependency::read::<T>().at(self.segment())]
+        vec![Dependency::read::<T>().segment(self.segment())]
     }
 }
 
 impl<T: 'static> AsRef<T> for Read<T> {
     #[inline]
     fn as_ref(&self) -> &T {
-        unsafe { self.store().get(0) }
+        self.0.as_ref()
     }
 }

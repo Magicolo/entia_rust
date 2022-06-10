@@ -56,7 +56,7 @@ impl Duplicate<'_> {
             .entities
             .get_datum(entity)
             .ok_or(Error::InvalidEntity(entity))?;
-        let segment = &self.world.segments[datum.segment_index as usize];
+        let segment = &self.world.segments()[datum.segment_index as usize];
         if segment.can_clone() {
             self.segments.insert(segment.index());
             self.buffer.resize(count, Entity::NULL);
@@ -187,15 +187,16 @@ impl Resolve for Inner {
         world: &mut World,
     ) -> Result<(), error::Error> {
         let entities = self.entities.as_mut();
+        let segments = world.segments_mut();
         entities.resolve();
 
         for segment in self.segments.drain() {
-            world.segments[segment].resolve();
+            segments[segment].resolve();
         }
 
         for defer in items {
             let count = defer.entities.len();
-            let segment = &mut world.segments[defer.segment];
+            let segment = &mut segments[defer.segment];
             unsafe { segment.entity_store().set_all(defer.store, &defer.entities) };
             defer.slot.set(segment, defer.store, count);
 

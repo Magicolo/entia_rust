@@ -88,6 +88,6 @@ impl<'a> At<'a> for State {
 
 unsafe impl Depend for State {
     fn depend(&self, _: &World) -> Vec<Dependency> {
-        vec![Dependency::read::<Entity>().at(self.1)]
+        vec![Dependency::read::<Entity>().segment(self.1)]
     }
 }

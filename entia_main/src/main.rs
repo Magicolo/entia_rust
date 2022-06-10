@@ -123,9 +123,15 @@ fn main() {
                 // println!("C: {:?}", roots.len())
             },
         )
-        .add(|query: Query<Entity>, mut destroy: Destroy| query.each(|entity| destroy.one(entity)))
-        .add(|mut receive: Receive<OnDeath>, mut destroy: Destroy| destroy.all(&mut receive))
-        .add(|mut query: Query<Entity, Has<Dead>>, mut destroy: Destroy| destroy.all(&mut query))
+        .add(|query: Query<Entity>, mut destroy: Destroy| {
+            query.each(|entity| destroy.one(entity, true))
+        })
+        .add(|mut receive: Receive<OnDeath>, mut destroy: Destroy| destroy.all(&mut receive, true))
+        .add(
+            |mut query: Query<Entity, Has<Dead>>, mut destroy: Destroy| {
+                destroy.all(&mut query, true)
+            },
+        )
         .add(
             |mut receive: Receive<OnDeath>| {
                 if let Some(_message) = receive.first() {}

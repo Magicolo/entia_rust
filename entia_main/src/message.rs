@@ -110,7 +110,7 @@ pub mod emit {
 
     unsafe impl<T: 'static> Depend for State<T> {
         fn depend(&self, _: &World) -> Vec<Dependency> {
-            vec![Dependency::defer::<T>().at(self.0.segment())]
+            vec![Dependency::defer::<T>().segment(self.0.segment())]
         }
     }
 }
@@ -201,7 +201,7 @@ pub mod receive {
 
     unsafe impl<T: 'static> Depend for State<T> {
         fn depend(&self, _: &World) -> Vec<Dependency> {
-            vec![Dependency::read::<T>().at(self.1.segment())]
+            vec![Dependency::read::<T>().segment(self.1.segment())]
         }
     }
 }

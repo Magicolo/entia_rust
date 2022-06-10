@@ -45,7 +45,7 @@ pub enum Dependency {
     Read(TypeId, String),
     Write(TypeId, String),
     Defer(TypeId, String),
-    At(usize, Box<Dependency>),
+    Segment(usize, Box<Dependency>),
     Ignore(Scope, Box<Dependency>),
 }
 
@@ -92,8 +92,8 @@ impl Dependency {
     }
 
     #[inline]
-    pub fn at(self, index: usize) -> Self {
-        Self::At(index, self.into())
+    pub fn segment(self, index: usize) -> Self {
+        Self::Segment(index, self.into())
     }
 
     #[inline]
@@ -182,12 +182,12 @@ impl Conflict {
     fn conflict(
         &mut self,
         scope: Scope,
-        index: Option<usize>,
+        segment: Option<usize>,
         dependency: Dependency,
     ) -> Result<(), Error> {
         use self::{Dependency::*, Error::*, Scope::*};
 
-        match (index, dependency) {
+        match (segment, dependency) {
             (_, Unknown) => {
                 self.unknown = true;
                 if scope == Outer {
@@ -196,38 +196,38 @@ impl Conflict {
                     Ok(())
                 }
             }
-            (_, At(index, dependency)) => self.conflict(scope, Some(index), *dependency),
-            (index, Ignore(inner, dependency)) => {
+            (_, Segment(index, dependency)) => self.conflict(scope, Some(index), *dependency),
+            (segment, Ignore(inner, dependency)) => {
                 if scope == inner || inner == All {
-                    self.conflict(scope, index, *dependency)
+                    self.conflict(scope, segment, *dependency)
                 } else {
                     Ok(())
                 }
             }
-            (Some(index), Read(identifier, name)) => {
-                if has(&self.writes, identifier, index) {
-                    Err(ReadWriteConflict(scope, name, Some(index)))
-                } else if scope == Outer && has(&self.defers, identifier, index) {
-                    Err(ReadDeferConflict(scope, name, Some(index)))
+            (Some(segment), Read(identifier, name)) => {
+                if has(&self.writes, identifier, segment) {
+                    Err(ReadWriteConflict(scope, name, Some(segment)))
+                } else if scope == Outer && has(&self.defers, identifier, segment) {
+                    Err(ReadDeferConflict(scope, name, Some(segment)))
                 } else {
-                    add(&mut self.reads, identifier, index);
+                    add(&mut self.reads, identifier, segment);
                     Ok(())
                 }
             }
-            (Some(index), Write(identifier, name)) => {
-                if has(&self.reads, identifier, index) {
-                    Err(ReadWriteConflict(scope, name, Some(index)))
-                } else if has(&self.writes, identifier, index) {
-                    Err(WriteWriteConflict(scope, name, Some(index)))
-                } else if scope == Outer && has(&self.defers, identifier, index) {
-                    Err(WriteDeferConflict(scope, name, Some(index)))
+            (Some(segment), Write(identifier, name)) => {
+                if has(&self.reads, identifier, segment) {
+                    Err(ReadWriteConflict(scope, name, Some(segment)))
+                } else if has(&self.writes, identifier, segment) {
+                    Err(WriteWriteConflict(scope, name, Some(segment)))
+                } else if scope == Outer && has(&self.defers, identifier, segment) {
+                    Err(WriteDeferConflict(scope, name, Some(segment)))
                 } else {
-                    add(&mut self.writes, identifier, index);
+                    add(&mut self.writes, identifier, segment);
                     Ok(())
                 }
             }
-            (Some(index), Defer(identifier, _)) => {
-                add(&mut self.defers, identifier, index);
+            (Some(segment), Defer(identifier, _)) => {
+                add(&mut self.defers, identifier, segment);
                 Ok(())
             }
             (None, Read(identifier, name)) => {

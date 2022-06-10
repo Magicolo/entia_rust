@@ -190,7 +190,7 @@ impl<T: Template> Inner<T> {
                 continue;
             }
 
-            let segment = &world.segments[segment_indices.segment];
+            let segment = &world.segments()[segment_indices.segment];
             let pair = segment.reserve(segment_count);
             segment_indices.store = pair.0;
             success &= segment_index <= ready && pair.1 == segment_count;
@@ -295,10 +295,11 @@ impl<T: Template> Resolve for Outer<T> {
     fn resolve(&mut self, items: impl Iterator<Item = Self::Item>, world: &mut World) -> Result {
         let inner = &mut self.inner;
         let entities = self.entities.as_mut();
+        let segments = world.segments_mut();
         entities.resolve();
 
         for segment_indices in inner.segment_indices.iter() {
-            world.segments[segment_indices.segment].resolve();
+            segments[segment_indices.segment].resolve();
         }
 
         for defer in items {
@@ -309,7 +310,7 @@ impl<T: Template> Resolve for Outer<T> {
                     continue;
                 }
 
-                let segment = &mut world.segments[segment_indices.segment];
+                let segment = &mut segments[segment_indices.segment];
                 let instances = &defer.entity_instances
                     [segment_indices.index..segment_indices.index + segment_count];
                 unsafe {
@@ -383,7 +384,7 @@ unsafe impl<T: Template + 'static> Depend for State<T> {
         let state = self.0.as_ref();
         dependencies.push(Dependency::defer::<Entities>());
         for indices in state.inner.segment_indices.iter() {
-            dependencies.push(Dependency::defer::<Entity>().at(indices.segment));
+            dependencies.push(Dependency::defer::<Entity>().segment(indices.segment));
         }
         dependencies
     }

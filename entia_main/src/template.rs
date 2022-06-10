@@ -124,7 +124,7 @@ impl<'a> InitializeContext<'a> {
     }
 
     pub fn segment(&self) -> &Segment {
-        &self.world.segments[self.segment_indices[self.segment_index].segment]
+        &self.world.segments()[self.segment_indices[self.segment_index].segment]
     }
 
     pub fn owned(&mut self) -> InitializeContext {

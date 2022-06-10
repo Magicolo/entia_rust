@@ -40,7 +40,8 @@ pub struct World {
     metas: Vec<Arc<Meta>>,
     type_to_meta: HashMap<TypeId, usize>,
     resources: HashMap<TypeId, Arc<Store>>,
-    pub(crate) segments: Vec<Segment>,
+    // SAFETY: This vector may only 'push', never 'pop'; otherwise some unsafe index access may become invalid.
+    segments: Vec<Segment>,
 }
 
 pub trait Component: Sized + Send + Sync + 'static {
@@ -95,6 +96,16 @@ impl World {
     #[inline]
     pub const fn version(&self) -> usize {
         self.version
+    }
+
+    #[inline]
+    pub fn segments(&self) -> &[Segment] {
+        &self.segments
+    }
+
+    #[inline]
+    pub fn segments_mut(&mut self) -> &mut [Segment] {
+        &mut self.segments
     }
 
     pub fn set_meta(&mut self, meta: Meta) -> Arc<Meta> {

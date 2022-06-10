@@ -102,7 +102,7 @@ impl<'a, T: 'static> At<'a> for Write<T> {
 
 unsafe impl<T: 'static> Depend for Write<T> {
     fn depend(&self, _: &World) -> Vec<Dependency> {
-        vec![Dependency::write::<T>().at(self.1)]
+        vec![Dependency::write::<T>().segment(self.1)]
     }
 }
 

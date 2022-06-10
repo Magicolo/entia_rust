@@ -18,26 +18,30 @@ struct Inner {
     entities: Write<Entities>,
 }
 
-enum Defer {
-    One(Entity),
-    Family(Entity),
+struct Defer {
+    entity: Entity,
+    descendants: bool,
 }
 
 impl Destroy<'_> {
     #[inline]
-    pub fn one(&mut self, entity: impl Into<Entity>) {
-        self.0.one(Defer::One(entity.into()));
+    pub fn one(&mut self, entity: impl Into<Entity>, descendants: bool) {
+        self.0.one(Defer {
+            entity: entity.into(),
+            descendants,
+        });
     }
 
     #[inline]
-    pub fn all(&mut self, entities: impl IntoIterator<Item = impl Into<Entity>>) {
-        self.0
-            .all(entities.into_iter().map(Into::into).map(Defer::One))
-    }
-
-    #[inline]
-    pub fn family(&mut self, entity: impl Into<Entity>) {
-        self.0.one(Defer::Family(entity.into()));
+    pub fn all(
+        &mut self,
+        entities: impl IntoIterator<Item = impl Into<Entity>>,
+        descendants: bool,
+    ) {
+        self.0.all(entities.into_iter().map(|entity| Defer {
+            entity: entity.into(),
+            descendants,
+        }))
     }
 }
 
@@ -65,7 +69,7 @@ impl Resolve for Inner {
         fn destroy(
             index: u32,
             root: bool,
-            family: bool,
+            descendants: bool,
             set: &mut HashSet<Entity>,
             entities: &mut Entities,
             world: &mut World,
@@ -73,9 +77,10 @@ impl Resolve for Inner {
             // Entity index must be validated by caller.
             let datum = entities.get_datum_at(index).cloned()?;
             if set.insert(datum.entity(index)) {
-                if family {
+                if descendants {
                     let mut child = datum.first_child;
-                    while let Some(next) = destroy(child, false, family, set, entities, world) {
+                    while let Some(next) = destroy(child, false, descendants, set, entities, world)
+                    {
                         child = next;
                     }
                 }
@@ -95,7 +100,8 @@ impl Resolve for Inner {
                     }
                 }
 
-                let segment = &mut world.segments[datum.segment_index as usize];
+                let segment = &mut world.segments_mut()[datum.segment_index as usize];
+                // TODO: There may be a way to batch these removals.
                 if segment.remove_at(datum.store_index as usize) {
                     let entity = *unsafe {
                         segment
@@ -113,22 +119,25 @@ impl Resolve for Inner {
         }
 
         let entities = self.entities.as_mut();
-        let set = &mut self.set;
-
-        for defer in items {
-            match defer {
-                Defer::One(entity) if entities.has(entity) => {
-                    destroy(entity.index(), true, false, set, entities, world);
-                }
-                Defer::Family(root) if entities.has(root) => {
-                    destroy(root.index(), true, true, set, entities, world);
-                }
-                _ => {}
+        for Defer {
+            entity,
+            descendants,
+        } in items
+        {
+            if entities.has(entity) {
+                destroy(
+                    entity.index(),
+                    true,
+                    descendants,
+                    &mut self.set,
+                    entities,
+                    world,
+                );
             }
         }
 
-        if set.len() > 0 {
-            entities.release(set.drain());
+        if self.set.len() > 0 {
+            entities.release(self.set.drain());
         }
 
         Ok(())
