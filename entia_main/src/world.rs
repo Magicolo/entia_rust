@@ -11,7 +11,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt,
     iter::once,
-    mem::{needs_drop, replace, size_of, ManuallyDrop},
+    mem::{needs_drop, replace, size_of, ManuallyDrop, MaybeUninit},
     ptr::{copy, drop_in_place, slice_from_raw_parts_mut},
     slice::from_raw_parts_mut,
     sync::{
@@ -44,17 +44,24 @@ pub struct World {
 }
 
 pub trait Component: Sized + Send + Sync + 'static {
-    fn meta() -> Meta;
+    fn meta() -> Meta {
+        crate::meta!(Self)
+    }
 }
 
 pub trait Resource: Sized + Send + Sync + 'static {
-    fn meta() -> Meta;
+    fn meta() -> Meta {
+        crate::meta!(Self)
+    }
 
-    fn initialize(_: &mut World) -> Result<Self> {
-        Err(Error::MissingResource {
-            name: type_name::<Self>(),
-            identifier: TypeId::of::<Self>(),
-        })
+    fn initialize(meta: &Meta, _: &mut World) -> Result<Self> {
+        match meta.default() {
+            Some(resource) => Ok(resource),
+            None => Err(Error::MissingResource {
+                name: type_name::<Self>(),
+                identifier: TypeId::of::<Self>(),
+            }),
+        }
     }
 }
 
@@ -156,7 +163,7 @@ impl World {
     pub(crate) fn get_or_add_resource_store<
         T: Send + Sync + 'static,
         M: FnOnce() -> Meta,
-        I: FnOnce(&mut World) -> Result<T>,
+        I: FnOnce(&Meta, &mut World) -> Result<T>,
     >(
         &mut self,
         meta: M,
@@ -167,7 +174,7 @@ impl World {
         match self.resources.get(&identifier) {
             Some(store) => Ok(store.clone()),
             None => {
-                let resource = initialize(self)?;
+                let resource = initialize(&meta, self)?;
                 let store = Arc::new(Store::new(meta, 1));
                 unsafe { store.set(0, resource) };
                 self.resources.insert(identifier, store.clone());
@@ -203,9 +210,15 @@ pub mod meta {
         pub(super) free: unsafe fn(*mut (), usize, usize),
         pub(super) copy: unsafe fn((*const (), usize), (*mut (), usize), usize),
         pub(super) drop: unsafe fn(*mut (), usize, usize),
+        pub(super) defaulter: Option<Defaulter>,
         pub(super) cloner: Option<Cloner>,
         pub(super) formatter: Option<Formatter>,
         modules: HashMap<TypeId, Box<Module>>,
+    }
+
+    #[derive(Clone)]
+    pub struct Defaulter {
+        pub default: unsafe fn(target: (*mut (), usize), count: usize),
     }
 
     #[derive(Clone)]
@@ -256,6 +269,7 @@ pub mod meta {
                 } else {
                     |_, _, _| {}
                 },
+                defaulter: None,
                 cloner: None,
                 formatter: None,
                 modules: modules
@@ -263,7 +277,7 @@ pub mod meta {
                     .map(|module| (module.type_id(), module))
                     .collect(),
             };
-            meta.reset_cache();
+            meta.reset();
             meta
         }
 
@@ -286,12 +300,107 @@ pub mod meta {
         pub fn set<T: Send + Sync + 'static>(&mut self, module: T) {
             let module: Box<Module> = Box::new(module);
             self.modules.insert(TypeId::of::<T>(), module);
-            self.reset_cache();
+            self.reset();
         }
 
-        fn reset_cache(&mut self) {
+        pub fn default<T: 'static>(&self) -> Option<T> {
+            if TypeId::of::<T>() == self.identifier {
+                let defaulter = self.defaulter.as_ref()?;
+                Some(unsafe {
+                    let mut target = MaybeUninit::<T>::uninit();
+                    (defaulter.default)((target.as_mut_ptr() as _, 0), 1);
+                    target.assume_init()
+                })
+            } else {
+                None
+            }
+        }
+
+        pub fn clone<T: 'static>(&self, value: &T) -> Option<T> {
+            if TypeId::of::<T>() == self.identifier {
+                let cloner = self.cloner.as_ref()?;
+                Some(unsafe {
+                    let source = value as *const _ as _;
+                    let mut target = MaybeUninit::<T>::uninit();
+                    (cloner.clone)((source, 0), (target.as_mut_ptr() as _, 0), 1);
+                    target.assume_init()
+                })
+            } else {
+                None
+            }
+        }
+
+        pub fn format<T: 'static>(&self, value: &T) -> Option<String> {
+            if TypeId::of::<T>() == self.identifier {
+                let formatter = self.formatter.as_ref()?;
+                Some(unsafe {
+                    let source = value as *const _ as _;
+                    (formatter.format)(source, 0)
+                })
+            } else {
+                None
+            }
+        }
+
+        fn reset(&mut self) {
+            self.defaulter = self.get().cloned();
             self.cloner = self.get().cloned();
             self.formatter = self.get().cloned();
+        }
+    }
+
+    impl Defaulter {
+        pub fn new<T: Default>() -> Self {
+            Self {
+                default: |target, count| unsafe {
+                    let target = target.0.cast::<T>().add(target.1);
+                    for i in 0..count {
+                        target.add(i).write(T::default());
+                    }
+                },
+            }
+        }
+    }
+
+    impl<T: Default> Maybe<Defaulter> for Wrap<Defaulter, T> {
+        fn maybe(self) -> Option<Defaulter> {
+            Some(Defaulter::new::<T>())
+        }
+    }
+
+    impl Cloner {
+        pub fn new<T: Clone>() -> Self {
+            Self {
+                clone: if size_of::<T>() > 0 {
+                    |source, target, count| unsafe {
+                        let source = source.0.cast::<T>().add(source.1);
+                        let target = target.0.cast::<T>().add(target.1);
+                        // Use 'ptd::write' to prevent the old value from being dropped since it is expected to be already
+                        // dropped or uninitialized.
+                        for i in 0..count {
+                            let source = &*source.add(i);
+                            target.add(i).write(source.clone());
+                        }
+                    }
+                } else {
+                    // TODO: What about implementations of 'Clone' that have side-effects?
+                    |_, _, _| {}
+                },
+                fill: if size_of::<T>() > 0 {
+                    |source, target, count| unsafe {
+                        let source = &*source.0.cast::<T>().add(source.1);
+                        let target = target.0.cast::<T>().add(target.1);
+                        // Use 'ptd::write' to prevent the old value from being dropped since it is expected to be already
+                        // dropped or uninitialized.
+                        for i in 0..count {
+                            target.add(i).write(source.clone());
+                        }
+                    }
+                } else {
+                    // TODO: What about implementations of 'Clone' that have side-effects?
+                    |_, _, _| {}
+                },
+            }
         }
     }
 
@@ -301,60 +410,17 @@ pub mod meta {
         }
     }
 
-    impl<T: fmt::Debug> Maybe<Formatter> for Wrap<Formatter, T> {
-        fn maybe(self) -> Option<Formatter> {
-            Some(Formatter::new::<T>())
-        }
-    }
-
-    impl Cloner {
-        pub fn new<T: Clone>() -> Self {
-            Self {
-                clone: if size_of::<T>() > 0 {
-                    |source, target, count| unsafe {
-                        if count > 0 {
-                            let source = source.0.cast::<T>().add(source.1);
-                            let target = target.0.cast::<T>().add(target.1);
-                            // Use 'ptd::write' to prevent the old value from being dropped since it is expected to be already
-                            // dropped or uninitialized.
-                            for i in 0..count {
-                                let source = &*source.add(i);
-                                target.add(i).write(source.clone());
-                            }
-                        }
-                    }
-                } else {
-                    // TODO: What about implementations of 'Clone' that have side-effects?
-                    |_, _, _| {}
-                },
-                fill: if size_of::<T>() > 0 {
-                    |source, target, count| unsafe {
-                        if count > 0 {
-                            let source = &*source.0.cast::<T>().add(source.1);
-                            let target = target.0.cast::<T>().add(target.1);
-                            // Use 'ptd::write' to prevent the old value from being dropped since it is expected to be already
-                            // dropped or uninitialized.
-                            for i in 0..count {
-                                target.add(i).write(source.clone());
-                            }
-                        }
-                    }
-                } else {
-                    // TODO: What about implementations of 'Clone' that have side-effects?
-                    |_, _, _| {}
-                },
-            }
-        }
-    }
-
     impl Formatter {
         pub fn new<T: fmt::Debug>() -> Self {
             Self {
-                format: |source, index| unsafe {
-                    let source = &*source.cast::<T>().add(index);
-                    format!("{:?}", source)
-                },
+                format: |source, index| unsafe { format!("{:?}", &*source.cast::<T>().add(index)) },
             }
+        }
+    }
+
+    impl<T: fmt::Debug> Maybe<Formatter> for Wrap<Formatter, T> {
+        fn maybe(self) -> Option<Formatter> {
+            Some(Formatter::new::<T>())
         }
     }
 
@@ -370,6 +436,10 @@ pub mod meta {
             use $crate::core::Maybe;
 
             let mut modules: Vec<Box<dyn Any + Send + Sync + 'static>> = Vec::new();
+            type Defaulter<T> = $crate::core::Wrap<$crate::world::meta::Defaulter, T>;
+            if let Some(module) = Defaulter::<$t>::default().maybe() {
+                modules.push(std::boxed::Box::new(module));
+            }
             type Cloner<T> = $crate::core::Wrap<$crate::world::meta::Cloner, T>;
             if let Some(module) = Cloner::<$t>::default().maybe() {
                 modules.push(std::boxed::Box::new(module));
@@ -572,7 +642,7 @@ pub mod segment {
 pub mod store {
     use super::*;
 
-    pub struct Store(pub(super) Arc<Meta>, UnsafeCell<*mut ()>);
+    pub struct Store(Arc<Meta>, UnsafeCell<*mut ()>);
 
     // SAFETY: 'Sync' and 'Send' can be implemented for 'Store' because this crate ensures its proper usage. Other users
     // of this type must fulfill the safety requirements of its unsafe methods.

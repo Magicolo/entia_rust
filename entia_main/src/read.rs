@@ -3,7 +3,7 @@ use crate::{
     error::Result,
     inject::{self, Get, Inject},
     query::item::{self, At, Item},
-    world::{store::Store, Component, Resource, World},
+    world::{meta::Meta, store::Store, Component, Resource, World},
     write::Write,
 };
 
@@ -18,6 +18,11 @@ impl<T> Read<T> {
     #[inline]
     pub fn store(&self) -> &Store {
         self.0.store()
+    }
+
+    #[inline]
+    pub fn meta(&self) -> &Meta {
+        self.0.meta()
     }
 }
 

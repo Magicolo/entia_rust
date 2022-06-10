@@ -1,14 +1,24 @@
-use crate::{self as entia, entity::Entity, Resource};
+use crate::{
+    entity::Entity,
+    error,
+    world::{meta::Meta, World},
+    Resource,
+};
 use std::{
     cmp::{max, min},
     mem::replace,
     sync::atomic::{AtomicIsize, AtomicUsize, Ordering},
 };
 
-#[derive(Resource)]
 pub struct Entities {
     free: (Vec<Entity>, AtomicIsize),
     data: (Vec<Datum>, AtomicUsize),
+}
+
+impl Resource for Entities {
+    fn initialize(_: &Meta, _: &mut World) -> error::Result<Self> {
+        Ok(Self::new(32))
+    }
 }
 
 #[derive(Clone)]
@@ -602,12 +612,5 @@ impl Entities {
         }
 
         Some(())
-    }
-}
-
-impl Default for Entities {
-    #[inline]
-    fn default() -> Self {
-        Self::new(32)
     }
 }

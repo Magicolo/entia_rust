@@ -1,6 +1,5 @@
 use self::{filter::*, item::*};
 use crate::{
-    self as entia,
     depend::{Depend, Dependency},
     entities::Entities,
     entity::Entity,
@@ -8,7 +7,7 @@ use crate::{
     inject::{self, Get, Inject},
     read::Read,
     recurse,
-    world::{segment::Segment, World},
+    world::{meta::Meta, segment::Segment, World},
     write::Write,
     Resource,
 };
@@ -30,20 +29,19 @@ pub struct State<I: Item, F> {
     pub(crate) entities: Read<Entities>,
 }
 
-#[derive(Resource)]
 pub struct Inner<S, F> {
     pub(crate) segments: Vec<Option<usize>>,
     pub(crate) states: Vec<(S, usize)>,
     _marker: PhantomData<fn(F)>,
 }
 
-impl<S, F> Default for Inner<S, F> {
-    fn default() -> Self {
-        Self {
+impl<S: Send + Sync + 'static, F: 'static> Resource for Inner<S, F> {
+    fn initialize(_: &Meta, _: &mut World) -> Result<Self> {
+        Ok(Self {
             segments: Vec::new(),
             states: Vec::new(),
             _marker: PhantomData,
-        }
+        })
     }
 }
 

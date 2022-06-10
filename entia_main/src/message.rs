@@ -1,5 +1,4 @@
 use crate::{
-    self as entia,
     depend::{Depend, Dependency},
     error::Result,
     inject::{Context, Get, Inject},
@@ -10,19 +9,20 @@ use crate::{
 use std::{collections::VecDeque, iter::FusedIterator};
 
 pub trait Message: Sized + Clone + Send + Sync + 'static {
-    fn meta() -> Meta;
+    fn meta() -> Meta {
+        crate::meta!(Self)
+    }
 }
 
 struct Queue<T>(usize, VecDeque<T>);
 
-#[derive(Resource)]
 struct Inner<T> {
     pub queues: Vec<Queue<T>>,
 }
 
-impl<T> Default for Inner<T> {
-    fn default() -> Self {
-        Self { queues: Vec::new() }
+impl<T: Send + Sync + 'static> Resource for Inner<T> {
+    fn initialize(_: &Meta, _: &mut World) -> Result<Self> {
+        Ok(Self { queues: Vec::new() })
     }
 }
 

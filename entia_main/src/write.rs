@@ -3,7 +3,7 @@ use crate::{
     error::Result,
     inject::{self, Get, Inject},
     query::item::{self, At, Item},
-    world::{store::Store, Component, Resource, World},
+    world::{meta::Meta, store::Store, Component, Resource, World},
 };
 use std::{marker::PhantomData, sync::Arc};
 
@@ -18,6 +18,11 @@ impl<T> Write<T> {
     #[inline]
     pub fn store(&self) -> &Store {
         &self.0
+    }
+
+    #[inline]
+    pub fn meta(&self) -> &Meta {
+        self.store().meta()
     }
 }
 
@@ -35,12 +40,13 @@ impl<R: Resource> Inject for Write<R> {
     type State = Self;
 
     fn initialize(input: Self::Input, mut context: inject::Context) -> Result<Self::State> {
-        let store = context
-            .world()
-            .get_or_add_resource_store(R::meta, |world| match input {
-                Some(resource) => Ok(resource),
-                None => R::initialize(world),
-            })?;
+        let store =
+            context
+                .world()
+                .get_or_add_resource_store(R::meta, |meta, world| match input {
+                    Some(resource) => Ok(resource),
+                    None => R::initialize(meta, world),
+                })?;
         Ok(Self(store, usize::MAX, PhantomData))
     }
 }

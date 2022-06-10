@@ -24,27 +24,34 @@ pub struct System {
     pub(crate) depend: Box<dyn Fn(&World) -> Vec<Dependency> + Send>,
 }
 
-pub trait IntoSystem<'a, I, M = ()> {
-    fn system(self, input: I, world: &mut World) -> Result<System>;
+pub trait IntoSystem<'a, M = ()> {
+    type Input;
+    fn system(self, input: Self::Input, world: &mut World) -> Result<System>;
 }
 
-impl<S: Into<System>> IntoSystem<'_, ()> for S {
-    fn system(self, _: (), _: &mut World) -> Result<System> {
+impl<S: Into<System>> IntoSystem<'_> for S {
+    type Input = ();
+
+    fn system(self, _: Self::Input, _: &mut World) -> Result<System> {
         Ok(self.into())
     }
 }
 
-impl<I, S> IntoSystem<'_, (), (I, S)> for (I, S)
+impl<I, S> IntoSystem<'_, (I, S)> for (I, S)
 where
     (I, S): Into<System>,
 {
-    fn system(self, _: (), _: &mut World) -> Result<System> {
+    type Input = ();
+
+    fn system(self, _: Self::Input, _: &mut World) -> Result<System> {
         Ok(self.into())
     }
 }
 
-impl<'a, I, M, S: IntoSystem<'a, I, M>> IntoSystem<'a, I, (I, M, S)> for Option<S> {
-    fn system(self, input: I, world: &mut World) -> Result<System> {
+impl<'a, M, S: IntoSystem<'a, M>> IntoSystem<'a, (M, S)> for Option<S> {
+    type Input = S::Input;
+
+    fn system(self, input: Self::Input, world: &mut World) -> Result<System> {
         match self {
             Some(system) => system.system(input, world),
             None => Err(Error::MissingSystem),
@@ -52,10 +59,10 @@ impl<'a, I, M, S: IntoSystem<'a, I, M>> IntoSystem<'a, I, (I, M, S)> for Option<
     }
 }
 
-impl<'a, I, M, S: IntoSystem<'a, I, M>, E: Into<Error>> IntoSystem<'a, I, (I, M, S)>
-    for result::Result<S, E>
-{
-    fn system(self, input: I, world: &mut World) -> Result<System> {
+impl<'a, M, S: IntoSystem<'a, M>, E: Into<Error>> IntoSystem<'a, (M, S)> for result::Result<S, E> {
+    type Input = S::Input;
+
+    fn system(self, input: Self::Input, world: &mut World) -> Result<System> {
         match self {
             Ok(system) => system.system(input, world),
             Err(error) => Err(error.into()),
@@ -68,10 +75,12 @@ impl<
         I: Inject,
         O: IntoOutput,
         C: Call<I, O> + Call<<I::State as Get<'a>>::Item, O> + Send + 'static,
-    > IntoSystem<'a, I::Input, (I, O, C)> for C
+    > IntoSystem<'a, (I, O, C)> for C
 where
     I::State: Send + 'static,
 {
+    type Input = I::Input;
+
     fn system(self, input: I::Input, world: &mut World) -> Result<System> {
         let identifier = World::reserve();
         let state = I::initialize(input, Context::new(identifier, world))?;
@@ -161,9 +170,8 @@ impl fmt::Debug for System {
 }
 
 pub mod runner {
-    use std::{mem::replace, sync::Mutex};
-
     use super::*;
+    use std::{mem::replace, sync::Mutex};
 
     pub struct Runner {
         identifier: usize,
@@ -329,11 +337,14 @@ pub mod schedule {
             }
         }
 
-        pub fn run<I: Default, M, S: for<'a> IntoSystem<'a, I, M>>(&mut self, system: S) -> Result {
+        pub fn run<I: Default, M, S: for<'a> IntoSystem<'a, M, Input = I>>(
+            &mut self,
+            system: S,
+        ) -> Result {
             self.scheduler().add(system).schedule()?.run(self)
         }
 
-        pub fn run_with<I, M, S: for<'a> IntoSystem<'a, I, M>>(
+        pub fn run_with<I, M, S: for<'a> IntoSystem<'a, M, Input = I>>(
             &mut self,
             input: I,
             system: S,
@@ -350,11 +361,11 @@ pub mod schedule {
             self.with_prefix::<F, _>(schedule)
         }
 
-        pub fn add<I: Default, M, S: IntoSystem<'a, I, M>>(self, system: S) -> Self {
+        pub fn add<I: Default, M, S: IntoSystem<'a, M, Input = I>>(self, system: S) -> Self {
             self.add_with(I::default(), system)
         }
 
-        pub fn add_with<I, M, S: IntoSystem<'a, I, M>>(self, input: I, system: S) -> Self {
+        pub fn add_with<I, M, S: IntoSystem<'a, M, Input = I>>(self, input: I, system: S) -> Self {
             self.with_prefix::<S, _>(|mut scheduler| {
                 let system = system.system(input, scheduler.world).map(|mut system| {
                     system.name.insert_str(0, &scheduler.prefix);

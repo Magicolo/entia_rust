@@ -1,9 +1,8 @@
 use crate::{
-    self as entia,
     depend::Depend,
     error::Result,
     inject::{Context, Get, Inject},
-    world::World,
+    world::{meta::Meta, World},
     write::Write,
     Resource,
 };
@@ -22,10 +21,18 @@ pub struct State<T> {
     _marker: PhantomData<fn(T)>,
 }
 
-#[derive(Resource, Default)]
 struct Inner {
     states: Vec<Box<dyn Any + Send + Sync>>,
     indices: HashMap<(usize, TypeId), usize>,
+}
+
+impl Resource for Inner {
+    fn initialize(_: &Meta, _: &mut World) -> Result<Self> {
+        Ok(Self {
+            states: Vec::new(),
+            indices: HashMap::new(),
+        })
+    }
 }
 
 impl<T: Default + Send + Sync + 'static> Inject for Local<'_, T> {
