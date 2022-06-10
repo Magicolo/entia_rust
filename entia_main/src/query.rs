@@ -71,9 +71,8 @@ where
     fn update(state: &mut Self::State, mut context: inject::Context) -> Result {
         let identifier = context.identifier();
         let world = context.world();
-        let segments = world.segments();
         let inner = state.inner.as_mut();
-        while let Some(segment) = segments.get(inner.segments.len()) {
+        while let Some(segment) = world.segments().get(inner.segments.len()) {
             if F::filter(segment, world) {
                 let segment = segment.index();
                 if let Ok(item) = I::initialize(Context::new(identifier, segment, world)) {
