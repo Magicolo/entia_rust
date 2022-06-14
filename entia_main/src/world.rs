@@ -186,7 +186,7 @@ impl World {
             Some(store) => Ok(store.clone()),
             None => {
                 let resource = initialize(&meta, self)?;
-                let store = Arc::new(Store::new(meta, 1));
+                let store = Arc::new(unsafe { Store::new(meta, 1) });
                 unsafe { store.set(0, resource) };
                 self.resources.insert(identifier, store.clone());
                 Ok(store)
@@ -497,7 +497,7 @@ pub mod segment {
                 .iter()
                 .find_map(|meta| {
                     if meta.identifier() == TypeId::of::<Entity>() {
-                        Some(Arc::new(Store::new(meta.clone(), capacity)))
+                        Some(Arc::new(unsafe { Store::new(meta.clone(), capacity) }))
                     } else {
                         None
                     }
@@ -508,7 +508,7 @@ pub mod segment {
             let component_stores: Box<_> = metas
                 .iter()
                 .filter(|meta| types.contains(&meta.identifier()))
-                .map(|meta| Arc::new(Store::new(meta.clone(), capacity)))
+                .map(|meta| Arc::new(unsafe { Store::new(meta.clone(), capacity) }))
                 .collect();
             let mut flags = Flag::None.flags();
             if component_stores
@@ -657,7 +657,8 @@ pub mod store {
     unsafe impl Send for Store {}
 
     impl Store {
-        pub(crate) fn new(meta: Arc<Meta>, capacity: usize) -> Self {
+        /// SAFETY: Owner of the 'Store' is responsible to track its 'count' and 'capacity' and to call 'free' whenever it is dropped.
+        pub(crate) unsafe fn new(meta: Arc<Meta>, capacity: usize) -> Self {
             let pointer = (meta.allocate)(capacity);
             Self(meta, pointer.into())
         }
@@ -692,15 +693,15 @@ pub mod store {
         ) -> Result {
             debug_assert_eq!(source.0.meta().identifier(), target.0.meta().identifier());
             let metas = (source.0.meta(), target.0.meta());
-            let error = Error::MissingClone {
-                name: metas.0.name(),
-            };
-            let cloner = metas
-                .0
-                .cloner
-                .as_ref()
-                .or(metas.1.cloner.as_ref())
-                .ok_or(error)?;
+            let cloners = (
+                metas.0.cloner.as_ref().ok_or(Error::MissingClone {
+                    name: metas.0.name(),
+                }),
+                metas.1.cloner.as_ref().ok_or(Error::MissingClone {
+                    name: metas.1.name(),
+                }),
+            );
+            let cloner = cloners.0.or(cloners.1)?;
             (cloner.clone)(
                 (source.0 .1.get(), source.1),
                 (target.0 .1.get(), target.1),
@@ -732,10 +733,14 @@ pub mod store {
 
         #[inline]
         pub unsafe fn chunk(&self, index: usize, count: usize) -> Result<Self> {
-            debug_assert!(self.meta().cloner.is_some());
             let store = Self::new(self.0.clone(), count);
-            Self::clone((self, index), (&store, 0), count)?;
-            Ok(store)
+            match Self::clone((self, index), (&store, 0), count) {
+                Ok(_) => Ok(store),
+                Err(error) => {
+                    store.free(0, count);
+                    Err(error)
+                }
+            }
         }
 
         /// SAFETY: The 'index' must be within the bounds of the store.
