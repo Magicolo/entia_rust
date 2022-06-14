@@ -51,7 +51,7 @@ impl<R: Resource> Inject for Write<R> {
     }
 }
 
-impl<'a, T: 'static> Get<'a> for Write<T> {
+impl<'a, T: Send + Sync + 'static> Get<'a> for Write<T> {
     type Item = <Self as At<'a>>::Mut;
 
     #[inline]
@@ -79,7 +79,7 @@ impl<T: Send + Sync + 'static> Item for Write<T> {
     }
 }
 
-impl<'a, T: 'static> At<'a> for Write<T> {
+impl<'a, T: Send + Sync + 'static> At<'a> for Write<T> {
     type State = *mut T;
     type Ref = &'a T;
     type Mut = &'a mut T;
@@ -106,14 +106,14 @@ unsafe impl<T: 'static> Depend for Write<T> {
     }
 }
 
-impl<T: 'static> AsRef<T> for Write<T> {
+impl<T: Send + Sync + 'static> AsRef<T> for Write<T> {
     #[inline]
     fn as_ref(&self) -> &T {
         unsafe { self.0.get(0) }
     }
 }
 
-impl<T: 'static> AsMut<T> for Write<T> {
+impl<T: Send + Sync + 'static> AsMut<T> for Write<T> {
     #[inline]
     fn as_mut(&mut self) -> &mut T {
         unsafe { self.0.get(0) }

@@ -190,7 +190,7 @@ pub mod receive {
         }
     }
 
-    impl<'a, T: 'static> Get<'a> for State<T> {
+    impl<'a, T: Send + Sync + 'static> Get<'a> for State<T> {
         type Item = Receive<'a, T>;
 
         #[inline]

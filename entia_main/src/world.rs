@@ -6,7 +6,7 @@ use crate::{
 use entia_core::{utility::next_power_of_2, Flags, IntoFlags, Maybe, Wrap};
 use std::{
     any::{type_name, Any, TypeId},
-    cell::UnsafeCell,
+    cell::Cell,
     cmp::min,
     collections::{HashMap, HashSet},
     fmt,
@@ -649,7 +649,7 @@ pub mod segment {
 pub mod store {
     use super::*;
 
-    pub struct Store(Arc<Meta>, UnsafeCell<*mut ()>);
+    pub struct Store(Arc<Meta>, Cell<*mut ()>);
 
     // SAFETY: 'Sync' and 'Send' can be implemented for 'Store' because this crate ensures its proper usage. Other users
     // of this type must fulfill the safety requirements of its unsafe methods.
@@ -667,17 +667,19 @@ pub mod store {
             &self.0
         }
 
+        /// In order to be consistent with the requirements of 'Meta::new', 'T' is required to be 'Send + Sync'.
         #[inline]
-        pub fn data<T: 'static>(&self) -> *mut T {
+        pub fn data<T: Send + Sync + 'static>(&self) -> *mut T {
             debug_assert_eq!(TypeId::of::<T>(), self.meta().identifier());
-            self.pointer().cast()
+            self.1.get().cast()
         }
 
+        #[inline]
         pub unsafe fn copy(source: (&Self, usize), target: (&Self, usize), count: usize) {
             debug_assert_eq!(source.0.meta().identifier(), target.0.meta().identifier());
             (source.0.meta().copy)(
-                (source.0.pointer(), source.1),
-                (target.0.pointer(), target.1),
+                (source.0 .1.get(), source.1),
+                (target.0 .1.get(), target.1),
                 count,
             );
         }
@@ -700,8 +702,8 @@ pub mod store {
                 .or(metas.1.cloner.as_ref())
                 .ok_or(error)?;
             (cloner.clone)(
-                (source.0.pointer(), source.1),
-                (target.0.pointer(), target.1),
+                (source.0 .1.get(), source.1),
+                (target.0 .1.get(), target.1),
                 count,
             );
             Ok(())
@@ -721,13 +723,14 @@ pub mod store {
                 .or(metas.1.cloner.as_ref())
                 .ok_or(error)?;
             (cloner.fill)(
-                (source.0.pointer(), source.1),
-                (target.0.pointer(), target.1),
+                (source.0 .1.get(), source.1),
+                (target.0 .1.get(), target.1),
                 count,
             );
             Ok(())
         }
 
+        #[inline]
         pub unsafe fn chunk(&self, index: usize, count: usize) -> Result<Self> {
             debug_assert!(self.meta().cloner.is_some());
             let store = Self::new(self.0.clone(), count);
@@ -736,20 +739,28 @@ pub mod store {
         }
 
         /// SAFETY: The 'index' must be within the bounds of the store.
-        pub unsafe fn get<T: 'static>(&self, index: usize) -> &mut T {
+        #[inline]
+        pub unsafe fn get<T: Send + Sync + 'static>(&self, index: usize) -> &mut T {
             &mut *self.data::<T>().add(index)
         }
 
         /// SAFETY: Both 'index' and 'count' must be within the bounds of the store.
-        pub unsafe fn get_all<T: 'static>(&self, index: usize, count: usize) -> &mut [T] {
+        #[inline]
+        pub unsafe fn get_all<T: Send + Sync + 'static>(
+            &self,
+            index: usize,
+            count: usize,
+        ) -> &mut [T] {
             from_raw_parts_mut(self.data::<T>().add(index), count)
         }
 
-        pub unsafe fn set<T: 'static>(&self, index: usize, item: T) {
+        #[inline]
+        pub unsafe fn set<T: Send + Sync + 'static>(&self, index: usize, item: T) {
             self.data::<T>().add(index).write(item);
         }
 
-        pub unsafe fn set_all<T: 'static>(&self, index: usize, items: &[T])
+        #[inline]
+        pub unsafe fn set_all<T: Send + Sync + 'static>(&self, index: usize, items: &[T])
         where
             T: Copy,
         {
@@ -760,33 +771,31 @@ pub mod store {
 
         /// SAFETY: Both the 'source' and 'target' indices must be within the bounds of the store.
         /// The ranges 'source_index..source_index + count' and 'target_index..target_index + count' must not overlap.
+        #[inline]
         pub unsafe fn squash(&self, source_index: usize, target_index: usize, count: usize) {
             let meta = self.meta();
-            let pointer = self.pointer();
+            let pointer = self.1.get();
             (meta.drop)(pointer, target_index, count);
             (meta.copy)((pointer, source_index), (pointer, target_index), count);
         }
 
+        #[inline]
         pub unsafe fn drop(&self, index: usize, count: usize) {
-            (self.meta().drop)(self.pointer(), index, count);
+            (self.meta().drop)(self.1.get(), index, count);
         }
 
+        #[inline]
         pub unsafe fn free(&self, count: usize, capacity: usize) {
-            (self.meta().free)(self.pointer(), count, capacity);
+            (self.meta().free)(self.1.get(), count, capacity);
         }
 
         pub unsafe fn resize(&self, old_capacity: usize, new_capacity: usize) {
             let meta = self.meta();
-            let old_pointer = self.pointer();
+            let old_pointer = self.1.get();
             let new_pointer = (self.meta().allocate)(new_capacity);
             (meta.copy)((old_pointer, 0), (new_pointer, 0), old_capacity);
             (meta.free)(old_pointer, 0, old_capacity);
-            *self.1.get() = new_pointer;
-        }
-
-        #[inline]
-        fn pointer(&self) -> *mut () {
-            unsafe { *self.1.get() }
+            self.1.set(new_pointer);
         }
     }
 }

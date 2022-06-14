@@ -44,7 +44,7 @@ impl<R: Resource> Inject for Read<R> {
     }
 }
 
-impl<'a, T: 'static> Get<'a> for Read<T> {
+impl<'a, T: Send + Sync + 'static> Get<'a> for Read<T> {
     type Item = <Self as At<'a>>::Mut;
 
     #[inline]
@@ -69,7 +69,7 @@ impl<T: Send + Sync + 'static> Item for Read<T> {
     }
 }
 
-impl<'a, T: 'static> At<'a> for Read<T> {
+impl<'a, T: Send + Sync + 'static> At<'a> for Read<T> {
     type State = *const T;
     type Ref = &'a T;
     type Mut = Self::Ref;
@@ -96,7 +96,7 @@ unsafe impl<T: 'static> Depend for Read<T> {
     }
 }
 
-impl<T: 'static> AsRef<T> for Read<T> {
+impl<T: Send + Sync + 'static> AsRef<T> for Read<T> {
     #[inline]
     fn as_ref(&self) -> &T {
         self.0.as_ref()

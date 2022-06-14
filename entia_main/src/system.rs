@@ -17,7 +17,7 @@ use std::{
 
 pub struct System {
     identifier: usize,
-    name: String, // TODO: Replace with 'Lazy<String>'
+    name: String,
     pub(crate) run: Box<dyn FnMut(&World) -> Result + Send>,
     pub(crate) update: Box<dyn FnMut(&mut World) -> Result + Send>,
     pub(crate) resolve: Box<dyn FnMut(&mut World) -> Result + Send>,

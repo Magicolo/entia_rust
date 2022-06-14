@@ -89,7 +89,7 @@ where
 
 impl<'a, I: Item, F: 'static> Get<'a> for State<I, F>
 where
-    I::State: 'static,
+    I::State: Send + Sync + 'static,
 {
     type Item = Query<'a, I, F>;
 
@@ -105,7 +105,7 @@ where
 
 unsafe impl<I: Item, F: 'static> Depend for State<I, F>
 where
-    I::State: 'static,
+    I::State: Send + Sync + 'static,
 {
     fn depend(&self, world: &World) -> Vec<Dependency> {
         let mut dependencies = self.entities.depend(world);
