@@ -44,16 +44,9 @@ fn data<'a>(input: TokenStream, path: impl IntoIterator<Item = &'a str>) -> Toke
             static_bound(ident.span()),
         ],
     ));
-    let meta_path = full_path(ident.span(), ["entia", "world", "meta", "Meta"]);
-    let meta_macro_path = full_path(ident.span(), ["entia", "meta"]);
-
     let code = quote! {
         #[automatically_derived]
-        impl #impl_generics #path for #ident #type_generics #where_clauses {
-            fn meta() -> #meta_path {
-                #meta_macro_path!(Self)
-            }
-        }
+        impl #impl_generics #path for #ident #type_generics #where_clauses { }
     };
     code.into()
 }
