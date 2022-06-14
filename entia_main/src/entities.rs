@@ -53,11 +53,10 @@ impl Datum {
         next_sibling: u32::MAX,
     };
 
-    pub fn initialize(
+    #[inline]
+    pub fn pre_initialize(
         &mut self,
         generation: u32,
-        store_index: u32,
-        segment_index: u32,
         parent: Option<u32>,
         first_child: Option<u32>,
         last_child: Option<u32>,
@@ -67,8 +66,8 @@ impl Datum {
         if self.released() {
             *self = Datum {
                 generation,
-                store_index,
-                segment_index,
+                store_index: u32::MAX,
+                segment_index: u32::MAX,
                 parent: parent.unwrap_or(u32::MAX),
                 first_child: first_child.unwrap_or(u32::MAX),
                 last_child: last_child.unwrap_or(u32::MAX),
@@ -81,16 +80,29 @@ impl Datum {
         }
     }
 
-    pub fn update(&mut self, datum: &Self) -> bool {
-        if self.initialized() && datum.initialized() {
-            self.store_index = datum.store_index;
-            self.segment_index = datum.segment_index;
+    #[inline]
+    pub fn post_initialize(&mut self, store_index: u32, segment_index: u32) -> bool {
+        if self.released() {
+            self.store_index = store_index;
+            self.segment_index = segment_index;
             true
         } else {
             false
         }
     }
 
+    #[inline]
+    pub fn update(&mut self, store_index: u32, segment_index: u32) -> bool {
+        if self.initialized() {
+            self.store_index = store_index;
+            self.segment_index = segment_index;
+            true
+        } else {
+            false
+        }
+    }
+
+    #[inline]
     pub fn release(&mut self) -> bool {
         if self.initialized() {
             self.store_index = u32::MAX;
@@ -121,6 +133,7 @@ impl Datum {
         Entity::new(index, self.generation)
     }
 
+    #[inline]
     fn reject(&mut self) -> (u32, u32, u32) {
         (
             replace(&mut self.parent, u32::MAX),

@@ -42,6 +42,7 @@ pub struct ApplyContext<'a> {
     entities: &'a mut Entities,
     store_index: usize,
     segment_indices: &'a [SegmentIndices],
+    post: &'a mut Vec<(u32, u32, u32)>,
 }
 
 pub trait Template {
@@ -233,6 +234,7 @@ impl<'a> ApplyContext<'a> {
         entities: &'a mut Entities,
         store_index: usize,
         segment_indices: &'a [SegmentIndices],
+        post: &'a mut Vec<(u32, u32, u32)>,
     ) -> Self {
         Self {
             entity_root,
@@ -245,6 +247,7 @@ impl<'a> ApplyContext<'a> {
             entities,
             store_index,
             segment_indices,
+            post,
         }
     }
 
@@ -281,6 +284,7 @@ impl<'a> ApplyContext<'a> {
             self.entities,
             self.store_index,
             self.segment_indices,
+            self.post,
         )
     }
 
@@ -302,6 +306,7 @@ impl<'a> ApplyContext<'a> {
             self.entities,
             store_index,
             self.segment_indices,
+            self.post,
         )
     }
 
@@ -326,7 +331,7 @@ impl<'a> ApplyContext<'a> {
         }
 
         if let Some(parent) = entity_parent {
-            let parent = &mut self.entities.get_datum_at_mut(parent).unwrap();
+            let parent = self.entities.get_datum_at_mut(parent).unwrap();
             if entity_previous_sibling.is_none() {
                 parent.first_child = entity_instance.index();
             }
@@ -335,13 +340,16 @@ impl<'a> ApplyContext<'a> {
             }
         }
 
+        self.post.push((
+            entity_instance.index(),
+            store_index as u32,
+            segment_index as u32,
+        ));
         self.entities
             .get_datum_at_mut(entity_instance.index())
             .expect("Entity index must be in range.")
-            .initialize(
+            .pre_initialize(
                 entity_instance.generation(),
-                store_index as u32,
-                segment_index as u32,
                 entity_parent,
                 None,
                 None,

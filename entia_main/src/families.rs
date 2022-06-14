@@ -103,7 +103,11 @@ pub mod adopt {
     impl Resolve for Inner {
         type Item = Defer;
 
-        fn resolve(&mut self, items: impl Iterator<Item = Self::Item>, _: &mut World) -> Result {
+        fn resolve(
+            &mut self,
+            items: impl ExactSizeIterator<Item = Self::Item>,
+            _: &mut World,
+        ) -> Result {
             let entities = self.0.as_mut();
             for defer in items {
                 match defer {
@@ -191,7 +195,11 @@ pub mod reject {
     impl Resolve for Inner {
         type Item = Defer;
 
-        fn resolve(&mut self, items: impl Iterator<Item = Self::Item>, _: &mut World) -> Result {
+        fn resolve(
+            &mut self,
+            items: impl ExactSizeIterator<Item = Self::Item>,
+            _: &mut World,
+        ) -> Result {
             let entities = self.0.as_mut();
             for defer in items {
                 match defer {

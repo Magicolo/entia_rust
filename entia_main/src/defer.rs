@@ -1,28 +1,40 @@
-use std::{any::Any, collections::VecDeque, marker::PhantomData};
+use std::{
+    any::Any,
+    collections::{HashMap, VecDeque},
+    marker::PhantomData,
+    mem::replace,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use crate::{
     depend::{Depend, Dependency},
     error::Result,
     inject::{Context, Get, Inject},
-    local::{self, Local},
-    world::World,
+    world::{meta::Meta, World},
+    write::Write,
+    Resource,
 };
 
 pub struct Defer<'a, R: Resolve> {
-    index: usize,
+    reserved: &'a AtomicUsize,
     indices: &'a mut Vec<(usize, usize)>,
-    queue: &'a mut VecDeque<R::Item>,
+    items: &'a mut VecDeque<R::Item>,
 }
 
 pub struct State<T> {
-    inner: local::State<Inner>,
-    index: usize,
+    outer: Write<Outer>,
+    inner: usize,
+    resolver: usize,
     _marker: PhantomData<T>,
 }
 
 pub trait Resolve {
     type Item;
-    fn resolve(&mut self, items: impl Iterator<Item = Self::Item>, world: &mut World) -> Result;
+    fn resolve(
+        &mut self,
+        items: impl ExactSizeIterator<Item = Self::Item>,
+        world: &mut World,
+    ) -> Result;
 }
 
 struct Resolver {
@@ -30,14 +42,29 @@ struct Resolver {
     resolve: fn(usize, &mut dyn Any, &mut World) -> Result,
 }
 
-#[derive(Default)]
+struct Outer {
+    indices: HashMap<usize, usize>,
+    inners: Vec<Inner>,
+}
+
 struct Inner {
+    reserved: AtomicUsize,
+    resolved: usize,
     indices: Vec<(usize, usize)>,
     resolvers: Vec<Resolver>,
 }
 
 #[allow(type_alias_bounds)]
-type Pair<R: Resolve> = (R, VecDeque<R::Item>);
+type Triple<R: Resolve> = (R, Vec<(usize, usize)>, VecDeque<R::Item>);
+
+impl Resource for Outer {
+    fn initialize(_: &Meta, _: &mut World) -> Result<Self> {
+        Ok(Outer {
+            indices: HashMap::new(),
+            inners: Vec::new(),
+        })
+    }
+}
 
 impl Resolver {
     #[inline]
@@ -46,38 +73,31 @@ impl Resolver {
     }
 
     #[inline]
-    pub fn state_ref<R: Resolve + 'static>(&self) -> Option<&Pair<R>> {
+    pub fn state_ref<R: Resolve + 'static>(&self) -> Option<&Triple<R>> {
         self.state.downcast_ref()
     }
 
     #[inline]
-    pub fn state_mut<R: Resolve + 'static>(&mut self) -> Option<&mut Pair<R>> {
+    pub fn state_mut<R: Resolve + 'static>(&mut self) -> Option<&mut Triple<R>> {
         self.state.downcast_mut()
     }
 }
 
 impl<R: Resolve> Defer<'_, R> {
+    #[inline]
     pub fn one(&mut self, item: R::Item) {
-        self.queue.push_back(item);
-        self.increment(1);
-    }
-
-    pub fn all(&mut self, items: impl IntoIterator<Item = R::Item>) {
-        let count = self.queue.len();
-        self.queue.extend(items);
-        self.increment(self.queue.len() - count);
+        let index = self.reserved.fetch_add(1, Ordering::Relaxed);
+        self.items.push_back(item);
+        self.indices.push((index, 1));
     }
 
     #[inline]
-    fn increment(&mut self, count: usize) {
-        if count == 0 {
-            return;
-        }
-
-        match self.indices.last_mut() {
-            Some(pair) if pair.0 == self.index => pair.1 += count,
-            _ => self.indices.push((self.index, count)),
-        }
+    pub fn all(&mut self, items: impl IntoIterator<Item = R::Item>) {
+        let index = self.reserved.fetch_add(1, Ordering::Relaxed);
+        let start = self.items.len();
+        self.items.extend(items);
+        let count = self.items.len() - start;
+        self.indices.push((index, count));
     }
 }
 
@@ -89,34 +109,90 @@ where
     type State = State<R>;
 
     fn initialize(input: Self::Input, context: Context) -> Result<Self::State> {
-        let mut inner = Local::<Inner>::initialize(None, context)?;
-        let index = {
-            let inner = inner.as_mut();
+        let identifier = context.identifier();
+        let mut outer = <Write<Outer> as Inject>::initialize(None, context)?;
+        let inner = {
+            let outer = outer.as_mut();
+            match outer.indices.get(&identifier) {
+                Some(&index) => index,
+                None => {
+                    let index = outer.inners.len();
+                    outer.indices.insert(identifier, index);
+                    outer.inners.push(Inner {
+                        reserved: AtomicUsize::new(0),
+                        resolved: 0,
+                        indices: Vec::new(),
+                        resolvers: Vec::new(),
+                    });
+                    index
+                }
+            }
+        };
+
+        let resolver = {
+            let outer = outer.as_mut();
+            let inner = &mut outer.inners[inner];
             let index = inner.resolvers.len();
             inner.resolvers.push(Resolver {
-                state: Box::new((input, VecDeque::<R::Item>::new())),
+                state: Box::new((
+                    input,
+                    Vec::<(usize, usize)>::new(),
+                    VecDeque::<R::Item>::new(),
+                )),
                 resolve: |count, state, world| {
-                    let (state, queue) = state
-                        .downcast_mut::<Pair<R>>()
+                    let (state, _, items) = state
+                        .downcast_mut::<Triple<R>>()
                         .expect("Invalid resolve state.");
-                    state.resolve(queue.drain(..count), world)
+                    state.resolve(items.drain(..count), world)
                 },
             });
             index
         };
 
         Ok(State {
+            outer,
             inner,
-            index,
+            resolver,
             _marker: PhantomData,
         })
     }
 
     fn resolve(state: &mut Self::State, mut context: Context) -> Result {
-        let Inner { indices, resolvers } = state.inner.as_mut();
+        let outer = state.outer.as_mut();
+        let inner = &mut outer.inners[state.inner];
+        let mut resolve = 0;
+        let reserved = inner.reserved.get_mut();
+        let resolver = &mut inner.resolvers[state.resolver];
+        let (resolver, indices, items) = resolver.state_mut::<R>().unwrap();
+        inner.indices.resize(*reserved, (usize::MAX, 0));
+
         for (index, count) in indices.drain(..) {
-            resolvers[index].resolve(count, context.world())?;
+            if index == inner.resolved {
+                inner.resolved += 1;
+                resolve += count;
+            } else {
+                inner.indices[index] = (state.resolver, count);
+            }
         }
+
+        if resolve > 0 {
+            resolver.resolve(items.drain(..resolve), context.world())?;
+        }
+
+        while let Some((resolver, count)) = inner.indices.get_mut(inner.resolved) {
+            match inner.resolvers.get_mut(replace(resolver, usize::MAX)) {
+                Some(resolver) => {
+                    inner.resolved += 1;
+                    resolver.resolve(*count, context.world())?;
+                }
+                None => return Ok(()),
+            }
+        }
+
+        // The only way to get here is if all deferred items have been properly resolved.
+        debug_assert_eq!(*reserved, inner.resolved);
+        *reserved = 0;
+        inner.resolved = 0;
         Ok(())
     }
 }
@@ -126,39 +202,41 @@ impl<'a, R: Resolve + 'static> Get<'a> for State<R> {
 
     #[inline]
     fn get(&'a mut self, _: &'a World) -> Self::Item {
-        let inner = self.inner.as_mut();
-        let (state, queue) = inner.resolvers[self.index].state_mut::<R>().unwrap();
+        let outer = self.outer.as_mut();
+        let inner = &mut outer.inners[self.inner];
+        let resolver = &mut inner.resolvers[self.resolver];
+        let (resolver, indices, items) = resolver.state_mut::<R>().unwrap();
         (
             Defer {
-                index: self.index,
-                indices: &mut inner.indices,
-                queue,
+                reserved: &inner.reserved,
+                indices,
+                items,
             },
-            state,
+            resolver,
         )
     }
 }
 
 unsafe impl<T> Depend for State<T> {
     fn depend(&self, world: &World) -> Vec<Dependency> {
-        self.inner.depend(world)
+        self.outer.depend(world)
     }
 }
 
 impl<R: Resolve + 'static> AsRef<R> for State<R> {
     fn as_ref(&self) -> &R {
-        self.inner.as_ref().resolvers[self.index]
-            .state_ref::<R>()
-            .map(|(state, _)| state)
-            .unwrap()
+        let outer = self.outer.as_ref();
+        let inner = &outer.inners[self.inner];
+        let resolver = &inner.resolvers[self.resolver];
+        &resolver.state_ref::<R>().unwrap().0
     }
 }
 
 impl<R: Resolve + 'static> AsMut<R> for State<R> {
     fn as_mut(&mut self) -> &mut R {
-        self.inner.as_mut().resolvers[self.index]
-            .state_mut::<R>()
-            .map(|(state, _)| state)
-            .unwrap()
+        let outer = self.outer.as_mut();
+        let inner = &mut outer.inners[self.inner];
+        let resolver = &mut inner.resolvers[self.resolver];
+        &mut resolver.state_mut::<R>().unwrap().0
     }
 }

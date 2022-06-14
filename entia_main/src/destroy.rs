@@ -3,15 +3,20 @@ use crate::{
     depend::{Depend, Dependency},
     entities::Entities,
     entity::Entity,
-    error::Result,
+    error::{Error, Result},
     inject::{Context, Get, Inject},
     world::World,
     write::Write,
 };
-use std::collections::HashSet;
+use std::{collections::HashSet, marker::PhantomData};
 
-pub struct Destroy<'a>(defer::Defer<'a, Inner>);
-pub struct State(defer::State<Inner>);
+#[derive(Debug)]
+pub struct Early;
+#[derive(Debug)]
+pub struct Late;
+
+pub struct Destroy<'a, R = Early>(defer::Defer<'a, Inner>, PhantomData<R>);
+pub struct State<R>(defer::State<Inner>, PhantomData<R>);
 
 struct Inner {
     set: HashSet<Entity>,
@@ -23,7 +28,7 @@ struct Defer {
     descendants: bool,
 }
 
-impl Destroy<'_> {
+impl<R> Destroy<'_, R> {
     #[inline]
     pub fn one(&mut self, entity: impl Into<Entity>, descendants: bool) {
         self.0.one(Defer {
@@ -45,19 +50,25 @@ impl Destroy<'_> {
     }
 }
 
-impl Inject for Destroy<'_> {
+impl<R> Inject for Destroy<'_, R>
+where
+    State<R>: Depend,
+{
     type Input = ();
-    type State = State;
+    type State = State<R>;
 
     fn initialize(_: Self::Input, mut context: Context) -> Result<Self::State> {
         let inner = Inner {
             set: HashSet::new(),
             entities: Write::initialize(None, context.owned())?,
         };
-        Ok(State(defer::Defer::initialize(inner, context)?))
+        Ok(State(
+            defer::Defer::initialize(inner, context)?,
+            PhantomData,
+        ))
     }
 
-    fn resolve(State(state): &mut Self::State, context: Context) -> Result {
+    fn resolve(State(state, _): &mut Self::State, context: Context) -> Result {
         defer::Defer::resolve(state, context)
     }
 }
@@ -65,7 +76,11 @@ impl Inject for Destroy<'_> {
 impl Resolve for Inner {
     type Item = Defer;
 
-    fn resolve(&mut self, items: impl Iterator<Item = Self::Item>, world: &mut World) -> Result {
+    fn resolve(
+        &mut self,
+        items: impl ExactSizeIterator<Item = Self::Item>,
+        world: &mut World,
+    ) -> Result {
         fn destroy(
             index: u32,
             root: bool,
@@ -73,13 +88,16 @@ impl Resolve for Inner {
             set: &mut HashSet<Entity>,
             entities: &mut Entities,
             world: &mut World,
-        ) -> Option<u32> {
+        ) -> Result<Option<u32>> {
             // Entity index must be validated by caller.
-            let datum = entities.get_datum_at(index).cloned()?;
+            let datum = match entities.get_datum_at(index) {
+                Some(datum) => datum.clone(),
+                None => return Ok(None),
+            };
             if set.insert(datum.entity(index)) {
                 if descendants {
                     let mut child = datum.first_child;
-                    while let Some(next) = destroy(child, false, descendants, set, entities, world)
+                    while let Some(next) = destroy(child, false, descendants, set, entities, world)?
                     {
                         child = next;
                     }
@@ -108,14 +126,21 @@ impl Resolve for Inner {
                             .entity_store()
                             .get::<Entity>(datum.store_index as usize)
                     };
-                    entities
+                    if !entities
                         .get_datum_at_mut(entity.index())
                         .expect("Entity must be valid.")
-                        .update(&datum);
+                        .update(datum.store_index, datum.segment_index)
+                    {
+                        return Err(Error::FailedToUpdate {
+                            entity: entity.index(),
+                            store: datum.store_index,
+                            segment: datum.segment_index,
+                        });
+                    }
                 }
             }
 
-            Some(datum.next_sibling)
+            Ok(Some(datum.next_sibling))
         }
 
         let entities = self.entities.as_mut();
@@ -132,7 +157,7 @@ impl Resolve for Inner {
                     &mut self.set,
                     entities,
                     world,
-                );
+                )?;
             }
         }
 
@@ -144,20 +169,26 @@ impl Resolve for Inner {
     }
 }
 
-impl<'a> Get<'a> for State {
-    type Item = Destroy<'a>;
+impl<'a, R> Get<'a> for State<R> {
+    type Item = Destroy<'a, R>;
 
     #[inline]
     fn get(&'a mut self, world: &'a World) -> Self::Item {
-        Destroy(self.0.get(world).0)
+        Destroy(self.0.get(world).0, PhantomData)
     }
 }
 
-unsafe impl Depend for State {
+unsafe impl Depend for State<Early> {
     fn depend(&self, world: &World) -> Vec<Dependency> {
         let mut dependencies = self.0.depend(world);
         dependencies.push(Dependency::defer::<Entities>());
         dependencies.push(Dependency::defer::<Entity>());
         dependencies
+    }
+}
+
+unsafe impl Depend for State<Late> {
+    fn depend(&self, world: &World) -> Vec<Dependency> {
+        self.0.depend(world)
     }
 }

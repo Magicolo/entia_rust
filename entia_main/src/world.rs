@@ -438,15 +438,12 @@ pub mod meta {
     #[macro_export]
     macro_rules! meta {
         ($t:ty) => {{
-            use std::{
-                any::Any,
-                boxed::Box,
-                marker::{Send, Sync},
-                vec::Vec,
-            };
             use $crate::core::Maybe;
 
-            let mut modules: Vec<Box<dyn Any + Send + Sync + 'static>> = Vec::new();
+            let mut modules: std::vec::Vec<
+                Box<dyn std::any::Any + std::marker::Send + std::marker::Sync + 'static>,
+            > = std::vec::Vec::new();
+
             type Defaulter<T> = $crate::core::Wrap<$crate::world::meta::Defaulter, T>;
             if let Some(module) = Defaulter::<$t>::default().maybe() {
                 modules.push(std::boxed::Box::new(module));
@@ -459,6 +456,7 @@ pub mod meta {
             if let Some(module) = Formatter::<$t>::default().maybe() {
                 modules.push(std::boxed::Box::new(module));
             }
+
             $crate::world::meta::Meta::new::<$t, _>(modules)
         }};
     }
@@ -619,12 +617,10 @@ pub mod segment {
         }
 
         pub fn resolve(&mut self) {
-            let reserved = self.reserved.get_mut();
-            let count = self.count + *reserved;
-            self.count += replace(reserved, 0);
+            self.count += replace(self.reserved.get_mut(), 0);
 
-            if self.capacity < count {
-                let capacity = next_power_of_2(count as u32 - 1) as usize;
+            if self.capacity < self.count {
+                let capacity = next_power_of_2(self.count as u32 - 1) as usize;
                 for store in self.stores() {
                     unsafe { store.resize(self.capacity, capacity) };
                 }

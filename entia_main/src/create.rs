@@ -1,19 +1,18 @@
-use std::{
-    collections::HashMap,
-    iter::{empty, once},
-};
-
 use crate::{
     defer::{self, Resolve},
     depend::{Depend, Dependency},
     entities::Entities,
     entity::Entity,
-    error::Result,
+    error::{Error, Result},
     family::template::{EntityIndices, Families, Family, SegmentIndices},
     inject::{Context, Get, Inject},
     template::{ApplyContext, CountContext, DeclareContext, InitializeContext, Spawn, Template},
     world::World,
     write::Write,
+};
+use std::{
+    collections::HashMap,
+    iter::{empty, once},
 };
 
 pub struct Create<'a, T: Template + 'a> {
@@ -37,6 +36,7 @@ struct Inner<T: Template> {
     entity_roots: Vec<(usize, usize)>,
     initial_state: <Spawn<T> as Template>::State,
     initial_roots: Vec<Spawn<T>>,
+    post: Vec<(u32, u32, u32)>,
 }
 
 struct Defer<T: Template> {
@@ -156,6 +156,7 @@ impl<T: Template> Inner<T> {
                 &self.entity_indices,
                 entities,
                 &self.segment_indices,
+                &mut self.post,
             ),
             (index, false) => defer.one(Defer {
                 index,
@@ -275,6 +276,7 @@ where
                 entity_instances: Vec::new(),
                 entity_roots: Vec::new(),
                 segment_indices,
+                post: Vec::new(),
             },
             entities,
         };
@@ -282,17 +284,27 @@ where
     }
 
     fn resolve(State(state): &mut Self::State, mut context: Context) -> Result {
-        // Must resolve unconditionally entities and segments *even* if nothing was deferred in the case where creation
-        // was completed at run time.
-        state.as_mut().resolve(empty(), context.world())?;
-        defer::Defer::resolve(state, context.owned())
+        defer::Defer::resolve(state, context.owned())?;
+
+        // If entities have successfully been reserved at run time, no item would've been deferred, so resolution is triggered manually.
+        let outer = state.as_mut();
+        if outer.inner.post.len() > 0 {
+            outer.resolve(empty(), context.world())?;
+        }
+
+        debug_assert_eq!(outer.inner.post.len(), 0);
+        Ok(())
     }
 }
 
 impl<T: Template> Resolve for Outer<T> {
     type Item = Defer<T>;
 
-    fn resolve(&mut self, items: impl Iterator<Item = Self::Item>, world: &mut World) -> Result {
+    fn resolve(
+        &mut self,
+        items: impl ExactSizeIterator<Item = Self::Item>,
+        world: &mut World,
+    ) -> Result {
         let inner = &mut self.inner;
         let entities = self.entities.as_mut();
         let segments = world.segments_mut();
@@ -328,7 +340,22 @@ impl<T: Template> Resolve for Outer<T> {
                 &defer.entity_indices,
                 entities,
                 &defer.segment_indices,
+                &mut inner.post,
             );
+        }
+
+        for (entity, store, segment) in inner.post.drain(..) {
+            if !entities
+                .get_datum_at_mut(entity)
+                .expect("Entity index must be in range.")
+                .post_initialize(store, segment)
+            {
+                return Err(Error::FailedToInitialize {
+                    entity,
+                    store,
+                    segment,
+                });
+            }
         }
 
         Ok(())
@@ -343,6 +370,7 @@ fn apply<T: Template>(
     entity_indices: &[EntityIndices],
     entities: &mut Entities,
     segment_indices: &[SegmentIndices],
+    post: &mut Vec<(u32, u32, u32)>,
 ) {
     for (root, &(entity_root, mut entity_count)) in initial_roots.into_iter().zip(entity_roots) {
         root.apply(
@@ -358,6 +386,7 @@ fn apply<T: Template>(
                 entities,
                 0,
                 segment_indices,
+                post,
             ),
         );
     }
@@ -368,11 +397,11 @@ impl<'a, T: Template + 'static> Get<'a> for State<T> {
 
     #[inline]
     fn get(&'a mut self, world: &'a World) -> Self::Item {
-        let (defer, state) = self.0.get(world);
+        let (defer, outer) = self.0.get(world);
         Create {
             defer,
-            inner: &mut state.inner,
-            entities: state.entities.get(world),
+            inner: &mut outer.inner,
+            entities: outer.entities.get(world),
             world,
         }
     }

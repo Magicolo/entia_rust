@@ -1,4 +1,4 @@
-use crate::{depend, duplicate};
+use crate::depend;
 use std::{any::TypeId, result};
 
 #[derive(Debug)]
@@ -31,8 +31,17 @@ pub enum Error {
         segment: usize,
     },
     StaticCountMustBeTrue,
+    FailedToInitialize {
+        entity: u32,
+        store: u32,
+        segment: u32,
+    },
+    FailedToUpdate {
+        entity: u32,
+        store: u32,
+        segment: u32,
+    },
     Depend(depend::Error),
-    Duplicate(duplicate::Error),
     All(Vec<Error>),
 }
 
