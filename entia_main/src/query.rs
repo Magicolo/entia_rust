@@ -181,17 +181,6 @@ macro_rules! iterator {
                         // SAFETY: In order to pass the 'self.index < self.count' check, 'self.state' had to be set.
                         // This holds as long as 'self.count' was initialized to 0.
                         let state = unsafe { self.state.as_mut().unwrap_unchecked() };
-                        /*
-                            if state.1 && self.store.get::<bool>(self.index) {
-                                self.index += 1;
-                                continue;
-                            }
-                            else {
-                                let item = I::State::$at(state, self.index);
-                                self.index += 1;
-                                break Some(item);
-                            }
-                        */
                         let item = I::State::$at(state, self.index);
                         self.index += 1;
                         break Some(item);
@@ -202,7 +191,6 @@ macro_rules! iterator {
                         let segment = unsafe { segments.get_unchecked(*segment) };
                         self.segment += 1;
                         self.state = Some(state.get(self.query.world));
-                        // self.state = Some((state.get(self.query.world), segment.contiguous));
                         self.index = 0;
                         self.count = segment.count();
                     }
