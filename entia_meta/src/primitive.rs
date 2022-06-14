@@ -177,26 +177,26 @@ primitive!(
     F64(f64)
 );
 
-impl Meta for bool {
+impl Meta<&'static Primitive> for bool {
     #[inline]
-    fn meta() -> Data {
+    fn meta() -> &'static Primitive {
         todo!()
     }
 }
 from!(Bool(bool));
 
-impl Meta for char {
+impl Meta<&'static Primitive> for char {
     #[inline]
-    fn meta() -> Data {
+    fn meta() -> &'static Primitive {
         todo!()
     }
 }
 from!(Char(char));
 
-impl Meta for () {
+impl Meta<&'static Primitive> for () {
     #[inline]
-    fn meta() -> Data {
-        Data::Primitive(&Primitive {
+    fn meta() -> &'static Primitive {
+        &Primitive {
             kind: Primitives::Unit,
             access: Access::Public,
             name: "()",
@@ -268,7 +268,7 @@ impl Meta for () {
                     _ => None,
                 },
             ),
-        })
+        }
     }
 }
 

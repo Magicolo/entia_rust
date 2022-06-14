@@ -3,49 +3,41 @@ use std::any::{Any, TypeId};
 use crate::{
     generic::Generic,
     meta::{Access, Attribute, Index},
-    structure::Field,
     value::Value,
+    variant::Variant,
 };
 
 pub struct Enumeration {
     pub access: Access,
     pub name: &'static str,
-    pub size: usize,
-    pub identifier: fn() -> TypeId,
+    pub size: Option<usize>,
+    pub identifier: Option<fn() -> TypeId>,
     pub generics: &'static [Generic],
     pub attributes: &'static [Attribute],
     pub variants: Index<Variant>,
-    pub index: fn(&dyn Any) -> Option<usize>,
-}
-
-pub struct Variant {
-    pub name: &'static str,
-    pub new: fn(&mut dyn Iterator<Item = Value>) -> Option<Box<dyn Any>>,
-    pub values: fn(Box<dyn Any>) -> Result<Box<[Value]>, Box<dyn Any>>,
-    pub attributes: &'static [Attribute],
-    pub fields: Index<Field>,
+    pub index: Option<fn(&dyn Any) -> Option<usize>>,
 }
 
 impl Enumeration {
     #[inline]
-    pub fn identifier(&self) -> TypeId {
-        (self.identifier)()
+    pub fn identifier(&self) -> Option<TypeId> {
+        Some((self.identifier?)())
     }
 
     #[inline]
     pub fn variant_of(&self, value: &dyn Any) -> Option<(usize, &Variant)> {
-        let index = (self.index)(value)?;
+        let index = (self.index?)(value)?;
         Some((index, &self.variants[index]))
     }
 
     #[inline]
     pub fn clone(&'static self, value: &dyn Any) -> Option<Value> {
-        if self.identifier() == value.type_id() {
+        if self.identifier() == Some(value.type_id()) {
             let (_, variant) = self.variant_of(value)?;
             let values = variant
                 .fields
                 .iter()
-                .filter_map(|field| field.meta().clone(field.get(value)?));
+                .filter_map(|field| field.meta()?.clone(field.get(value)?));
             Some(Value::Variant(variant.new(values)?, self, variant))
         } else {
             None
@@ -73,17 +65,5 @@ impl Enumeration {
             }
             _ => None,
         }
-    }
-}
-
-impl Variant {
-    #[inline]
-    pub fn new<I: IntoIterator<Item = Value>>(&self, parameters: I) -> Option<Box<dyn Any>> {
-        (self.new)(&mut parameters.into_iter())
-    }
-
-    #[inline]
-    pub fn values(&self, instance: Box<dyn Any>) -> Result<Box<[Value]>, Box<dyn Any>> {
-        (self.values)(instance)
     }
 }

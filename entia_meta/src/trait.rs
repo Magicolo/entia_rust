@@ -1,7 +1,7 @@
 use crate::{
-    function::Signature,
     generic::Generic,
     meta::{Access, Attribute, Index},
+    Function,
 };
 
 pub struct Trait {
@@ -9,7 +9,7 @@ pub struct Trait {
     pub name: &'static str,
     pub generics: &'static [Generic],
     pub attributes: &'static [Attribute],
-    pub functions: Index<Signature>,
+    pub functions: Index<Function>,
     pub associates: Index<Associate>,
 }
 

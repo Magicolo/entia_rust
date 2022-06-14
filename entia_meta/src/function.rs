@@ -29,25 +29,24 @@ pub enum Borrow {
 pub struct Parameter {
     pub borrow: Borrow,
     pub name: &'static str,
-    pub meta: fn() -> Data,
+    pub meta: Option<fn() -> Data>,
     pub attributes: &'static [Attribute],
 }
 
 pub struct Function {
     pub access: Access,
-    pub signature: Signature,
-    // SAFETY: Since this 'invoke' may call an unsafe function, it is conservatively tagged as 'unsafe'.
-    // Check the 'signature' or the pointed to function to ensure safety.
-    pub invoke: for<'a> unsafe fn(&mut dyn Iterator<Item = Argument<'a>>) -> Option<Argument<'a>>,
+    pub modifiers: u8,
+    pub name: &'static str,
+    pub meta: Option<fn() -> Data>,
+    pub generics: &'static [Generic],
+    pub parameters: &'static [Parameter],
+    pub invoke: Option<Invoke>,
     pub attributes: &'static [Attribute],
 }
 
-pub struct Signature {
-    pub modifiers: u8,
-    pub name: &'static str,
-    pub meta: fn() -> Data,
-    pub generics: &'static [Generic],
-    pub parameters: &'static [Parameter],
+pub enum Invoke {
+    Safe(for<'a> fn(&mut dyn Iterator<Item = Argument<'a>>) -> Option<Argument<'a>>),
+    Unsafe(for<'a> unsafe fn(&mut dyn Iterator<Item = Argument<'a>>) -> Option<Argument<'a>>),
 }
 
 impl<'a> Argument<'a> {

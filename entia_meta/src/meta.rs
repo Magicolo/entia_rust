@@ -1,8 +1,6 @@
 use crate::{
-    enumeration::{Enumeration, Variant},
-    primitive::Primitive,
-    structure::{Field, Structure},
-    value::Value,
+    enumeration::Enumeration, field::Field, generic, primitive::Primitive, structure::Structure,
+    value::Value, variant::Variant, Generic,
 };
 use std::{
     any::{Any, TypeId},
@@ -13,7 +11,7 @@ use std::{
 
 pub struct Index<T: 'static>(pub &'static [T], pub fn(&str) -> Option<usize>);
 
-pub trait Meta<T = Data> {
+pub trait Meta<T> {
     fn meta() -> T;
 }
 
@@ -87,9 +85,9 @@ impl Data {
     }
 
     #[inline]
-    pub fn identifier(self) -> TypeId {
+    pub fn identifier(self) -> Option<TypeId> {
         match self {
-            Data::Primitive(primitive) => primitive.identifier(),
+            Data::Primitive(primitive) => Some(primitive.identifier()),
             Data::Structure(structure) => structure.identifier(),
             Data::Enumeration(enumeration) => enumeration.identifier(),
         }
@@ -114,63 +112,79 @@ impl Data {
     }
 }
 
-impl<T: 'static> Meta for Vec<T> {
+impl<T: 'static> Meta<&'static Structure> for Vec<T> {
     #[inline]
-    fn meta() -> Data {
-        todo!()
-        // Type::Structure(&Structure {
-        //     access: Visibility::Public,
-        //     name: "Vec",
-        //     size: size_of::<Self>(),
-        //     identifier: TypeId::of::<Self>,
-        //     new: todo!(),
-        //     values: todo!(),
-        //     generics: Index(
-        //         &[
-        //         //     generic::Generic::Type(generic::Type {
-        //         //     name: "T",
-        //         //     constraints: &[constraint::Type::Trait(|| &traits::Meta)],
-        //         //     attributes: &[],
-        //         // })
-        //         ],
-        //         |name| match name {
-        //             "T" => Some(0),
-        //             _ => None,
-        //         },
-        //     ),
-        //     attributes: &[],
-        //     fields: Index(&[], |_| None),
-        //     functions: Index(&[], |_| None),
-        // })
+    fn meta() -> &'static Structure {
+        &Structure {
+            access: Access::Public,
+            name: "Vec",
+            size: Some(size_of::<Self>()),
+            identifier: Some(TypeId::of::<Self>),
+            new: None,
+            values: None,
+            attributes: &[],
+            generics: &[Generic::Type(generic::Type {
+                name: "T",
+                default: None,
+                attributes: &[],
+            })],
+            fields: Index(
+                &[
+                    Field {
+                        access: Access::Private,
+                        name: "buff",
+                        attributes: &[],
+                        meta: None,
+                        get: None,
+                        get_mut: None,
+                        set: None,
+                    },
+                    Field {
+                        access: Access::Private,
+                        name: "len",
+                        attributes: &[],
+                        meta: None,
+                        get: None,
+                        get_mut: None,
+                        set: None,
+                    },
+                ],
+                |name| match name {
+                    "buff" | "0" => Some(0),
+                    "len" | "1" => Some(1),
+                    _ => None,
+                },
+            ),
+        }
     }
 }
 
-impl<T: Meta> Meta for &T {
+impl<M, T: Meta<M>> Meta<M> for &T {
     #[inline]
-    fn meta() -> Data {
+    fn meta() -> M {
         T::meta()
     }
 }
 
-impl<T: Meta> Meta for &mut T {
+impl<M, T: Meta<M>> Meta<M> for &mut T {
     #[inline]
-    fn meta() -> Data {
+    fn meta() -> M {
         T::meta()
     }
 }
 
-impl<T: Meta + 'static> Meta for Option<T> {
+impl<T: Meta<Data> + 'static> Meta<&'static Enumeration> for Option<T> {
     #[inline]
-    fn meta() -> Data {
-        Data::Enumeration(&Enumeration {
+    fn meta() -> &'static Enumeration {
+        &Enumeration {
             access: Access::Public,
             name: "Option",
-            size: size_of::<Self>(),
-            identifier: TypeId::of::<Self>,
-            index: |value| match value.downcast_ref::<Self>()? {
+            size: Some(size_of::<Self>()),
+            identifier: Some(TypeId::of::<Self>),
+            index: Some(|value| match value.downcast_ref::<Self>()? {
                 None => Some(0),
                 Some(_) => Some(1),
-            },
+            }),
             generics: &[
                 //     generic::Generic::Type(generic::Type {
                 //     name: "T",
@@ -183,35 +197,37 @@ impl<T: Meta + 'static> Meta for Option<T> {
                 &[
                     Variant {
                         name: "None",
-                        new: |_| Some(Box::new(Self::None)),
-                        values: |instance| match *instance.downcast::<Self>()? {
+                        new: Some(|_| Some(Box::new(Self::None))),
+                        values: Some(|instance| match *instance.downcast::<Self>()? {
                             None => Ok([].into()),
                             value => Err(Box::new(value)),
-                        },
+                        }),
                         attributes: &[],
                         fields: Index(&[], |_| None),
                     },
                     Variant {
                         name: "Some",
-                        new: |values| Some(Box::new(Self::Some(values.next()?.downcast().ok()?))),
-                        values: |instance| match *instance.downcast::<Self>()? {
+                        new: Some(|values| {
+                            Some(Box::new(Self::Some(values.next()?.downcast().ok()?)))
+                        }),
+                        values: Some(|instance| match *instance.downcast::<Self>()? {
                             Some(value) => Ok([Value::from(value)].into()),
                             value => Err(Box::new(value)),
-                        },
+                        }),
                         attributes: &[],
                         fields: Index(
                             &[Field {
                                 access: Access::Public,
                                 name: "0",
-                                meta: T::meta,
-                                get: |instance| Some(instance.downcast_ref::<Self>()?),
-                                get_mut: |instance| Some(instance.downcast_mut::<Self>()?),
-                                set: |instance, value| {
+                                meta: Some(T::meta),
+                                get: Some(|instance| Some(instance.downcast_ref::<Self>()?)),
+                                get_mut: Some(|instance| Some(instance.downcast_mut::<Self>()?)),
+                                set: Some(|instance, value| {
                                     Some(swap(
                                         instance.downcast_mut::<Self>()?.as_mut()?,
                                         value.downcast_mut()?,
                                     ))
-                                },
+                                }),
                                 attributes: &[],
                             }],
                             |name| match name {
@@ -228,20 +244,20 @@ impl<T: Meta + 'static> Meta for Option<T> {
                     _ => None,
                 },
             ),
-        })
+        }
     }
 }
 
-impl<T: Meta> Meta for Box<T> {
+impl<T: Meta<Data>> Meta<&'static Structure> for Box<T> {
     #[inline]
-    fn meta() -> Data {
+    fn meta() -> &'static Structure {
         todo!()
     }
 }
 
-impl<T1: Meta> Meta for (T1,) {
+impl<T1: Meta<Data>> Meta<&'static Structure> for (T1,) {
     #[inline]
-    fn meta() -> Data {
+    fn meta() -> &'static Structure {
         todo!()
     }
 }

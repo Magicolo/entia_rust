@@ -1,8 +1,9 @@
 use crate::{
-    enumeration::{Enumeration, Variant},
+    enumeration::Enumeration,
     meta::{Data, Meta},
     primitive::Primitives,
     structure::Structure,
+    variant::Variant,
 };
 use std::{
     any::{Any, TypeId},
@@ -34,7 +35,7 @@ pub enum Value<T = Box<dyn Any>> {
 }
 
 impl Value {
-    pub fn from<T: Meta + 'static>(value: T) -> Self {
+    pub fn from<T: Meta<Data> + 'static>(value: T) -> Self {
         match T::meta() {
             Data::Primitive(primitive) => match primitive.kind {
                 Primitives::Unit => Self::Unit(unsafe { transmute_copy(&value) }),
@@ -65,23 +66,23 @@ impl Value {
 
     pub fn meta(&self) -> Data {
         match self {
-            Self::Unit(_) => <()>::meta(),
-            Self::Bool(_) => bool::meta(),
-            Self::Char(_) => char::meta(),
-            Self::U8(_) => u8::meta(),
-            Self::U16(_) => u16::meta(),
-            Self::U32(_) => u32::meta(),
-            Self::U64(_) => u64::meta(),
-            Self::Usize(_) => usize::meta(),
-            Self::U128(_) => u128::meta(),
-            Self::I8(_) => i8::meta(),
-            Self::I16(_) => i16::meta(),
-            Self::I32(_) => i32::meta(),
-            Self::I64(_) => i64::meta(),
-            Self::Isize(_) => isize::meta(),
-            Self::I128(_) => i128::meta(),
-            Self::F32(_) => f32::meta(),
-            Self::F64(_) => f64::meta(),
+            Self::Unit(_) => Data::Primitive(<()>::meta()),
+            Self::Bool(_) => Data::Primitive(bool::meta()),
+            Self::Char(_) => Data::Primitive(char::meta()),
+            Self::U8(_) => Data::Primitive(u8::meta()),
+            Self::U16(_) => Data::Primitive(u16::meta()),
+            Self::U32(_) => Data::Primitive(u32::meta()),
+            Self::U64(_) => Data::Primitive(u64::meta()),
+            Self::Usize(_) => Data::Primitive(usize::meta()),
+            Self::U128(_) => Data::Primitive(u128::meta()),
+            Self::I8(_) => Data::Primitive(i8::meta()),
+            Self::I16(_) => Data::Primitive(i16::meta()),
+            Self::I32(_) => Data::Primitive(i32::meta()),
+            Self::I64(_) => Data::Primitive(i64::meta()),
+            Self::Isize(_) => Data::Primitive(isize::meta()),
+            Self::I128(_) => Data::Primitive(i128::meta()),
+            Self::F32(_) => Data::Primitive(f32::meta()),
+            Self::F64(_) => Data::Primitive(f64::meta()),
             Self::Structure(_, structure) => Data::Structure(structure),
             Self::Variant(_, enumeration, _) => Data::Enumeration(enumeration),
         }
