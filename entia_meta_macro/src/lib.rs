@@ -1,55 +1,102 @@
+use std::{fs::read_to_string, mem};
+
 use proc_macro::TokenStream;
 use quote::{__private::Span, quote, quote_spanned, spanned::Spanned, ToTokens};
 use syn::{
-    parse_macro_input, parse_quote, Attribute, ConstParam, Data, DataEnum, DataStruct, DataUnion,
-    DeriveInput, Field, Fields, FnArg, GenericParam, Generics, Ident, Item, ItemConst, ItemEnum,
-    ItemFn, ItemMod, ItemStatic, ItemStruct, ItemUnion, Lifetime, LifetimeDef, LitInt, Pat, PatBox,
-    PatIdent, PatReference, PatType, Path, PathSegment, Receiver, ReturnType, Signature, Type,
-    TypeParam, TypeReference, Visibility,
+    parse_file, parse_macro_input, parse_quote, Attribute, ConstParam, Data, DataEnum, DataStruct,
+    DataUnion, DeriveInput, Expr, ExprLit, ExprPath, ExprTuple, Field, Fields, File, FnArg,
+    GenericParam, Generics, Ident, Item, ItemConst, ItemEnum, ItemFn, ItemMod, ItemStatic,
+    ItemStruct, ItemUnion, Lifetime, LifetimeDef, Lit, LitInt, Pat, PatBox, PatIdent, PatReference,
+    PatType, Path, PathSegment, Receiver, ReturnType, Signature, Type, TypeParam, TypeReference,
+    UseGlob, UseGroup, UseName, UsePath, UseRename, UseTree, VisPublic, Visibility,
 };
 
+#[derive(Clone)]
 struct Context {
-    meta: Path,
+    crate_path: Path,
+    super_path: Path,
+    self_path: Path,
+    meta_path: Path,
+    external: bool,
+    implement: bool,
+}
+
+impl Default for Context {
+    fn default() -> Self {
+        Self {
+            crate_path: path(["crate"]),
+            super_path: path(["super"]),
+            self_path: path(["self"]),
+            meta_path: path(["entia", "meta"]),
+            external: false,
+            implement: false,
+        }
+    }
+}
+
+#[proc_macro]
+pub fn meta_extern(input: TokenStream) -> TokenStream {
+    let tuple = parse_macro_input!(input as ExprTuple);
+    let (meta_path, crate_path, self_path, file_path) = match (
+        &tuple.elems[0],
+        &tuple.elems[1],
+        &tuple.elems[2],
+        &tuple.elems[3],
+    ) {
+        (
+            Expr::Path(ExprPath {
+                path: meta_path, ..
+            }),
+            Expr::Path(ExprPath {
+                path: crate_path, ..
+            }),
+            Expr::Path(ExprPath {
+                path: self_path, ..
+            }),
+            Expr::Lit(ExprLit {
+                lit: Lit::Str(file_path),
+                ..
+            }),
+        ) => (meta_path, crate_path, self_path, file_path),
+        _ => {
+            return quote! { compile_error!("Expected crate path and corresponding file path.") }
+                .into()
+        }
+    };
+    let (path, span) = (file_path.value(), file_path.span());
+    let path = std::path::Path::new(&path);
+    let name = path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    let file = read_to_string(path).unwrap();
+    let File { attrs, items, .. } = parse_file(&file).unwrap();
+    let mut module = ItemMod {
+        attrs,
+        ident: Ident::new(name, span),
+        vis: Visibility::Public(VisPublic {
+            pub_token: Default::default(),
+        }),
+        content: Some((Default::default(), items)),
+        mod_token: Default::default(),
+        semi: Default::default(),
+    };
+    let mut super_path = self_path.clone();
+    super_path.segments.pop();
+    let context = Context {
+        meta_path: meta_path.clone(),
+        crate_path: crate_path.clone(),
+        super_path,
+        self_path: self_path.clone(),
+        external: true,
+        implement: false,
+    };
+    let module = context.module(&mut module);
+    quote_spanned!(span => #module).into()
 }
 
 #[proc_macro_derive(Meta)]
 pub fn derive(input: TokenStream) -> TokenStream {
-    fn body(
-        context: &Context,
-        meta: impl ToTokens,
-        ident: Ident,
-        generics: Generics,
-        suffix: Ident,
-    ) -> impl ToTokens {
-        let meta_path = &context.meta;
-        let (impl_generics, type_generics, where_clauses) = generics.split_for_impl();
-        quote_spanned!(ident.span() =>
-            #[automatically_derived]
-            impl #impl_generics #meta_path::Meta<&'static #meta_path::#suffix> for #ident #type_generics #where_clauses {
-                #[inline]
-                fn meta() -> &'static #meta_path::#suffix {
-                    &#meta
-                }
-            }
-
-            #[automatically_derived]
-            impl #impl_generics #meta_path::Meta<#meta_path::Data> for #ident #type_generics #where_clauses {
-                #[inline]
-                fn meta() -> #meta_path::Data {
-                    #meta_path::Data::#suffix(<Self as #meta_path::Meta<&'static #meta_path::#suffix>>::meta())
-                }
-            }
-
-            #[automatically_derived]
-            impl #impl_generics #meta_path::Meta<#meta_path::module::Member> for #ident #type_generics #where_clauses {
-                #[inline]
-                fn meta() -> #meta_path::module::Member {
-                    #meta_path::module::Member::#suffix(<Self as #meta_path::Meta<&'static #meta_path::#suffix>>::meta)
-                }
-            }
-        )
-    }
-
     let DeriveInput {
         attrs,
         vis,
@@ -57,17 +104,14 @@ pub fn derive(input: TokenStream) -> TokenStream {
         generics,
         data,
     } = parse_macro_input!(input as DeriveInput);
-    let meta_path = path(["entia", "meta"]);
-    let context = Context {
-        meta: meta_path.clone(),
-    };
+    let context = Context::default();
     match data {
         Data::Struct(DataStruct {
             fields,
             semi_token,
             struct_token,
-        }) => {
-            let mut item = ItemStruct {
+        }) => context
+            .implement_structure(&ItemStruct {
                 attrs,
                 fields,
                 generics,
@@ -75,26 +119,14 @@ pub fn derive(input: TokenStream) -> TokenStream {
                 vis,
                 semi_token,
                 struct_token,
-            };
-            let meta = context.structure(&mut item);
-            let ItemStruct {
-                ident, generics, ..
-            } = item;
-            body(
-                &context,
-                meta,
-                ident,
-                generics,
-                Ident::new("Structure", Span::call_site()),
-            )
-            .to_token_stream()
-        }
+            })
+            .to_token_stream(),
         Data::Enum(DataEnum {
             enum_token,
             brace_token,
             variants,
-        }) => {
-            let mut item = ItemEnum {
+        }) => context
+            .implement_enumeration(&ItemEnum {
                 attrs,
                 variants,
                 generics,
@@ -102,63 +134,40 @@ pub fn derive(input: TokenStream) -> TokenStream {
                 vis,
                 brace_token,
                 enum_token,
-            };
-            let meta = context.enumeration(&mut item);
-            let ItemEnum {
-                ident, generics, ..
-            } = item;
-            body(
-                &context,
-                meta,
-                ident,
-                generics,
-                Ident::new("Enumeration", Span::call_site()),
-            )
-            .to_token_stream()
-        }
+            })
+            .to_token_stream(),
         Data::Union(DataUnion {
             fields,
             union_token,
-        }) => {
-            let mut item = ItemUnion {
+        }) => context
+            .implement_union(&ItemUnion {
                 attrs,
                 fields,
                 generics,
                 ident,
                 vis,
                 union_token,
-            };
-            let meta = context.union(&mut item);
-            let ItemUnion {
-                ident, generics, ..
-            } = item;
-            body(
-                &context,
-                meta,
-                ident,
-                generics,
-                Ident::new("Union", Span::call_site()),
-            )
-            .to_token_stream()
-        }
+            })
+            .to_token_stream(),
     }
     .into()
 }
 
 #[proc_macro_attribute]
 pub fn meta(attribute: TokenStream, item: TokenStream) -> TokenStream {
-    let meta_path = if attribute.is_empty() {
-        path(["entia", "meta"])
+    let context = if attribute.is_empty() {
+        Context::default()
     } else {
-        parse_macro_input!(attribute as Path)
+        let mut context = Context::default();
+        context.meta_path = parse_macro_input!(attribute as Path);
+        context
     };
 
-    let context = Context { meta: meta_path };
     match parse_macro_input!(item as Item) {
         Item::Mod(mut module) => {
             let meta = context.module(&mut module);
             if let Some((_, content)) = &mut module.content {
-                let meta_path = &context.meta;
+                let meta_path = &context.meta_path;
                 content.push(parse_quote! { pub static META: #meta_path::Module = #meta; });
             }
             module.to_token_stream().into()
@@ -175,8 +184,52 @@ pub fn meta(attribute: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 impl Context {
+    pub fn implement(&self) -> Self {
+        let mut context = self.clone();
+        context.implement = true;
+        context
+    }
+
+    pub fn implement_structure(&self, item: &ItemStruct) -> impl ToTokens {
+        let context = self.implement();
+        let meta = context.structure(item);
+        context
+            .implement_body(meta, &item.ident, &item.generics, "Structure")
+            .to_token_stream()
+    }
+
+    pub fn implement_enumeration(&self, item: &ItemEnum) -> impl ToTokens {
+        let context = self.implement();
+        let meta = context.enumeration(item);
+        context
+            .implement_body(meta, &item.ident, &item.generics, "Enumeration")
+            .to_token_stream()
+    }
+
+    pub fn implement_union(&self, item: &ItemUnion) -> impl ToTokens {
+        let context = self.implement();
+        let meta = context.union(item);
+        context
+            .implement_body(meta, &item.ident, &item.generics, "Union")
+            .to_token_stream()
+    }
+
+    pub fn item(&self, item: &mut Item) -> Option<impl ToTokens> {
+        match item {
+            Item::Const(item) => Some(self.constant(item).to_token_stream()),
+            Item::Enum(item) => Some(self.enumeration(item).to_token_stream()),
+            Item::Fn(item) if item.sig.generics.params.is_empty() => {
+                Some(self.function(item).to_token_stream())
+            }
+            Item::Mod(item) if item.content.is_some() => Some(self.module(item).to_token_stream()),
+            Item::Static(item) => Some(self.r#static(item).to_token_stream()),
+            Item::Struct(item) => Some(self.structure(item).to_token_stream()),
+            _ => None,
+        }
+    }
+
     pub fn access(&self, visibility: &Visibility) -> impl ToTokens {
-        let meta_path = &self.meta;
+        let meta_path = &self.meta_path;
         match visibility {
             Visibility::Public(_) => quote! { #meta_path::Access::Public },
             Visibility::Crate(_) => quote! { #meta_path::Access::Crate },
@@ -191,9 +244,40 @@ impl Context {
         }
     }
 
-    pub fn attribute(&self, Attribute { path, tokens, .. }: &Attribute) -> impl ToTokens {
-        let meta_path = &self.meta;
-        quote_spanned!(path.__span() => #meta_path::Attribute { path: stringify!(#path), content: stringify!(#tokens) })
+    pub fn attribute(&self, Attribute { path, tokens, .. }: &Attribute) -> Option<impl ToTokens> {
+        if let Some(ident) = path.get_ident() {
+            match ident.to_string().as_str() {
+                "doc" => return None,
+                _ => {}
+            }
+        }
+        let meta_path = &self.meta_path;
+        Some(
+            quote_spanned!(path.__span() => #meta_path::Attribute { path: stringify!(#path), content: stringify!(#tokens) }),
+        )
+    }
+
+    pub fn push(&self, identifier: Ident) -> Self {
+        let mut context = self.clone();
+        if context.external {
+            let mut self_path = context.self_path.clone();
+            self_path.segments.push(PathSegment {
+                ident: identifier,
+                arguments: Default::default(),
+            });
+            context.super_path = mem::replace(&mut context.self_path, self_path);
+        }
+        context
+    }
+
+    pub fn pop(&self) -> Self {
+        let mut context = self.clone();
+        if context.external {
+            let mut super_path = context.super_path.clone();
+            super_path.segments.pop();
+            context.self_path = mem::replace(&mut context.super_path, super_path);
+        }
+        context
     }
 
     pub fn module(
@@ -206,60 +290,102 @@ impl Context {
             ..
         }: &mut ItemMod,
     ) -> impl ToTokens {
-        let meta_path = &self.meta;
+        let meta_path = &self.meta_path;
         let access = self.access(vis);
-        let attributes = attrs.iter().map(|attribute| self.attribute(attribute));
-        let (names, members) = content
-            .iter_mut()
-            .flat_map(|(_, content)| content)
-            .filter_map(|item| match item {
-                Item::Const(item) => {
-                    let meta = self.constant(item);
-                    Some((&item.ident, quote_spanned!(item.ident.span() => #meta_path::module::Member::Constant(#meta))))
+        let attributes = attrs
+            .iter()
+            .filter_map(|attribute| self.attribute(attribute));
+
+        if self.external && !matches!(vis, Visibility::Public(_)) {
+            let index = self.index([]);
+            quote_spanned!(ident.span() => {
+                #meta_path::Module {
+                    access: #access,
+                    name: stringify!(#ident),
+                    attributes: &[#(#attributes,)*],
+                    members: #meta_path::Index(&[], #index),
                 }
-                Item::Static(item) => {
-                    let meta = self.r#static(item);
-                    Some((&item.ident, quote_spanned!(item.ident.span() => #meta_path::module::Member::Static(#meta))))
-                }
-                Item::Enum(item) => {
-                    item.attrs.push(parse_quote! { #[derive(#meta_path::Meta)] });
-                    let name = &item.ident;
-                    Some((name, quote_spanned!(item.ident.span() => #meta_path::module::Member::Enumeration(<#name as #meta_path::Meta<&'static #meta_path::Enumeration>>::meta))))
-                }
-                Item::Fn(item) => {
-                    let meta = self.function(item);
-                    Some((&item.sig.ident, quote_spanned!(item.sig.ident.span() => #meta_path::module::Member::Function(#meta))))
-                }
-                Item::Struct(item) => {
-                    item.attrs.push(parse_quote! { #[derive(#meta_path::Meta)] });
-                    let name = &item.ident;
-                    Some((name, quote_spanned!(item.ident.span() => #meta_path::module::Member::Structure(<#name as #meta_path::Meta<&'static #meta_path::Structure>>::meta))))
-                }
-                Item::Mod(item) => {
-                    let meta = self.module(item);
-                    if let Some((_, content)) = &mut item.content {
-                        let meta_path = &self.meta;
-                        content.push(parse_quote! { pub static META: #meta_path::Module = #meta; });
+            })
+        } else {
+            let uses = content
+                .iter_mut()
+                .flat_map(|(_, items)| items)
+                .chain(&mut [parse_quote! { use self::*; }])
+                .filter_map(|item| match item {
+                    Item::Use(item) => {
+                        self.resolve_use(&mut item.tree);
+                        Some(item.to_token_stream())
                     }
-                    let name = &item.ident;
-                    Some((name, quote_spanned!(name.span() => #meta_path::module::Member::Module(&#name::META))))
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let (names, members) = content
+                .iter_mut()
+                .flat_map(|(_, content)| content)
+                .filter_map(|item| match item {
+                    Item::Const(item) => {
+                        let meta = self.constant(item);
+                        Some((&item.ident, quote_spanned!(item.ident.span() => #meta_path::module::Member::Constant(#meta))))
+                    }
+                    Item::Static(item) => {
+                        let meta = self.r#static(item);
+                        Some((&item.ident, quote_spanned!(item.ident.span() => #meta_path::module::Member::Static(#meta))))
+                    }
+                    Item::Fn(item) => {
+                        let meta = self.function(item);
+                        Some((&item.sig.ident, quote_spanned!(item.sig.ident.span() => #meta_path::module::Member::Function(#meta))))
+                    }
+                    Item::Enum(item) => {
+                        let implementation = self.implement_enumeration(item);
+                        let name = &item.ident;
+                        Some((name, quote_spanned!(item.ident.span() => {
+                            #implementation
+                            #meta_path::module::Member::Enumeration(<#name as #meta_path::Meta<&'static #meta_path::Enumeration>>::meta)
+                        })))
+                    }
+                    Item::Struct(item) => {
+                        let implementation = self.implement_structure(item);
+                        let name = &item.ident;
+                        Some((name, quote_spanned!(item.ident.span() => {
+                            #implementation
+                            #meta_path::module::Member::Structure(<#name as #meta_path::Meta<&'static #meta_path::Structure>>::meta)
+                        })))
+                    }
+                    Item::Mod(item) => {
+                        let context = self.push(item.ident.clone());
+                        let meta = context.module(item);
+                        Some(if context.external {
+                            (&item.ident, quote_spanned!(item.ident.span() => #meta_path::module::Member::Module(&#meta)))
+                        } else {
+                            if let Some((_, content)) = &mut item.content {
+                                let meta_path = &context.meta_path;
+                                content.push(parse_quote! { pub static META: #meta_path::Module = #meta; });
+                            }
+                            let name = &item.ident;
+                        (name, quote_spanned!(name.span() => #meta_path::module::Member::Module(&#name::META)))
+                        })
+                    }
+                    // Item::Impl(_) => todo!(),
+                    // Item::Trait(_) => todo!(),
+                    // Item::Union(_) => todo!(),
+                    _ => None,
+                }).unzip::<_, _, Vec<_>, Vec<_>>();
+
+            let index = self.index(names.into_iter().cloned().map(Some));
+            quote_spanned! (ident.span() => {
+                #(#uses)*
+                #meta_path::Module {
+                    access: #access,
+                    name: stringify!(#ident),
+                    attributes: &[#(#attributes,)*],
+                    members: #meta_path::Index(&[#(#members,)*], #index),
                 }
-                // Item::Impl(_) => todo!(),
-                // Item::Trait(_) => todo!(),
-                // Item::Union(_) => todo!(),
-                _ => None,
-            }).unzip::<_, _, Vec<_>, Vec<_>>();
-        let index = self.index(names.into_iter().cloned().map(Some));
-        quote_spanned! (ident.span() => #meta_path::Module {
-            access: #access,
-            name: stringify!(#ident),
-            attributes: &[#(#attributes,)*],
-            members: #meta_path::Index(&[#(#members,)*], #index),
-        })
+            })
+        }
     }
 
     pub fn generic(&self, generic: &GenericParam) -> impl ToTokens {
-        let meta_path = &self.meta;
+        let meta_path = &self.meta_path;
         match generic {
             GenericParam::Type(TypeParam {
                 attrs,
@@ -267,7 +393,9 @@ impl Context {
                 default,
                 ..
             }) => {
-                let attributes = attrs.iter().map(|attribute| self.attribute(attribute));
+                let attributes = attrs
+                    .iter()
+                    .filter_map(|attribute| self.attribute(attribute));
                 let default = default.as_ref().map_or_else(
                     || quote! { None },
                     |default| quote! { Some(<#default as #meta_path::Meta>::meta) },
@@ -283,7 +411,9 @@ impl Context {
                 lifetime: Lifetime { ident, .. },
                 ..
             }) => {
-                let attributes = attrs.iter().map(|attribute| self.attribute(attribute));
+                let attributes = attrs
+                    .iter()
+                    .filter_map(|attribute| self.attribute(attribute));
                 quote_spanned!(ident.span() => #meta_path::Generic::Lifetime(#meta_path::generic::Lifetime {
                     name: stringify!(#ident),
                     attributes: &[#(#attributes,)*],
@@ -296,7 +426,9 @@ impl Context {
                 ty,
                 ..
             }) => {
-                let attributes = attrs.iter().map(|attribute| self.attribute(attribute));
+                let attributes = attrs
+                    .iter()
+                    .filter_map(|attribute| self.attribute(attribute));
                 let default = default.as_ref().map_or_else(
                     || quote! { None },
                     |default| quote! { Some(#meta_path::Value::from(#default)) },
@@ -320,13 +452,15 @@ impl Context {
             vis,
             ..
         }: &Field,
-        parent: &Ident,
+        parent: &Type,
         index: usize,
         deconstruct: &impl ToTokens,
     ) -> impl ToTokens {
-        let meta_path = &self.meta;
+        let meta_path = &self.meta_path;
         let access = self.access(vis);
-        let attributes = attrs.iter().map(|attribute| self.attribute(attribute));
+        let attributes = attrs
+            .iter()
+            .filter_map(|attribute| self.attribute(attribute));
         let name = ident.as_ref().map_or_else(
             || {
                 let index = LitInt::new(&index.to_string(), ty.__span());
@@ -367,7 +501,8 @@ impl Context {
     pub fn fields(
         &self,
         fields: &Fields,
-        ident: &Ident,
+        parent: &Type,
+        generics: &Generics,
         path: &Path,
     ) -> (
         impl ToTokens,
@@ -376,7 +511,8 @@ impl Context {
         impl ToTokens,
         impl ToTokens,
     ) {
-        let meta_path = &self.meta;
+        let span = parent.__span();
+        let meta_path = &self.meta_path;
         let (construct, deconstruct, names, values, fields) = match fields {
             Fields::Named(fields) => {
                 let pairs = fields.named.iter().map(
@@ -387,14 +523,14 @@ impl Context {
                     .iter()
                     .map(|Field { ident, .. }| (ident, quote! { #meta_path::Value::from(#ident) }))
                     .unzip::<_, _, Vec<_>, Vec<_>>();
-                let construct = quote_spanned!(ident.span() => #path { #(#pairs,)* });
-                let deconstruct = quote_spanned!(ident.span() => #path { #(#keys,)* });
+                let construct = quote_spanned!(span => #path { #(#pairs,)* });
+                let deconstruct = quote_spanned!(span => #path { #(#keys,)* });
                 let (names, fields) = fields
                     .named
                     .iter()
                     .enumerate()
                     .map(|(index, field)| {
-                        (&field.ident, self.field(field, ident, index, &deconstruct))
+                        (&field.ident, self.field(field, parent, index, &deconstruct))
                     })
                     .unzip::<_, _, Vec<_>, Vec<_>>();
                 (construct, deconstruct, names, values, fields)
@@ -410,35 +546,41 @@ impl Context {
                         (key.clone(), quote! { #meta_path::Value::from(#key) })
                     })
                     .unzip::<_, _, Vec<_>, Vec<_>>();
-                let construct = quote_spanned!(ident.span() => #path (#(#pairs,)*));
-                let deconstruct = quote_spanned!(ident.span() => #path (#(#keys,)*));
+                let construct = quote_spanned!(span => #path (#(#pairs,)*));
+                let deconstruct = quote_spanned!(span => #path (#(#keys,)*));
                 let (names, fields) = fields
                     .unnamed
                     .iter()
                     .enumerate()
                     .map(|(index, field)| {
-                        (&field.ident, self.field(field, ident, index, &deconstruct))
+                        (&field.ident, self.field(field, parent, index, &deconstruct))
                     })
                     .unzip::<_, _, Vec<_>, Vec<_>>();
                 (construct, deconstruct, names, values, fields)
             }
             Fields::Unit => (
-                quote_spanned!(ident.span() => #path),
-                quote_spanned!(ident.span() => #path),
+                quote_spanned!(span => #path),
+                quote_spanned!(span => #path),
                 vec![],
                 vec![],
                 vec![],
             ),
         };
 
-        let new = quote_spanned!(ident.span() => |values| Some(Box::new(#construct)));
-        let values = quote_spanned!(ident.span() => |instance| match *instance.downcast::<#ident>()? {
-            #deconstruct => Ok(Box::new([#(#values,)*])),
-            #[allow(unreachable_patterns)]
-            instance => Err(Box::new(instance)),
-        });
+        let (new, values) = if self.implement || generics.params.is_empty() {
+            (
+                quote_spanned!(span => Some(|values| Some(Box::new(#construct)))),
+                quote_spanned!(span => Some(|instance| match *instance.downcast::<#parent>()? {
+                    #deconstruct => Ok(Box::new([#(#values,)*])),
+                    #[allow(unreachable_patterns)]
+                    instance => Err(Box::new(instance)),
+                })),
+            )
+        } else {
+            (quote_spanned!(span => None), quote_spanned!(span => None))
+        };
         let index = self.index(names.into_iter().cloned());
-        let fields = quote_spanned!(ident.span() => #meta_path::Index(&[#(#fields,)*], #index));
+        let fields = quote_spanned!(span => #meta_path::Index(&[#(#fields,)*], #index));
         (construct, deconstruct, new, values, fields)
     }
 
@@ -451,18 +593,34 @@ impl Context {
             generics,
             fields,
             ..
-        }: &mut ItemStruct,
+        }: &ItemStruct,
     ) -> impl ToTokens {
-        let meta_path = &self.meta;
+        let meta_path = &self.meta_path;
         let access = self.access(vis);
-        let attributes = attrs.iter().map(|attribute| self.attribute(attribute));
+        let attributes = attrs
+            .iter()
+            .filter_map(|attribute| self.attribute(attribute));
+        let (_, type_generics, _) = generics.split_for_impl();
+        let parent: Type = parse_quote!(#ident #type_generics);
+        let (size, identifier) = if self.implement || generics.params.is_empty() {
+            (
+                quote_spanned!(ident.span() => Some(::std::mem::size_of::<#parent>())),
+                quote_spanned!(ident.span() => Some(::std::any::TypeId::of::<#parent>)),
+            )
+        } else {
+            (
+                quote_spanned!(ident.span() => None),
+                quote_spanned!(ident.span() => None),
+            )
+        };
+        let (_, _, new, values, fields) =
+            self.fields(fields, &parent, &generics, &parse_quote!(#ident));
         let generics = generics.params.iter().map(|generic| self.generic(generic));
-        let (_, _, new, values, fields) = self.fields(fields, ident, &parse_quote!(#ident));
         quote_spanned!(ident.span() => #meta_path::Structure {
             access: #access,
             name: stringify!(#ident),
-            size: ::std::mem::size_of::<#ident>(),
-            identifier: ::std::any::TypeId::of::<#ident>,
+            size: #size,
+            identifier: #identifier,
             new: #new,
             values: #values,
             attributes: &[#(#attributes,)*],
@@ -482,20 +640,27 @@ impl Context {
             ..
         }: &ItemEnum,
     ) -> impl ToTokens {
-        let meta_path = &self.meta;
+        let meta_path = &self.meta_path;
         let access = self.access(vis);
-        let attributes = attrs.iter().map(|attribute| self.attribute(attribute));
-        let generics = generics.params.iter().map(|generic| self.generic(generic));
+        let attributes = attrs
+            .iter()
+            .filter_map(|attribute| self.attribute(attribute));
+        let (_, type_generics, _) = generics.split_for_impl();
+        let parent: Type = parse_quote!(#ident #type_generics);
         let (names, variants) = variants
             .iter()
             .map(|variant| {
                 let attributes = variant
                     .attrs
                     .iter()
-                    .map(|attribute| self.attribute(attribute));
+                    .filter_map(|attribute| self.attribute(attribute));
                 let name = &variant.ident;
-                let (_, deconstruct, new, values, fields) =
-                    self.fields(&variant.fields, ident, &parse_quote!(#ident::#name));
+                let (_, deconstruct, new, values, fields) = self.fields(
+                    &variant.fields,
+                    &parent,
+                    &generics,
+                    &parse_quote!(#ident::#name),
+                );
                 (
                     (&variant.ident, deconstruct),
                     quote_spanned!(variant.ident.span() => #meta_path::Variant {
@@ -521,6 +686,7 @@ impl Context {
             _ => None
         });
         let index = self.index(names.into_iter().map(|(name, _)| Some(name.clone())));
+        let generics = generics.params.iter().map(|generic| self.generic(generic));
         quote_spanned!(ident.span() => #meta_path::Enumeration {
             access: #access,
             name: stringify!(#ident),
@@ -564,9 +730,11 @@ impl Context {
             }
         }
 
-        let meta_path = &self.meta;
+        let meta_path = &self.meta_path;
         let access = self.access(vis);
-        let attributes = attrs.iter().map(|attribute| self.attribute(attribute));
+        let attributes = attrs
+            .iter()
+            .filter_map(|attribute| self.attribute(attribute));
         let signature = self.signature(sig);
         let name = &sig.ident;
         let invoke_inputs = sig.inputs.iter().map(|input| {
@@ -604,7 +772,7 @@ impl Context {
             ..
         }: &Signature,
     ) -> impl ToTokens {
-        let meta_path = &self.meta;
+        let meta_path = &self.meta_path;
         let modifiers = asyncness.map_or(0 as u8, |_| 1 << 0)
             | constness.map_or(0 as u8, |_| 1 << 1)
             | unsafety.map_or(0 as u8, |_| 1 << 2);
@@ -635,7 +803,7 @@ impl Context {
             reference: Option<Option<&Lifetime>>,
             mutability: bool,
         ) -> impl ToTokens {
-            let meta_path = &context.meta;
+            let meta_path = &context.meta_path;
             match (reference, mutability) {
                 (Some(_), true) => {
                     // TODO: Add 'lifetime' to 'Borrow'
@@ -679,7 +847,7 @@ impl Context {
             }
         }
 
-        let meta_path = &self.meta;
+        let meta_path = &self.meta_path;
         let (name, attributes, meta, borrow) = match parameter {
             FnArg::Receiver(Receiver {
                 attrs,
@@ -707,7 +875,9 @@ impl Context {
                 )
             }
         };
-        let attributes = attributes.iter().map(|attribute| self.attribute(attribute));
+        let attributes = attributes
+            .iter()
+            .filter_map(|attribute| self.attribute(attribute));
         quote_spanned!(parameter.__span() => #meta_path::Parameter {
             borrow: #borrow,
             name: #name,
@@ -741,9 +911,11 @@ impl Context {
             ..
         }: &ItemStatic,
     ) -> impl ToTokens {
-        let meta_path = &self.meta;
+        let meta_path = &self.meta_path;
         let access = self.access(vis);
-        let attributes = attrs.iter().map(|attribute| self.attribute(attribute));
+        let attributes = attrs
+            .iter()
+            .filter_map(|attribute| self.attribute(attribute));
         let get_mut = if mutability.is_some() {
             quote_spanned!(ident.span() => Some(|| &mut #ident))
         } else {
@@ -769,9 +941,11 @@ impl Context {
             ..
         }: &ItemConst,
     ) -> impl ToTokens {
-        let meta_path = &self.meta;
+        let meta_path = &self.meta_path;
         let access = self.access(vis);
-        let attributes = attrs.iter().map(|attribute| self.attribute(attribute));
+        let attributes = attrs
+            .iter()
+            .filter_map(|attribute| self.attribute(attribute));
         quote_spanned!(ident.span() => #meta_path::Constant {
             access: #access,
             name: stringify!(#ident),
@@ -779,6 +953,85 @@ impl Context {
             value: &#ident,
             attributes: &[#(#attributes,)*],
         })
+    }
+
+    fn resolve_use(&self, tree: &mut UseTree) {
+        match tree {
+            UseTree::Path(UsePath { ident, .. })
+            | UseTree::Name(UseName { ident, .. })
+            | UseTree::Rename(UseRename { ident, .. }) => {
+                if let Some(path) = match ident.to_string().as_str() {
+                    "crate" => Some(&self.crate_path),
+                    "super" => Some(&self.super_path),
+                    "self" => Some(&self.self_path),
+                    _ => None,
+                } {
+                    let mut segments = path.segments.iter();
+                    *ident = segments.next_back().unwrap().ident.clone();
+
+                    let mut tree = tree;
+                    for PathSegment { ident, .. } in segments {
+                        *tree = UseTree::Path(UsePath {
+                            ident: ident.clone(),
+                            tree: Box::new(mem::replace(
+                                tree,
+                                UseTree::Glob(UseGlob {
+                                    star_token: Default::default(),
+                                }),
+                            )),
+                            colon2_token: Default::default(),
+                        });
+                        match tree {
+                            UseTree::Path(path) => tree = &mut path.tree,
+                            _ => unreachable!(),
+                        }
+                    }
+                }
+            }
+            UseTree::Group(UseGroup { items, .. }) => {
+                for item in items {
+                    self.resolve_use(item);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn implement_body(
+        &self,
+        meta: impl ToTokens,
+        ident: &Ident,
+        generics: &Generics,
+        suffix: &str,
+    ) -> impl ToTokens {
+        let meta_path = &self.meta_path;
+        let suffix = Ident::new(suffix, Span::call_site());
+        let (impl_generics, type_generics, where_clauses) = generics.split_for_impl();
+        quote_spanned!(ident.span() =>
+            #[automatically_derived]
+            impl #impl_generics #meta_path::Meta<&'static #meta_path::#suffix> for #ident #type_generics #where_clauses {
+                #[inline]
+                fn meta() -> &'static #meta_path::#suffix {
+                    &#meta
+                }
+            }
+
+            #[automatically_derived]
+            impl #impl_generics #meta_path::Meta<#meta_path::Data> for #ident #type_generics #where_clauses {
+                #[inline]
+                fn meta() -> #meta_path::Data {
+                    #meta_path::Data::#suffix(<Self as #meta_path::Meta<&'static #meta_path::#suffix>>::meta())
+                }
+            }
+
+            #[automatically_derived]
+            impl #impl_generics #meta_path::Meta<#meta_path::module::Member> for #ident #type_generics #where_clauses {
+                #[inline]
+                fn meta() -> #meta_path::module::Member {
+                    #meta_path::module::Member::#suffix(<Self as #meta_path::Meta<&'static #meta_path::#suffix>>::meta)
+                }
+            }
+        )
     }
 
     fn unwrap(ty: &Type) -> &Type {
