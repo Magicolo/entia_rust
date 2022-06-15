@@ -13,12 +13,12 @@ use syn::{parse_macro_input, Data, DataStruct};
 
 #[proc_macro_derive(Resource)]
 pub fn resource(input: TokenStream) -> TokenStream {
-    data(input, ["entia", "world", "Resource"])
+    data(input, ["entia", "resource", "Resource"])
 }
 
 #[proc_macro_derive(Component)]
 pub fn component(input: TokenStream) -> TokenStream {
-    data(input, ["entia", "world", "Component"])
+    data(input, ["entia", "component", "Component"])
 }
 
 #[proc_macro_derive(Message)]

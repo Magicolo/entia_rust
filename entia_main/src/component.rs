@@ -1,8 +1,8 @@
 use crate::{
     depend::{Depend, Dependency},
     error::Result,
+    item::{self, At, Item},
     meta::Meta,
-    query::item::{self, At, Item},
     store::Store,
     world::World,
 };

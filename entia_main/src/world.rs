@@ -5,7 +5,6 @@ use crate::{
     segment::Segment,
     store::Store,
 };
-use entia_core::Maybe;
 use std::{
     any::{type_name, TypeId},
     collections::{HashMap, HashSet},

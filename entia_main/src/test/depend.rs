@@ -1,4 +1,4 @@
-use crate::query::item::Item;
+use crate::item::Item;
 
 use super::{error::Result, *};
 

@@ -98,7 +98,7 @@ fn main() {
                 vec![With::new(|family| {
                     Spawn::new(Add::new(Target(family.entity())))
                 })],
-                With::new(|family| vec![Spawn::new(Add::new(Target(family.entity())))]),
+                With::new(|family| [Spawn::new(Add::new(Target(family.entity())))]),
                 [Spawn::new(With::new(|family| {
                     Add::new(Target(family.entity()))
                 }))],

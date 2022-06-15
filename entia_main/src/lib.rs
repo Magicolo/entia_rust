@@ -9,8 +9,10 @@ pub mod entity;
 pub mod error;
 pub mod families;
 pub mod family;
+pub mod filter;
 pub mod ignore;
 pub mod inject;
+pub mod item;
 pub mod message;
 pub mod meta;
 pub mod query;
@@ -33,13 +35,11 @@ pub use crate::{
     entity::Entity,
     families::{adopt::Adopt, reject::Reject, Families},
     family::Family,
+    filter::{Filter, Has, Not},
     ignore::Ignore,
     inject::{Inject, Injector},
     message::{emit::Emit, receive::Receive, Message},
-    query::{
-        filter::{Filter, Has, Not},
-        Query,
-    },
+    query::Query,
     resource::Resource,
     system::{runner::Runner, schedule::Scheduler, IntoSystem, System},
     template::{Add, LeafTemplate, Spawn, SpawnTemplate, StaticTemplate, Template, With},

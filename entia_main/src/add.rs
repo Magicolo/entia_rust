@@ -4,7 +4,9 @@ use crate::{
     defer::{self, Resolve},
     depend::Depend,
     destroy::{Early, Late},
-    query::item::{At, Item},
+    error::Result,
+    item::{At, Context, Item},
+    template::LeafTemplate,
 };
 
 /*
@@ -19,25 +21,25 @@ use crate::{
     // For each segment of the query, try to create a segment with the added component.
 */
 
-// TODO: 'T' should be similar to 'Template'.
-pub struct Add<'a, T: 'static, R = Early>(defer::Defer<'a, Inner<T>>, PhantomData<R>);
+pub struct Add<'a, T: LeafTemplate + 'a, R = Early>(defer::Defer<'a, Inner<T>>, PhantomData<R>);
 pub struct State<T, R>(defer::State<Inner<T>>, PhantomData<R>);
 
 struct Inner<T>(PhantomData<T>);
 struct Defer<T>(PhantomData<T>);
 
-impl<T, R> Item for Add<'_, T, R>
+impl<T: LeafTemplate + 'static, R> Item for Add<'_, T, R>
 where
     State<T, R>: Depend,
 {
     type State = State<T, R>;
 
-    fn initialize(context: crate::query::item::Context) -> crate::error::Result<Self::State> {
+    fn initialize(context: Context) -> Result<Self::State> {
+        // T::declare(input, context)
         todo!()
     }
 }
 
-impl<'a, T: 'static, R> At<'a> for State<T, R> {
+impl<'a, T: LeafTemplate + 'a, R> At<'a> for State<T, R> {
     type State = ();
     type Ref = Add<'a, T, R>;
     type Mut = Add<'a, T, R>;

@@ -5,7 +5,7 @@ use crate::{
     entity::Entity,
     error,
     inject::Inject,
-    query::item::{At, Context, Item},
+    item::{At, Context, Item},
     resource,
     world::World,
 };

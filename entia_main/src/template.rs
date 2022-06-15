@@ -370,7 +370,6 @@ impl<'a> ApplyContext<'a> {
 }
 
 unsafe impl<T: SpawnTemplate> SpawnTemplate for Option<T> {}
-unsafe impl<T: SpawnTemplate + StaticTemplate> StaticTemplate for Option<T> {}
 unsafe impl<T: SpawnTemplate + LeafTemplate> LeafTemplate for Option<T> {}
 
 impl<T: SpawnTemplate> Template for Option<T> {
@@ -406,7 +405,6 @@ impl<T: SpawnTemplate> Template for Option<T> {
 }
 
 unsafe impl<T: SpawnTemplate> SpawnTemplate for Vec<T> {}
-unsafe impl<T: SpawnTemplate + StaticTemplate> StaticTemplate for Vec<T> {}
 unsafe impl<T: SpawnTemplate + LeafTemplate> LeafTemplate for Vec<T> {}
 
 impl<T: SpawnTemplate> Template for Vec<T> {
@@ -460,9 +458,10 @@ impl<T: SpawnTemplate, const N: usize> Template for [T; N] {
 
     fn static_count(state: &Self::State, mut context: CountContext) -> Result<bool> {
         for _ in 0..N {
-            if !T::static_count(state, context.owned())? {
-                return Ok(false);
+            if T::static_count(state, context.owned())? {
+                continue;
             }
+            return Ok(false);
         }
         Ok(true)
     }
@@ -630,17 +629,24 @@ impl<T: Template> Template for Spawn<T> {
     }
 }
 
+unsafe impl<T> SpawnTemplate for PhantomData<T> {}
+unsafe impl<T> StaticTemplate for PhantomData<T> {}
+unsafe impl<T> LeafTemplate for PhantomData<T> {}
+
 impl<T> Template for PhantomData<T> {
     type Input = <() as Template>::Input;
     type Declare = <() as Template>::Declare;
     type State = <() as Template>::State;
 
+    #[inline]
     fn declare(input: Self::Input, context: DeclareContext) -> Self::Declare {
         <() as Template>::declare(input, context)
     }
+    #[inline]
     fn initialize(state: Self::Declare, context: InitializeContext) -> Self::State {
         <() as Template>::initialize(state, context)
     }
+    #[inline]
     fn static_count(state: &Self::State, context: CountContext) -> Result<bool> {
         <() as Template>::static_count(state, context)
     }

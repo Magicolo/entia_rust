@@ -73,7 +73,7 @@ impl<'a, T: Send + Sync + 'static> Get<'a> for Write<T> {
     type Item = &'a mut T;
 
     #[inline]
-    fn get(&'a mut self, world: &World) -> Self::Item {
+    fn get(&'a mut self, _: &World) -> Self::Item {
         unsafe { &mut *self.store().data() }
     }
 }
@@ -132,7 +132,7 @@ impl<'a, T: Send + Sync + 'static> Get<'a> for Read<T> {
     type Item = &'a T;
 
     #[inline]
-    fn get(&'a mut self, world: &World) -> Self::Item {
+    fn get(&'a mut self, _: &World) -> Self::Item {
         unsafe { &*self.store().data() }
     }
 }

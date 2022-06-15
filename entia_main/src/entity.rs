@@ -1,7 +1,7 @@
 use crate::{
     depend::{Depend, Dependency},
     error::Result,
-    query::item::{At, Context, Item},
+    item::{At, Context, Item},
     store::Store,
     world::World,
 };

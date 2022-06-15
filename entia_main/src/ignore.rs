@@ -3,7 +3,7 @@ use crate::{
     depend::{self, Depend, Dependency},
     error::Result,
     inject::{self, Get, Inject},
-    query::item::{self, At, Item},
+    item::{self, At, Item},
     world::World,
 };
 use std::marker::PhantomData;
