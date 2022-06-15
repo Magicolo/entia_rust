@@ -1,10 +1,14 @@
 use crate::{
+    component::Component,
     entities::Entities,
     entity::Entity,
     error::{Error, Result},
     family::template::{EntityIndices, Family, SegmentIndices},
+    meta::Meta,
     recurse,
-    world::{meta::Meta, segment::Segment, store::Store, Component, World},
+    segment::Segment,
+    store::Store,
+    world::World,
 };
 use entia_core::Marker;
 use std::{collections::HashMap, marker::PhantomData, sync::Arc};

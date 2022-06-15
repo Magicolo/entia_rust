@@ -2,7 +2,8 @@ use crate::{
     depend::{Depend, Dependency},
     error::Result,
     query::item::{At, Context, Item},
-    world::{store::Store, World},
+    store::Store,
+    world::World,
 };
 use std::{fmt, sync::Arc};
 

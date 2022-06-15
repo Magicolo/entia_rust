@@ -1,9 +1,4 @@
-use crate::{
-    entity::Entity,
-    error,
-    world::{meta::Meta, World},
-    Resource,
-};
+use crate::{entity::Entity, error, meta::Meta, world::World, Resource};
 use std::{
     cmp::{max, min},
     mem::replace,

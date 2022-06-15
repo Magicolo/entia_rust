@@ -6,9 +6,8 @@ use crate::{
     error::Result,
     family::Family,
     inject::{Context, Get, Inject},
-    read::Read,
+    resource::{Read, Write},
     world::World,
-    write::Write,
 };
 
 pub struct Families<'a>(&'a Entities);

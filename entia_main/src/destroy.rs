@@ -5,8 +5,8 @@ use crate::{
     entity::Entity,
     error::{Error, Result},
     inject::{Context, Get, Inject},
+    resource::Write,
     world::World,
-    write::Write,
 };
 use std::{collections::HashSet, marker::PhantomData};
 

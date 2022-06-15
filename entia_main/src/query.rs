@@ -5,10 +5,11 @@ use crate::{
     entity::Entity,
     error::Result,
     inject::{self, Get, Inject},
-    read::Read,
+    meta::Meta,
     recurse,
-    world::{meta::Meta, segment::Segment, World},
-    write::Write,
+    resource::{Read, Write},
+    segment::Segment,
+    world::World,
     Resource,
 };
 use std::{

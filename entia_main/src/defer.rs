@@ -10,8 +10,9 @@ use crate::{
     depend::{Depend, Dependency},
     error::Result,
     inject::{Context, Get, Inject},
-    world::{meta::Meta, World},
-    write::Write,
+    meta::Meta,
+    resource::Write,
+    world::World,
     Resource,
 };
 

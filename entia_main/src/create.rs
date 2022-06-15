@@ -6,9 +6,9 @@ use crate::{
     error::{Error, Result},
     family::template::{EntityIndices, Families, Family, SegmentIndices},
     inject::{Context, Get, Inject},
+    resource::Write,
     template::{ApplyContext, CountContext, DeclareContext, InitializeContext, Spawn, Template},
     world::World,
-    write::Write,
 };
 use std::{
     collections::HashMap,

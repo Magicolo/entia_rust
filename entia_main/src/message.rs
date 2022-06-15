@@ -2,8 +2,9 @@ use crate::{
     depend::{Depend, Dependency},
     error::Result,
     inject::{Context, Get, Inject},
-    world::{meta::Meta, World},
-    write::Write,
+    meta::Meta,
+    resource::Write,
+    world::World,
     Resource,
 };
 use std::{collections::VecDeque, iter::FusedIterator};
@@ -110,7 +111,7 @@ pub mod emit {
 
     unsafe impl<T: 'static> Depend for State<T> {
         fn depend(&self, _: &World) -> Vec<Dependency> {
-            vec![Dependency::defer::<T>().segment(self.0.segment())]
+            vec![Dependency::defer::<T>().segment(usize::MAX)]
         }
     }
 }
@@ -201,7 +202,7 @@ pub mod receive {
 
     unsafe impl<T: 'static> Depend for State<T> {
         fn depend(&self, _: &World) -> Vec<Dependency> {
-            vec![Dependency::read::<T>().segment(self.1.segment())]
+            vec![Dependency::read::<T>().segment(usize::MAX)]
         }
     }
 }

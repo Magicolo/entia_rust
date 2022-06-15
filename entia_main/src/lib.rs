@@ -1,3 +1,5 @@
+pub mod add;
+pub mod component;
 pub mod create;
 pub mod defer;
 pub mod depend;
@@ -10,18 +12,21 @@ pub mod family;
 pub mod ignore;
 pub mod inject;
 pub mod message;
+pub mod meta;
 pub mod query;
-pub mod read;
+pub mod resource;
+pub mod segment;
+pub mod store;
 pub mod system;
 pub mod template;
 pub mod world;
-pub mod write;
 
 pub mod core {
     pub use entia_core::*;
 }
 
 pub use crate::{
+    component::Component,
     create::Create,
     defer::Defer,
     destroy::Destroy,
@@ -35,16 +40,13 @@ pub use crate::{
         filter::{Filter, Has, Not},
         Query,
     },
+    resource::Resource,
     system::{runner::Runner, schedule::Scheduler, IntoSystem, System},
     template::{Add, LeafTemplate, Spawn, SpawnTemplate, StaticTemplate, Template, With},
-    world::{Component, Resource, World},
+    world::World,
 };
 pub(crate) use entia_macro::recurse_16 as recurse;
 pub use entia_main_derive::{Component, Depend, Filter, Message, Resource, Template};
-
-pub mod meta {
-    pub use entia_meta::*;
-}
 
 #[cfg(test)]
 mod test;

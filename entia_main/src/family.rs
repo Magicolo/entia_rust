@@ -1,11 +1,12 @@
 use crate::{
+    component,
     depend::{Depend, Dependency},
     entities::Entities,
     entity::Entity,
     error,
     inject::Inject,
     query::item::{At, Context, Item},
-    read::Read,
+    resource,
     world::World,
 };
 use std::{fmt, iter::from_fn};
@@ -16,7 +17,7 @@ use std::{fmt, iter::from_fn};
 // of being scheduled in sequence because of the 'defer-read' dependency conflict that couldn't be seen.
 #[derive(Clone)]
 pub struct Family<'a>(Entity, &'a Entities);
-pub struct State(Read<Entity>, Read<Entities>);
+pub struct State(component::Read<Entity>, resource::Read<Entities>);
 
 impl<'a> Family<'a> {
     #[inline]
@@ -147,8 +148,8 @@ impl Item for Family<'_> {
 
     fn initialize(mut context: Context) -> Result<Self::State, error::Error> {
         Ok(State(
-            <Read<_> as Item>::initialize(context.owned())?,
-            <Read<_> as Inject>::initialize(None, context.into())?,
+            <component::Read<_> as Item>::initialize(context.owned())?,
+            <resource::Read<_> as Inject>::initialize(None, context.into())?,
         ))
     }
 }
