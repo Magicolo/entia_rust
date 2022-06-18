@@ -6,8 +6,9 @@ use crate::{
     store::Store,
 };
 use std::{
-    any::{type_name, TypeId},
+    any::TypeId,
     collections::{HashMap, HashSet},
+    ops::Deref,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -101,13 +102,13 @@ impl World {
     }
 
     pub fn get_meta<T: Send + Sync + 'static>(&self) -> Result<Arc<Meta>> {
-        let key = TypeId::of::<T>();
-        match self.type_to_meta.get(&key) {
+        self.get_meta_with(TypeId::of::<T>())
+    }
+
+    pub fn get_meta_with(&self, identifier: TypeId) -> Result<Arc<Meta>> {
+        match self.type_to_meta.get(&identifier) {
             Some(&index) => Ok(self.metas[index].clone()),
-            None => Err(Error::MissingMeta {
-                name: type_name::<T>(),
-                identifier: key,
-            }),
+            None => Err(Error::MissingMeta { identifier }),
         }
     }
 
@@ -125,11 +126,18 @@ impl World {
         Some(&self.segments[self.get_segment_index(&metas.into_iter().collect())?])
     }
 
-    pub fn get_or_add_segment<'a>(
+    pub fn get_or_add_segment<'a, 'b>(
         &'a mut self,
-        metas: impl IntoIterator<Item = Arc<Meta>>,
+        metas: impl IntoIterator<Item = impl Deref<Target = Meta>>,
     ) -> &'a mut Segment {
-        let types: HashSet<_> = metas.into_iter().map(|meta| meta.identifier()).collect();
+        self.get_or_add_segment_with(metas.into_iter().map(|meta| meta.identifier()))
+    }
+
+    pub fn get_or_add_segment_with<'a, 'b>(
+        &'a mut self,
+        types: impl IntoIterator<Item = TypeId>,
+    ) -> &'a mut Segment {
+        let types: HashSet<_> = types.into_iter().collect();
         let index = match self.get_segment_index(&types) {
             Some(index) => index,
             None => {

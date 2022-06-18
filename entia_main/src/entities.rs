@@ -49,59 +49,10 @@ impl Datum {
     };
 
     #[inline]
-    pub fn pre_initialize(
-        &mut self,
-        generation: u32,
-        parent: Option<u32>,
-        first_child: Option<u32>,
-        last_child: Option<u32>,
-        previous_sibling: Option<u32>,
-        next_sibling: Option<u32>,
-    ) -> bool {
-        if self.released() {
-            *self = Datum {
-                generation,
-                store_index: u32::MAX,
-                segment_index: u32::MAX,
-                parent: parent.unwrap_or(u32::MAX),
-                first_child: first_child.unwrap_or(u32::MAX),
-                last_child: last_child.unwrap_or(u32::MAX),
-                previous_sibling: previous_sibling.unwrap_or(u32::MAX),
-                next_sibling: next_sibling.unwrap_or(u32::MAX),
-            };
-            true
-        } else {
-            false
-        }
-    }
-
-    #[inline]
-    pub fn post_initialize(&mut self, store_index: u32, segment_index: u32) -> bool {
-        if self.released() {
-            self.store_index = store_index;
-            self.segment_index = segment_index;
-            true
-        } else {
-            false
-        }
-    }
-
-    #[inline]
     pub fn update(&mut self, store_index: u32, segment_index: u32) -> bool {
         if self.initialized() {
             self.store_index = store_index;
             self.segment_index = segment_index;
-            true
-        } else {
-            false
-        }
-    }
-
-    #[inline]
-    pub fn release(&mut self) -> bool {
-        if self.initialized() {
-            self.store_index = u32::MAX;
-            self.segment_index = u32::MAX;
             true
         } else {
             false
@@ -190,9 +141,19 @@ impl Entities {
         let index = self.free.0.len();
         self.free.0.extend(entities);
         for &entity in &self.free.0[index..] {
-            self.data.0[entity.index() as usize].release();
+            self.data.0[entity.index() as usize].update(u32::MAX, u32::MAX);
         }
         *self.free.1.get_mut() = self.free.0.len() as isize;
+    }
+
+    #[inline]
+    pub(crate) fn initialize(&mut self, index: u32, datum: Datum) -> Option<Datum> {
+        let target = self.data.0.get_mut(index as usize)?;
+        if target.released() {
+            Some(replace(target, datum))
+        } else {
+            None
+        }
     }
 
     #[inline]
@@ -255,35 +216,35 @@ impl Entities {
     }
 
     pub fn children(&self, entity: Entity) -> impl DoubleEndedIterator<Item = Entity> + '_ {
-        struct Children<'a>(u32, u32, bool, &'a Entities);
+        struct Children<'a>(u32, u32, &'a Entities);
 
         impl Iterator for Children<'_> {
             type Item = Entity;
 
+            #[inline]
             fn next(&mut self) -> Option<Self::Item> {
-                if self.2 {
-                    None
+                let datum = self.2.get_datum_at(self.0)?;
+                let entity = datum.entity(self.0);
+                self.0 = if self.0 == self.1 {
+                    u32::MAX
                 } else {
-                    let datum = self.3.get_datum_at(self.0)?;
-                    let entity = datum.entity(self.0);
-                    self.2 = self.0 == self.1;
-                    self.0 = datum.next_sibling;
-                    Some(entity)
-                }
+                    datum.next_sibling
+                };
+                Some(entity)
             }
         }
 
         impl DoubleEndedIterator for Children<'_> {
+            #[inline]
             fn next_back(&mut self) -> Option<Self::Item> {
-                if self.2 {
-                    None
+                let datum = self.2.get_datum_at(self.1)?;
+                let entity = datum.entity(self.1);
+                self.1 = if self.0 == self.1 {
+                    u32::MAX
                 } else {
-                    let datum = self.3.get_datum_at(self.1)?;
-                    let entity = datum.entity(self.1);
-                    self.2 = self.0 == self.1;
-                    self.1 = datum.previous_sibling;
-                    Some(entity)
-                }
+                    datum.previous_sibling
+                };
+                Some(entity)
             }
         }
 
@@ -292,7 +253,7 @@ impl Entities {
             .map_or((u32::MAX, u32::MAX), |datum| {
                 (datum.first_child, datum.last_child)
             });
-        Children(index.0, index.1, false, self)
+        Children(index.0, index.1, self)
     }
 
     pub fn siblings(&self, entity: Entity) -> impl DoubleEndedIterator<Item = Entity> + '_ {
@@ -367,11 +328,7 @@ impl Entities {
             Ok(state)
         }
 
-        if self.has(entity) {
-            next(self, entity, state, &mut up, &mut down)
-        } else {
-            Ok(state)
-        }
+        next(self, entity, state, &mut up, &mut down)
     }
 
     pub fn descend<E, D: FnMut(Entity) -> Result<(), E>, U: FnMut(Entity) -> Result<(), E>>(

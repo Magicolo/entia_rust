@@ -7,7 +7,7 @@ use std::{
     ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Not},
 };
 
-pub type Bucket = u128;
+pub type Bucket = usize;
 
 #[derive(Default, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Bits {
@@ -37,6 +37,12 @@ impl Bits {
         self.buckets.len() * Self::SIZE
     }
 
+    #[inline]
+    pub fn buckets(&self) -> impl IntoIterator<Item = Bucket> + '_ {
+        self.buckets.iter().copied()
+    }
+
+    #[inline]
     pub fn has(&self, index: usize) -> bool {
         if let Some(&bucket) = self.buckets.get(index / Self::SIZE) {
             let bit = 1 << (index % Self::SIZE);
@@ -46,6 +52,7 @@ impl Bits {
         }
     }
 
+    #[inline]
     pub fn has_all(&self, bits: &Bits) -> bool {
         self.buckets.len() == bits.buckets.len()
             && self
@@ -55,6 +62,7 @@ impl Bits {
                 .all(|(&left, &right)| left & right == right)
     }
 
+    #[inline]
     pub fn has_any(&self, bits: &Bits) -> bool {
         self.buckets
             .iter()
@@ -62,6 +70,7 @@ impl Bits {
             .any(|(&left, &right)| left & right > 0)
     }
 
+    #[inline]
     pub fn has_none(&self, bits: &Bits) -> bool {
         !self.has_any(bits)
     }
@@ -89,40 +98,48 @@ impl Bits {
         }
     }
 
+    #[inline]
     pub fn copy(&mut self, bits: &Self) {
         self.buckets.resize(bits.buckets.len(), 0);
         self.buckets.copy_from_slice(&bits.buckets);
     }
 
+    #[inline]
     pub fn not(&mut self) {
         self.buckets.iter_mut().for_each(|value| *value = !*value);
         self.shrink();
     }
 
+    #[inline]
     pub fn or(&mut self, bits: &Bits) {
         // No need to shrink since an 'or' operation cannot add more '0' bits to a bucket.
-        self.binary(bits, true, false, |left, right| left | right);
+        self.binary(bits, true, false, |left, right| left | right)
     }
 
+    #[inline]
     pub fn or_not(&mut self, bits: &Bits) {
         // No need to shrink since an 'or' operation cannot add more '0' bits to a bucket.
-        self.binary(bits, true, false, |left, right| left | !right);
+        self.binary(bits, true, false, |left, right| left | !right)
     }
 
+    #[inline]
     pub fn and(&mut self, bits: &Bits) {
-        self.binary(bits, false, true, |left, right| left & right);
+        self.binary(bits, false, true, |left, right| left & right)
     }
 
+    #[inline]
     pub fn and_not(&mut self, bits: &Bits) {
-        self.binary(bits, false, true, |left, right| left & !right);
+        self.binary(bits, false, true, |left, right| left & !right)
     }
 
+    #[inline]
     pub fn xor(&mut self, bits: &Bits) {
-        self.binary(bits, true, true, |left, right| left ^ right);
+        self.binary(bits, true, true, |left, right| left ^ right)
     }
 
+    #[inline]
     pub fn xor_not(&mut self, bits: &Bits) {
-        self.binary(bits, true, true, |left, right| left ^ !right);
+        self.binary(bits, true, true, |left, right| left ^ !right)
     }
 
     #[inline]

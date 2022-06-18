@@ -22,7 +22,7 @@ where
     I::Input: Default,
 {
     let mut world = World::new();
-    world.injector::<I>()?.guard(&mut world)?;
+    world.injector::<I>()?.run(&mut world, |_| {})?;
     Ok(())
 }
 

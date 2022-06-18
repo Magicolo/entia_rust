@@ -1,5 +1,4 @@
 use entia_core::{Maybe, Wrap};
-pub use entia_meta::*;
 use std::{
     any::{type_name, Any, TypeId},
     collections::HashMap,

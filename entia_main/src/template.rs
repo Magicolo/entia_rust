@@ -1,6 +1,6 @@
 use crate::{
     component::Component,
-    entities::Entities,
+    entities::Datum,
     entity::Entity,
     error::{Error, Result},
     family::template::{EntityIndices, Family, SegmentIndices},
@@ -36,26 +36,21 @@ pub struct CountContext<'a> {
 }
 
 pub struct ApplyContext<'a> {
-    entity_root: usize,
+    entity_root: (usize, usize),
     entity_index: usize,
-    entity_parent: Option<u32>,
-    entity_previous_sibling: &'a mut Option<u32>,
-    entity_count: &'a mut usize,
     entity_instances: &'a [Entity],
     entity_indices: &'a [EntityIndices],
-    entities: &'a mut Entities,
     store_index: usize,
     segment_indices: &'a [SegmentIndices],
-    post: &'a mut Vec<(u32, u32, u32)>,
+    initialize: (usize, &'a mut Vec<(u32, Datum)>),
 }
 
 pub trait Template {
     type Input;
-    type Declare;
-    type State;
+    type State: Sync + Send + 'static;
 
-    fn declare(input: Self::Input, context: DeclareContext) -> Self::Declare;
-    fn initialize(state: Self::Declare, context: InitializeContext) -> Self::State;
+    fn declare(context: DeclareContext) -> Self::Input;
+    fn initialize(state: Self::Input, context: InitializeContext) -> Self::State;
     fn static_count(state: &Self::State, context: CountContext) -> Result<bool>;
     fn dynamic_count(&self, state: &Self::State, context: CountContext);
     fn apply(self, state: &Self::State, context: ApplyContext);
@@ -157,32 +152,29 @@ impl<'a> InitializeContext<'a> {
 
 impl<'a> CountContext<'a> {
     pub(crate) fn new(
-        segment_index: usize,
         segment_indices: &'a mut [SegmentIndices],
-        entity_index: usize,
-        entity_parent: Option<usize>,
         entity_previous: &'a mut Option<usize>,
         entity_indices: &'a mut Vec<EntityIndices>,
     ) -> Self {
         Self {
-            segment_index,
+            segment_index: 0,
             segment_indices,
-            entity_index,
-            entity_parent,
+            entity_index: entity_indices.len(),
+            entity_parent: None,
             entity_previous,
             entity_indices,
         }
     }
 
     pub fn owned(&mut self) -> CountContext {
-        CountContext::new(
-            self.segment_index,
-            self.segment_indices,
-            self.entity_index,
-            self.entity_parent,
-            self.entity_previous,
-            self.entity_indices,
-        )
+        CountContext {
+            segment_index: self.segment_index,
+            segment_indices: self.segment_indices,
+            entity_index: self.entity_index,
+            entity_parent: self.entity_parent,
+            entity_previous: self.entity_previous,
+            entity_indices: self.entity_indices,
+        }
     }
 
     pub fn with<'b>(
@@ -192,14 +184,12 @@ impl<'a> CountContext<'a> {
         entity_parent: Option<usize>,
         entity_previous: &'b mut Option<usize>,
     ) -> CountContext {
-        CountContext::new(
-            segment_index,
-            self.segment_indices,
-            entity_index,
-            entity_parent,
-            entity_previous,
-            self.entity_indices,
-        )
+        let mut context = self.owned();
+        context.segment_index = segment_index;
+        context.entity_index = entity_index;
+        context.entity_parent = entity_parent;
+        context.entity_previous = entity_previous;
+        context
     }
 
     pub fn child<T>(&mut self, segment_index: usize, scope: impl FnOnce(CountContext) -> T) -> T {
@@ -209,6 +199,7 @@ impl<'a> CountContext<'a> {
             segment: segment_index,
             offset: segment_indices.count,
             parent: self.entity_parent,
+            previous_sibling: *self.entity_previous,
             next_sibling: None,
         });
 
@@ -228,30 +219,20 @@ impl<'a> CountContext<'a> {
 
 impl<'a> ApplyContext<'a> {
     pub(crate) fn new(
-        entity_root: usize,
-        entity_index: usize,
-        entity_parent: Option<u32>,
-        entity_previous_sibling: &'a mut Option<u32>,
-        entity_count: &'a mut usize,
+        entity_root: (usize, usize),
         entity_instances: &'a [Entity],
         entity_indices: &'a [EntityIndices],
-        entities: &'a mut Entities,
-        store_index: usize,
         segment_indices: &'a [SegmentIndices],
-        post: &'a mut Vec<(u32, u32, u32)>,
+        initialize: &'a mut Vec<(u32, Datum)>,
     ) -> Self {
         Self {
             entity_root,
-            entity_index,
-            entity_parent,
-            entity_previous_sibling,
-            entity_count,
+            entity_index: 0,
             entity_instances,
             entity_indices,
-            entities,
-            store_index,
+            store_index: 0,
             segment_indices,
-            post,
+            initialize: (initialize.len(), initialize),
         }
     }
 
@@ -263,8 +244,8 @@ impl<'a> ApplyContext<'a> {
     #[inline]
     pub const fn family(&self) -> Family {
         Family::new(
-            self.entity_root,
-            self.entity_index,
+            self.entity_root.0,
+            self.entity_root.1 + self.entity_index,
             self.entity_instances,
             self.entity_indices,
             self.segment_indices,
@@ -276,96 +257,73 @@ impl<'a> ApplyContext<'a> {
         self.store_index
     }
 
+    #[inline]
     pub fn owned(&mut self) -> ApplyContext {
-        ApplyContext::new(
-            self.entity_root,
-            self.entity_index,
-            self.entity_parent,
-            self.entity_previous_sibling,
-            self.entity_count,
-            self.entity_instances,
-            self.entity_indices,
-            self.entities,
-            self.store_index,
-            self.segment_indices,
-            self.post,
-        )
+        ApplyContext {
+            entity_root: self.entity_root,
+            entity_index: self.entity_index,
+            entity_instances: self.entity_instances,
+            entity_indices: self.entity_indices,
+            store_index: self.store_index,
+            segment_indices: self.segment_indices,
+            initialize: (self.initialize.0, self.initialize.1),
+        }
     }
 
-    pub fn with<'b>(
-        &'b mut self,
-        entity_index: usize,
-        entity_parent: Option<u32>,
-        entity_previous_sibling: &'b mut Option<u32>,
-        store_index: usize,
-    ) -> ApplyContext {
-        ApplyContext::new(
-            self.entity_root,
-            entity_index,
-            entity_parent,
-            entity_previous_sibling,
-            self.entity_count,
-            self.entity_instances,
-            self.entity_indices,
-            self.entities,
-            store_index,
-            self.segment_indices,
-            self.post,
-        )
+    #[inline]
+    pub fn with<'b>(&'b mut self, entity_index: usize, store_index: usize) -> ApplyContext {
+        let mut context = self.owned();
+        context.entity_index = entity_index;
+        context.store_index = store_index;
+        context
     }
 
     pub(crate) fn child<T>(&mut self, scope: impl FnOnce(ApplyContext) -> T) -> T {
-        let entity_index = *self.entity_count;
-        let entity_indices = &self.entity_indices[entity_index];
+        let initialize = &mut self.initialize.1[self.initialize.0..];
+        let entity_index = initialize.len();
+        let entity_offset = self.entity_root.1;
+        let entity_indices = &self.entity_indices[entity_index + entity_offset];
         let segment_indices = &self.segment_indices[entity_indices.segment];
-        let segment_offset = segment_indices.count * self.entity_root + entity_indices.offset;
+        let segment_offset = segment_indices.count * self.entity_root.0 + entity_indices.offset;
         let instance_index = segment_indices.index + segment_offset;
         let store_index = segment_indices.store + segment_offset;
         let segment_index = segment_indices.segment;
         let entity_instance = self.entity_instances[instance_index];
-        let entity_parent = self.entity_parent;
-        let entity_previous_sibling = *self.entity_previous_sibling;
 
-        *self.entity_count += 1;
-        *self.entity_previous_sibling = Some(entity_instance.index());
+        let previous_sibling = entity_indices
+            .previous_sibling
+            .map_or(u32::MAX, |previous| {
+                let previous = &mut initialize[previous - entity_offset];
+                previous.1.next_sibling = entity_instance.index();
+                previous.0
+            });
 
-        if let Some(previous) = entity_previous_sibling {
-            let previous = self.entities.get_datum_at_mut(previous).unwrap();
-            previous.next_sibling = entity_instance.index();
-        }
-
-        if let Some(parent) = entity_parent {
-            let parent = self.entities.get_datum_at_mut(parent).unwrap();
-            if entity_previous_sibling.is_none() {
-                parent.first_child = entity_instance.index();
+        let parent = entity_indices.parent.map_or(u32::MAX, |parent| {
+            let parent = &mut initialize[parent - entity_offset];
+            if entity_indices.previous_sibling.is_none() {
+                parent.1.first_child = entity_instance.index();
             }
             if entity_indices.next_sibling.is_none() {
-                parent.last_child = entity_instance.index();
+                parent.1.last_child = entity_instance.index();
             }
-        }
+            parent.0
+        });
 
-        self.post.push((
+        self.initialize.1.push((
             entity_instance.index(),
-            store_index as u32,
-            segment_index as u32,
+            Datum {
+                generation: entity_instance.generation(),
+                store_index: store_index as u32,
+                segment_index: segment_index as u32,
+                parent,
+                first_child: u32::MAX,
+                last_child: u32::MAX,
+                previous_sibling,
+                next_sibling: u32::MAX,
+            },
         ));
-        self.entities
-            .get_datum_at_mut(entity_instance.index())
-            .expect("Entity index must be in range.")
-            .pre_initialize(
-                entity_instance.generation(),
-                entity_parent,
-                None,
-                None,
-                entity_previous_sibling,
-                None,
-            );
-        scope(self.with(
-            entity_index,
-            Some(entity_instance.index()),
-            &mut None,
-            store_index,
-        ))
+
+        scope(self.with(entity_index, store_index))
     }
 }
 
@@ -374,14 +332,13 @@ unsafe impl<T: SpawnTemplate + LeafTemplate> LeafTemplate for Option<T> {}
 
 impl<T: SpawnTemplate> Template for Option<T> {
     type Input = T::Input;
-    type Declare = T::Declare;
     type State = T::State;
 
-    fn declare(input: Self::Input, context: DeclareContext) -> Self::Declare {
-        T::declare(input, context)
+    fn declare(context: DeclareContext) -> Self::Input {
+        T::declare(context)
     }
 
-    fn initialize(state: Self::Declare, context: InitializeContext) -> Self::State {
+    fn initialize(state: Self::Input, context: InitializeContext) -> Self::State {
         T::initialize(state, context)
     }
 
@@ -409,14 +366,13 @@ unsafe impl<T: SpawnTemplate + LeafTemplate> LeafTemplate for Vec<T> {}
 
 impl<T: SpawnTemplate> Template for Vec<T> {
     type Input = T::Input;
-    type Declare = T::Declare;
     type State = T::State;
 
-    fn declare(input: Self::Input, context: DeclareContext) -> Self::Declare {
-        T::declare(input, context)
+    fn declare(context: DeclareContext) -> Self::Input {
+        T::declare(context)
     }
 
-    fn initialize(state: Self::Declare, context: InitializeContext) -> Self::State {
+    fn initialize(state: Self::Input, context: InitializeContext) -> Self::State {
         T::initialize(state, context)
     }
 
@@ -445,14 +401,13 @@ unsafe impl<T: SpawnTemplate + LeafTemplate, const N: usize> LeafTemplate for [T
 
 impl<T: SpawnTemplate, const N: usize> Template for [T; N] {
     type Input = T::Input;
-    type Declare = T::Declare;
     type State = T::State;
 
-    fn declare(input: Self::Input, context: DeclareContext) -> Self::Declare {
-        T::declare(input, context)
+    fn declare(context: DeclareContext) -> Self::Input {
+        T::declare(context)
     }
 
-    fn initialize(state: Self::Declare, context: InitializeContext) -> Self::State {
+    fn initialize(state: Self::Input, context: InitializeContext) -> Self::State {
         T::initialize(state, context)
     }
 
@@ -500,15 +455,14 @@ impl<T> From<T> for Add<T> {
 }
 
 impl<C: Component> Template for Add<C> {
-    type Input = ();
-    type Declare = Arc<Meta>;
+    type Input = Arc<Meta>;
     type State = Arc<Store>;
 
-    fn declare(_: Self::Input, mut context: DeclareContext) -> Self::Declare {
+    fn declare(mut context: DeclareContext) -> Self::Input {
         context.meta::<C>()
     }
 
-    fn initialize(state: Self::Declare, context: InitializeContext) -> Self::State {
+    fn initialize(state: Self::Input, context: InitializeContext) -> Self::State {
         context.segment().component_store(&state).unwrap()
     }
 
@@ -551,14 +505,13 @@ impl<T, F: FnOnce(Family) -> T> From<F> for With<T, F> {
 
 impl<T: StaticTemplate, F: FnOnce(Family) -> T> Template for With<T, F> {
     type Input = T::Input;
-    type Declare = T::Declare;
     type State = T::State;
 
-    fn declare(input: Self::Input, context: DeclareContext) -> Self::Declare {
-        T::declare(input, context)
+    fn declare(context: DeclareContext) -> Self::Input {
+        T::declare(context)
     }
 
-    fn initialize(state: Self::Declare, context: InitializeContext) -> Self::State {
+    fn initialize(state: Self::Input, context: InitializeContext) -> Self::State {
         T::initialize(state, context)
     }
 
@@ -602,15 +555,14 @@ impl<T> From<T> for Spawn<T> {
 }
 
 impl<T: Template> Template for Spawn<T> {
-    type Input = T::Input;
-    type Declare = (usize, T::Declare);
+    type Input = (usize, T::Input);
     type State = (usize, T::State);
 
-    fn declare(input: Self::Input, mut context: DeclareContext) -> Self::Declare {
-        context.child(|index, context| (index, T::declare(input, context)))
+    fn declare(mut context: DeclareContext) -> Self::Input {
+        context.child(|index, context| (index, T::declare(context)))
     }
 
-    fn initialize((index, state): Self::Declare, mut context: InitializeContext) -> Self::State {
+    fn initialize((index, state): Self::Input, mut context: InitializeContext) -> Self::State {
         context.child(index, |index, context| {
             (index, T::initialize(state, context))
         })
@@ -635,15 +587,14 @@ unsafe impl<T> LeafTemplate for PhantomData<T> {}
 
 impl<T> Template for PhantomData<T> {
     type Input = <() as Template>::Input;
-    type Declare = <() as Template>::Declare;
     type State = <() as Template>::State;
 
     #[inline]
-    fn declare(input: Self::Input, context: DeclareContext) -> Self::Declare {
-        <() as Template>::declare(input, context)
+    fn declare(context: DeclareContext) -> Self::Input {
+        <() as Template>::declare(context)
     }
     #[inline]
-    fn initialize(state: Self::Declare, context: InitializeContext) -> Self::State {
+    fn initialize(state: Self::Input, context: InitializeContext) -> Self::State {
         <() as Template>::initialize(state, context)
     }
     #[inline]
@@ -668,14 +619,13 @@ macro_rules! template {
 
         impl<$($t: Template,)*> Template for ($($t,)*) {
             type Input = ($($t::Input,)*);
-            type Declare = ($($t::Declare,)*);
             type State = ($($t::State,)*);
 
-            fn declare(($($p,)*): Self::Input, mut _context: DeclareContext) -> Self::Declare {
-                ($($t::declare($p, _context.owned()),)*)
+            fn declare(mut _context: DeclareContext) -> Self::Input {
+                ($($t::declare(_context.owned()),)*)
             }
 
-            fn initialize(($($p,)*): Self::Declare, mut _context: InitializeContext) -> Self::State {
+            fn initialize(($($p,)*): Self::Input, mut _context: InitializeContext) -> Self::State {
                 ($($t::initialize($p, _context.owned()),)*)
             }
 

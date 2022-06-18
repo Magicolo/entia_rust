@@ -4,7 +4,7 @@ use crate::{
     recurse,
     world::World,
 };
-use entia_core::utility::short_type_name;
+use entia_core::{utility::short_type_name, Change};
 use std::marker::PhantomData;
 
 pub struct Injector<I: Inject> {
@@ -15,12 +15,6 @@ pub struct Injector<I: Inject> {
     state: I::State,
     dependencies: Vec<Dependency>,
     _marker: PhantomData<I>,
-}
-
-pub struct Guard<'a, I: Inject> {
-    identifier: usize,
-    state: &'a mut I::State,
-    world: &'a mut World,
 }
 
 pub struct Context<'a> {
@@ -117,17 +111,21 @@ impl<I: Inject> Injector<I> {
 
     pub fn update<'a>(&mut self, world: &mut World) -> Result {
         if self.world != world.identifier() {
-            Err(Error::WrongWorld)
-        } else if self.version != world.version() {
-            I::update(&mut self.state, Context::new(self.identifier, world))?;
-            self.dependencies = self.state.depend(world);
-            let mut conflict = Conflict::default();
-            conflict
-                .detect(Scope::Inner, &self.dependencies)
-                .map_err(Error::Depend)
-        } else {
-            Ok(())
+            return Err(Error::WrongWorld);
         }
+
+        let mut version = self.version;
+        while version.change(world.version()) {
+            I::update(&mut self.state, Context::new(self.identifier, world))?;
+        }
+        // Commit the version only if the 'I::update' is a success such that it may continue to fail on the next call if it failed on this call.
+        self.version = version;
+
+        self.dependencies = self.state.depend(world);
+        let mut conflict = Conflict::default();
+        conflict
+            .detect(Scope::Inner, &self.dependencies)
+            .map_err(Error::Depend)
     }
 
     pub fn resolve(&mut self, world: &mut World) -> Result {
@@ -136,15 +134,6 @@ impl<I: Inject> Injector<I> {
         } else {
             I::resolve(&mut self.state, Context::new(self.identifier, world))
         }
-    }
-
-    pub fn guard<'a>(&'a mut self, world: &'a mut World) -> Result<Guard<'a, I>> {
-        self.update(world)?;
-        Ok(Guard {
-            identifier: self.identifier,
-            state: &mut self.state,
-            world,
-        })
     }
 
     pub fn run<T, F: FnOnce(<I::State as Get<'_>>::Item) -> T>(
@@ -159,18 +148,52 @@ impl<I: Inject> Injector<I> {
     }
 }
 
-impl<I: Inject> Guard<'_, I> {
-    // TODO: Is there a way to implement 'Deref/Mut' instead of having a seperate 'Guard' and 'I' value?
-    // - The 'I' value will need to be stored in the guard along with 'state' (for resolution).
-    pub fn inject(&mut self) -> <I::State as Get<'_>>::Item {
-        self.state.get(self.world)
+impl<I: Inject, const N: usize> Inject for [I; N] {
+    type Input = [I::Input; N];
+    type State = [I::State; N];
+
+    fn initialize(input: Self::Input, mut context: Context) -> Result<Self::State> {
+        let mut items = [(); N].map(|_| None);
+        for (i, input) in input.into_iter().enumerate() {
+            items[i] = Some(I::initialize(input, context.owned())?);
+        }
+        Ok(items.map(Option::unwrap))
+    }
+
+    #[inline]
+    fn update(state: &mut Self::State, mut context: Context) -> Result {
+        for state in state {
+            I::update(state, context.owned())?;
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn resolve(state: &mut Self::State, mut context: Context) -> Result {
+        for state in state {
+            I::resolve(state, context.owned())?;
+        }
+        Ok(())
     }
 }
 
-impl<I: Inject> Drop for Guard<'_, I> {
-    fn drop(&mut self) {
-        // TODO: Is it possible to do something more useful with this result?
-        I::resolve(self.state, Context::new(self.identifier, self.world)).unwrap();
+impl<'a, T: Get<'a>, const N: usize> Get<'a> for [T; N] {
+    type Item = [T::Item; N];
+
+    #[inline]
+    fn get(&'a mut self, world: &'a World) -> Self::Item {
+        let mut iterator = self.iter_mut();
+        [(); N].map(|_| iterator.next().unwrap().get(world))
+    }
+}
+
+unsafe impl<T: Depend, const N: usize> Depend for [T; N] {
+    fn depend(&self, world: &World) -> Vec<Dependency> {
+        let mut dependencies = Vec::new();
+        for item in self {
+            dependencies.append(&mut item.depend(world));
+        }
+        dependencies
     }
 }
 

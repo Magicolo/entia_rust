@@ -1,9 +1,9 @@
 use crate::{
     defer::{self, Resolve},
     depend::{Depend, Dependency},
-    entities::Entities,
+    entities::{Datum, Entities},
     entity::Entity,
-    error::{Error, Result},
+    error::Result,
     family::template::{EntityIndices, Families, Family, SegmentIndices},
     inject::{Context, Get, Inject},
     resource::Write,
@@ -18,7 +18,7 @@ use std::{
 pub struct Create<'a, T: Template + 'a> {
     defer: defer::Defer<'a, Outer<T>>,
     inner: &'a mut Inner<T>,
-    entities: &'a mut Entities,
+    entities: &'a Entities,
     world: &'a World,
 }
 pub struct State<T: Template>(defer::State<Outer<T>>);
@@ -36,7 +36,7 @@ struct Inner<T: Template> {
     entity_roots: Vec<(usize, usize)>,
     initial_state: <Spawn<T> as Template>::State,
     initial_roots: Vec<Spawn<T>>,
-    post: Vec<(u32, u32, u32)>,
+    initialize: Vec<(u32, Datum)>,
 }
 
 struct Defer<T: Template> {
@@ -120,10 +120,7 @@ impl<T: Template> Create<'_, T> {
             root.dynamic_count(
                 &inner.initial_state,
                 CountContext::new(
-                    0,
                     &mut inner.segment_indices,
-                    inner.entity_indices.len(),
-                    None,
                     &mut None,
                     &mut inner.entity_indices,
                 ),
@@ -140,7 +137,7 @@ impl<T: Template> Inner<T> {
         &mut self,
         count: usize,
         defer: &mut defer::Defer<Outer<T>>,
-        entities: &mut Entities,
+        entities: &Entities,
         world: &World,
     ) -> Families {
         if count == 0 {
@@ -154,9 +151,8 @@ impl<T: Template> Inner<T> {
                 &self.entity_roots,
                 &self.entity_instances,
                 &self.entity_indices,
-                entities,
                 &self.segment_indices,
-                &mut self.post,
+                &mut self.initialize,
             ),
             (index, false) => defer.one(Defer {
                 index,
@@ -214,14 +210,14 @@ impl<T: Template + Send + Sync + 'static> Inject for Create<'_, T>
 where
     T::State: Send + Sync,
 {
-    type Input = T::Input;
+    type Input = ();
     type State = State<T>;
 
-    fn initialize(input: Self::Input, mut context: Context) -> Result<Self::State> {
+    fn initialize(_: Self::Input, mut context: Context) -> Result<Self::State> {
         let entities = Write::initialize(None, context.owned())?;
         let world = context.world();
         let mut segment_metas = Vec::new();
-        let declare = Spawn::<T>::declare(input, DeclareContext::new(0, &mut segment_metas, world));
+        let initial = Spawn::<T>::declare(DeclareContext::new(0, &mut segment_metas, world));
         let mut segment_to_index = HashMap::new();
         let mut metas_to_segment = HashMap::new();
         let mut segment_indices = Vec::with_capacity(segment_metas.len());
@@ -246,21 +242,14 @@ where
         }
 
         let state = Spawn::<T>::initialize(
-            declare,
+            initial,
             InitializeContext::new(0, &segment_indices, &metas_to_segment, world),
         );
 
         let mut entity_indices = Vec::new();
         let count = if Spawn::<T>::static_count(
             &state,
-            CountContext::new(
-                0,
-                &mut segment_indices,
-                entity_indices.len(),
-                None,
-                &mut None,
-                &mut entity_indices,
-            ),
+            CountContext::new(&mut segment_indices, &mut None, &mut entity_indices),
         )? {
             Some(entity_indices.len())
         } else {
@@ -276,7 +265,7 @@ where
                 entity_instances: Vec::new(),
                 entity_roots: Vec::new(),
                 segment_indices,
-                post: Vec::new(),
+                initialize: Vec::new(),
             },
             entities,
         };
@@ -288,11 +277,11 @@ where
 
         // If entities have successfully been reserved at run time, no item would've been deferred, so resolution is triggered manually.
         let outer = state.as_mut();
-        if outer.inner.post.len() > 0 {
+        if outer.inner.initialize.len() > 0 {
             outer.resolve(empty(), context.world())?;
         }
 
-        debug_assert_eq!(outer.inner.post.len(), 0);
+        debug_assert_eq!(outer.inner.initialize.len(), 0);
         Ok(())
     }
 }
@@ -334,28 +323,17 @@ impl<T: Template> Resolve for Outer<T> {
 
             apply(
                 &inner.initial_state,
-                defer.initial_roots.into_iter(),
+                defer.initial_roots,
                 &defer.entity_roots,
                 &defer.entity_instances,
                 &defer.entity_indices,
-                entities,
                 &defer.segment_indices,
-                &mut inner.post,
+                &mut inner.initialize,
             );
         }
 
-        for (entity, store, segment) in inner.post.drain(..) {
-            if !entities
-                .get_datum_at_mut(entity)
-                .expect("Entity index must be in range.")
-                .post_initialize(store, segment)
-            {
-                return Err(Error::FailedToInitialize {
-                    entity,
-                    store,
-                    segment,
-                });
-            }
+        for (index, datum) in inner.initialize.drain(..) {
+            entities.initialize(index, datum);
         }
 
         Ok(())
@@ -368,25 +346,18 @@ fn apply<T: Template>(
     entity_roots: &[(usize, usize)],
     entity_instances: &[Entity],
     entity_indices: &[EntityIndices],
-    entities: &mut Entities,
     segment_indices: &[SegmentIndices],
-    post: &mut Vec<(u32, u32, u32)>,
+    initialize: &mut Vec<(u32, Datum)>,
 ) {
-    for (root, &(entity_root, mut entity_count)) in initial_roots.into_iter().zip(entity_roots) {
+    for (root, &entity_root) in initial_roots.into_iter().zip(entity_roots) {
         root.apply(
             initial_state,
             ApplyContext::new(
                 entity_root,
-                0,
-                None,
-                &mut None,
-                &mut entity_count,
                 entity_instances,
                 entity_indices,
-                entities,
-                0,
                 segment_indices,
-                post,
+                initialize,
             ),
         );
     }

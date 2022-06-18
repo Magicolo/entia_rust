@@ -115,39 +115,39 @@ impl<'a, T> At<'a> for PhantomData<T> {
 }
 
 macro_rules! item {
-        ($($p:ident, $t:ident),*) => {
-            impl<$($t: Item,)*> Item for ($($t,)*) {
-                type State = ($($t::State,)*);
+    ($($p:ident, $t:ident),*) => {
+        impl<$($t: Item,)*> Item for ($($t,)*) {
+            type State = ($($t::State,)*);
 
-                fn initialize(mut _context: Context) -> Result<Self::State> {
-                    Ok(($($t::initialize(_context.owned())?,)*))
-                }
+            fn initialize(mut _context: Context) -> Result<Self::State> {
+                Ok(($($t::initialize(_context.owned())?,)*))
+            }
+        }
+
+        impl<'a, $($t: At<'a>,)*> At<'a> for ($($t,)*) {
+            type State = ($($t::State,)*);
+            type Ref = ($($t::Ref,)*);
+            type Mut = ($($t::Mut,)*);
+
+            #[inline]
+            fn get(&'a self, _world: &'a World) -> Self::State {
+                let ($($p,)*) = self;
+                ($($p.get(_world),)*)
             }
 
-            impl<'a, $($t: At<'a>,)*> At<'a> for ($($t,)*) {
-                type State = ($($t::State,)*);
-                type Ref = ($($t::Ref,)*);
-                type Mut = ($($t::Mut,)*);
-
-                #[inline]
-                fn get(&'a self, _world: &'a World) -> Self::State {
-                    let ($($p,)*) = self;
-                    ($($p.get(_world),)*)
-                }
-
-                #[inline]
-                fn at(_state: &Self::State, _index: usize) -> Self::Ref {
-                    let ($($p,)*) = _state;
-                    ($($t::at($p, _index),)*)
-                }
-
-                #[inline]
-                fn at_mut(_state: &mut Self::State, _index: usize) -> Self::Mut {
-                    let ($($p,)*) = _state;
-                    ($($t::at_mut($p, _index),)*)
-                }
+            #[inline]
+            fn at(_state: &Self::State, _index: usize) -> Self::Ref {
+                let ($($p,)*) = _state;
+                ($($t::at($p, _index),)*)
             }
-        };
-    }
+
+            #[inline]
+            fn at_mut(_state: &mut Self::State, _index: usize) -> Self::Mut {
+                let ($($p,)*) = _state;
+                ($($t::at_mut($p, _index),)*)
+            }
+        }
+    };
+}
 
 recurse!(item);

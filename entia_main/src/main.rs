@@ -39,7 +39,7 @@ fn main() {
         }
     };
 
-    fn simple() -> impl StaticTemplate<Input = impl Default, State = impl Send> {
+    fn simple() -> impl StaticTemplate {
         (
             Add::new(Frozen),
             Add::new(Position(Vec::new())),
@@ -47,11 +47,11 @@ fn main() {
         )
     }
 
-    fn complex() -> impl Template<Input = impl Default, State = impl Send> {
+    fn complex() -> impl Template {
         (Spawn::new(simple()), simple(), With::new(|_| simple()))
     }
 
-    fn dynamic(count: usize) -> impl Template<Input = impl Default, State = impl Send> {
+    fn dynamic(count: usize) -> impl Template {
         vec![Spawn::new(Add::new(Frozen)); count]
     }
 

@@ -134,6 +134,9 @@ macro_rules! iterator {
                     let $($mut)? state = state.get(self.world);
 
                     for i in 0..segment.count() {
+                        // if let Some(item) = I::State::$at(& $($mut)? state, i) {
+                        //     each(item);
+                        // }
                         each(I::State::$at(& $($mut)? state, i));
                     }
                 }
@@ -183,6 +186,7 @@ macro_rules! iterator {
                         let state = unsafe { self.state.as_mut().unwrap_unchecked() };
                         let item = I::State::$at(state, self.index);
                         self.index += 1;
+                        // if let Some(item) = item { break Some(item); }
                         break Some(item);
                     }
                     else if let Some((state, segment)) = self.query.inner.states.get(self.segment) {

@@ -6,7 +6,7 @@ use crate::{
     recurse,
     world::World,
 };
-use entia_core::{utility::short_type_name, Call};
+use entia_core::{change::Change, utility::short_type_name, Call};
 use std::{
     any::type_name,
     cell::UnsafeCell,
@@ -211,10 +211,18 @@ pub mod runner {
                 return Err(Error::WrongWorld);
             }
 
-            if self.version != world.version() {
-                // This will retry scheduling on each call as long as there are dependency errors.
+            let mut version = self.version;
+            // Updating systems may cause more changes of the 'world.version()'. Loop until the version has stabilized.
+            while version.change(world.version()) {
+                for system in self.systems.iter_mut() {
+                    (system.update)(world)?;
+                }
+            }
+
+            if self.version != version {
                 self.schedule(world)?;
-                self.version = world.version();
+                // Only commit the new version if the scheduling succeeds.
+                self.version = version;
             }
 
             Ok(())
@@ -302,7 +310,6 @@ pub mod runner {
             self.conflict.clear();
 
             for (index, system) in self.systems.iter_mut().enumerate() {
-                (system.update)(world)?;
                 self.blocks.push(Block {
                     runs: vec![index],
                     resolves: vec![index],

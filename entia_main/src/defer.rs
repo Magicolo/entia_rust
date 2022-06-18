@@ -29,15 +29,6 @@ pub struct State<T> {
     _marker: PhantomData<T>,
 }
 
-pub trait Resolve {
-    type Item;
-    fn resolve(
-        &mut self,
-        items: impl ExactSizeIterator<Item = Self::Item>,
-        world: &mut World,
-    ) -> Result;
-}
-
 struct Resolver {
     state: Box<dyn Any + Send + Sync>,
     resolve: fn(usize, &mut dyn Any, &mut World) -> Result,
@@ -57,6 +48,15 @@ struct Inner {
 
 #[allow(type_alias_bounds)]
 type Triple<R: Resolve> = (R, Vec<(usize, usize)>, VecDeque<R::Item>);
+
+pub trait Resolve {
+    type Item;
+    fn resolve(
+        &mut self,
+        items: impl ExactSizeIterator<Item = Self::Item>,
+        world: &mut World,
+    ) -> Result;
+}
 
 impl Resource for Outer {
     fn initialize(_: &Meta, _: &mut World) -> Result<Self> {

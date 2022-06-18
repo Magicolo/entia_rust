@@ -13,7 +13,6 @@ pub enum Error {
         segment: usize,
     },
     MissingMeta {
-        name: &'static str,
         identifier: TypeId,
     },
     MissingResource {

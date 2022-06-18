@@ -209,6 +209,7 @@ pub mod template {
         pub segment: usize,
         pub offset: usize,
         pub parent: Option<usize>,
+        pub previous_sibling: Option<usize>,
         pub next_sibling: Option<usize>,
     }
 

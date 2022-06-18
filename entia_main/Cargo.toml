@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-entia_meta = { path = "../entia_meta" }
 entia_meta_macro = { path = "../entia_meta_macro" }
 entia_main_derive = { path = "../entia_main_derive" }
 entia_core = { path = "../entia_core" }
