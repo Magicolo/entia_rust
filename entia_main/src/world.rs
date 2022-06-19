@@ -57,7 +57,7 @@ impl World {
     }
 
     pub fn reserve() -> usize {
-        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        static COUNTER: AtomicUsize = AtomicUsize::new(1);
         COUNTER.fetch_add(1, Ordering::Relaxed)
     }
 

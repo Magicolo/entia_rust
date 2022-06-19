@@ -71,12 +71,17 @@ impl Runner {
             // are not up to date, therefore it is not safe to run the systems in parallel.
             if self.version == world.version() {
                 if block.runs.len() > 1 {
+                    struct Systems<'a>(&'a [System]);
+                    unsafe impl Sync for Systems<'_> {}
+
                     let result = &mut self.result;
-                    let systems = self.systems.as_mut_ptr() as usize;
+                    let systems = Systems(&mut self.systems);
                     block.runs.par_iter().for_each(|&index| {
-                        // SAFETY: The indices stored in 'runs' are guaranteed to be unique and ordered. See 'Runner::schedule'.
-                        let system = unsafe { &mut *(systems as *mut System).add(index) };
-                        if let Err(error) = (system.run)(world) {
+                        // SAFETY: The indices stored in 'runs' are guaranteed to be unique and ordered. Therefore, there
+                        // is no concurrence on the 'run: Fn'.
+                        // See 'Runner::schedule'.
+                        let Systems(systems) = &systems;
+                        if let Err(error) = (systems[index].run)(world) {
                             if let Ok(mut guard) = result.lock() {
                                 *guard = Err(error);
                             }

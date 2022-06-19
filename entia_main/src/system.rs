@@ -7,7 +7,6 @@ use crate::{
 };
 use entia_core::{utility::short_type_name, Call};
 use std::{
-    cell::UnsafeCell,
     fmt::{self},
     result,
     sync::Arc,
@@ -16,10 +15,10 @@ use std::{
 pub struct System {
     identifier: usize,
     pub(crate) name: String,
-    pub(crate) run: Box<dyn FnMut(&World) -> Result>,
-    pub(crate) update: Box<dyn FnMut(&mut World) -> Result>,
-    pub(crate) resolve: Box<dyn FnMut(&mut World) -> Result>,
-    pub(crate) depend: Box<dyn Fn(&World) -> Vec<Dependency>>,
+    pub(crate) run: Box<dyn Fn(&World) -> Result + Send>,
+    pub(crate) update: Box<dyn Fn(&mut World) -> Result + Send>,
+    pub(crate) resolve: Box<dyn Fn(&mut World) -> Result + Send>,
+    pub(crate) depend: Box<dyn Fn(&World) -> Vec<Dependency> + Send>,
 }
 
 pub trait IntoSystem<'a, M = ()> {
@@ -72,80 +71,64 @@ impl<
         'a,
         I: Inject,
         O: IntoOutput,
-        C: Call<I, O> + Call<<I::State as Get<'a>>::Item, O> + Send + 'static,
+        C: Call<I, O> + Call<<I::State as Get<'a>>::Item, O> + Send + Sync + 'static,
     > IntoSystem<'a, (I, O, C)> for C
 where
-    I::State: Send + 'static,
+    I::State: Send + Sync + 'static,
 {
     type Input = I::Input;
 
     fn system(self, input: I::Input, world: &mut World) -> Result<System> {
-        let identifier = World::reserve();
-        let state = I::initialize(input, Context::new(identifier, world))?;
-        let system = unsafe {
-            System::new(
-                Some(identifier),
-                I::name(),
-                (self, state, identifier),
-                |(run, state, _), world| run.call(state.get(world)).output(),
-                |(_, state, identifier), world| I::update(state, Context::new(*identifier, world)),
-                |(_, state, identifier), world| I::resolve(state, Context::new(*identifier, world)),
-                |(_, state, _), world| state.depend(world),
-            )
-        };
-        Ok(system)
+        System::new(
+            I::name(),
+            |identifier| Ok((self, I::initialize(input, Context::new(identifier, world))?)),
+            |(run, state), _, world| run.call(state.get(world)).output(),
+            |(_, state), identifier, world| I::update(state, Context::new(identifier, world)),
+            |(_, state), identifier, world| I::resolve(state, Context::new(identifier, world)),
+            |(_, state), _, world| state.depend(world),
+        )
     }
 }
 
 impl System {
-    pub unsafe fn new<'a, T: 'static>(
-        identifier: Option<usize>,
+    #[inline]
+    pub fn new<'a, T: Send + Sync + 'static, F: FnOnce(usize) -> Result<T>>(
         name: String,
-        state: T,
-        run: fn(&'a mut T, &'a World) -> Result,
-        update: fn(&'a mut T, &'a mut World) -> Result,
-        resolve: fn(&'a mut T, &'a mut World) -> Result,
-        depend: fn(&'a T, &'a World) -> Vec<Dependency>,
-    ) -> Self {
-        struct State<T>(Arc<UnsafeCell<T>>);
-        unsafe impl<T> Send for State<T> {}
-        impl<T> State<T> {
-            #[inline]
-            pub unsafe fn get<'a>(&self) -> &'a mut T {
-                &mut *self.0.get()
-            }
+        initialize: F,
+        run: fn(&'a mut T, usize, &'a World) -> Result,
+        update: fn(&mut T, usize, &mut World) -> Result,
+        resolve: fn(&mut T, usize, &mut World) -> Result,
+        depend: fn(&T, usize, &World) -> Vec<Dependency>,
+    ) -> Result<Self> {
+        let identifier = World::reserve();
+        let state = Arc::new(initialize(identifier)?);
+
+        #[inline]
+        fn get<'a, T>(state: &Arc<T>) -> &'a mut T {
+            unsafe { &mut *(Arc::as_ptr(state) as *mut _) }
         }
 
-        // SAFETY: Since this crate controls the execution of the system's functions, it can guarantee
-        // that they are not run in parallel which would allow for races.
-
-        // SAFETY: The 'new' function is declared as unsafe because the user must guarantee that no reference
-        // to the 'World' outlives the call of the function pointers. Normally this could be enforced by Rust but
-        // there seem to be a limitation in the expressivity of the type system to be able to express the desired
-        // intention.
-
-        let identifier = identifier.unwrap_or_else(World::reserve);
-        let state = Arc::new(UnsafeCell::new(state));
-        Self {
+        // SAFETY: The scheduler and runner will ensure that none of a given system's functions are called in parallel.
+        Ok(Self {
             name,
             identifier,
-            run: {
-                let state = State(state.clone());
-                Box::new(move |world| run(state.get(), &*(world as *const _)))
+            run: unsafe {
+                let state = state.clone();
+                Box::new(move |world| run(get(&state), identifier, &*(world as *const _)))
             },
-            update: {
-                let state = State(state.clone());
-                Box::new(move |world| update(state.get(), &mut *(world as *mut _)))
+            update: unsafe {
+                let state = state.clone();
+                Box::new(move |world| update(get(&state), identifier, &mut *(world as *mut _)))
             },
-            resolve: {
-                let state = State(state.clone());
-                Box::new(move |world| resolve(state.get(), &mut *(world as *mut _)))
+            resolve: unsafe {
+                let state = state.clone();
+                Box::new(move |world| resolve(get(&state), identifier, &mut *(world as *mut _)))
             },
-            depend: {
-                let state = State(state.clone());
-                Box::new(move |world| depend(state.get(), &*(world as *const _)))
+            depend: unsafe {
+                let state = state.clone();
+                Box::new(move |world| depend(get(&state), identifier, &*(world as *const _)))
             },
-        }
+        })
     }
 
     #[inline]

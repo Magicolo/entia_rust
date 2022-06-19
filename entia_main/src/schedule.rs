@@ -63,17 +63,14 @@ impl<'a> Scheduler<'a> {
     }
 
     pub fn barrier(self) -> Self {
-        self.add(unsafe {
-            System::new(
-                None,
-                "barrier".into(),
-                (),
-                |_, _| Ok(()),
-                |_, _| Ok(()),
-                |_, _| Ok(()),
-                |_, _| vec![Dependency::Unknown],
-            )
-        })
+        self.add(System::new(
+            "barrier".into(),
+            |_| Ok(()),
+            |_, _, _| Ok(()),
+            |_, _, _| Ok(()),
+            |_, _, _| Ok(()),
+            |_, _, _| vec![Dependency::Unknown],
+        ))
     }
 
     pub fn schedule(self) -> Result<Runner> {

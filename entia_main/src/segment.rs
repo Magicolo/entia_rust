@@ -23,8 +23,8 @@ pub enum Flag {
     Clone = 1 << 0,
 }
 
-// The 'entities' store must be kept separate from the 'components' stores to prevent undesired behavior that may arise
-// from using queries such as '&mut Entity' or templates such as 'Add<Entity>' as a component with a template.
+// The 'entity_store' must be kept separate from the 'component_stores' to prevent undesired behavior that may arise
+// from using queries such as '&mut Entity' or templates such as 'Add<Entity>'.
 pub struct Segment {
     identifier: usize,
     index: usize,
