@@ -332,14 +332,11 @@ pub fn template(input: TokenStream) -> TokenStream {
         let input_type = unpack_fields(&fields).map(|(_, _, field_type)| {
             quote! { <#field_type as #template_path>::Input, }
         });
-        let declare_type = unpack_fields(&fields).map(|(_, _, field_type)| {
-            quote! { <#field_type as #template_path>::Declare, }
-        });
         let state_type = unpack_fields(&fields).map(|(_, _, field_type)| {
             quote! { <#field_type as #template_path>::State, }
         });
-        let declare_body = unpack_fields(&fields).map(|(index, _, field_type)| {
-            quote! { <#field_type as #template_path>::declare(_input.#index, _context.owned()), }
+        let declare_body = unpack_fields(&fields).map(|(_, _, field_type)| {
+            quote! { <#field_type as #template_path>::declare(_context.owned()), }
         });
         let initialize_body = unpack_fields(&fields).map(|(index, _, field_type)| {
             quote! { <#field_type as #template_path>::initialize(_state.#index, _context.owned()), }
@@ -393,14 +390,13 @@ pub fn template(input: TokenStream) -> TokenStream {
             #[automatically_derived]
             impl #impl_generics #template_path for #ident #type_generics #where_clauses {
                 type Input = (#(#input_type)*);
-                type Declare = (#(#declare_type)*);
                 type State = (#(#state_type)*);
 
-                fn declare(_input: Self::Input, mut _context: #context_path::DeclareContext) -> Self::Declare {
+                fn declare(mut _context: #context_path::DeclareContext) -> Self::Input {
                     (#(#declare_body)*)
                 }
 
-                fn initialize(_state: Self::Declare, mut _context: #context_path::InitializeContext) -> Self::State {
+                fn initialize(_state: Self::Input, mut _context: #context_path::InitializeContext) -> Self::State {
                     (#(#initialize_body)*)
                 }
 

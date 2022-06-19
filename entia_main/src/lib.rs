@@ -15,8 +15,11 @@ pub mod inject;
 pub mod item;
 pub mod message;
 pub mod meta;
+pub mod output;
 pub mod query;
 pub mod resource;
+pub mod run;
+pub mod schedule;
 pub mod segment;
 pub mod store;
 pub mod system;
@@ -41,7 +44,9 @@ pub use crate::{
     message::{emit::Emit, receive::Receive, Message},
     query::Query,
     resource::Resource,
-    system::{runner::Runner, schedule::Scheduler, IntoSystem, System},
+    run::Runner,
+    schedule::Scheduler,
+    system::{IntoSystem, System},
     template::{Add, LeafTemplate, Spawn, SpawnTemplate, StaticTemplate, Template, With},
     world::World,
 };
