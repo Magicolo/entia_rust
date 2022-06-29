@@ -1,11 +1,16 @@
 use crate::{
     depend::{Depend, Dependency},
     error::Result,
-    item::{At, Context, Item},
+    item::{At, Chunk, Context, Item},
+    segment::Segment,
     store::Store,
     world::World,
 };
-use std::{fmt, sync::Arc};
+use std::{
+    fmt,
+    ops::{Range, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive},
+    sync::Arc,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Entity {
@@ -66,26 +71,85 @@ impl Item for Entity {
     }
 }
 
-impl<'a> At<'a> for State {
-    type State = *const Entity;
+impl<'a> Chunk<'a> for State {
+    type Ref = &'a [Entity];
+    type Mut = Self::Ref;
+
+    #[inline]
+    fn chunk(&'a self, segment: &'a Segment) -> Option<Self::Ref> {
+        debug_assert_eq!(self.1, segment.index());
+        Some(unsafe { self.0.get_all(segment.count()) })
+    }
+
+    #[inline]
+    fn chunk_mut(&'a self, segment: &'a Segment) -> Option<Self::Mut> {
+        self.chunk(segment)
+    }
+}
+
+impl<'a> At<'a, usize> for [Entity] {
     type Ref = Entity;
     type Mut = Self::Ref;
 
     #[inline]
-    fn get(&'a self, _: &'a World) -> Self::State {
-        self.0.data()
+    fn at(&'a self, index: usize) -> Option<Self::Ref> {
+        Some(*self.get(index)?)
     }
 
     #[inline]
-    fn at(state: &Self::State, index: usize) -> Self::Ref {
-        unsafe { *state.add(index) }
+    unsafe fn at_unchecked(&'a self, index: usize) -> Self::Ref {
+        *self.get_unchecked(index)
     }
 
     #[inline]
-    fn at_mut(state: &mut Self::State, index: usize) -> Self::Mut {
-        Self::at(state, index)
+    fn at_mut(&'a mut self, index: usize) -> Option<Self::Mut> {
+        Self::at(self, index)
+    }
+
+    #[inline]
+    unsafe fn at_unchecked_mut(&'a mut self, index: usize) -> Self::Mut {
+        Self::at_unchecked(self, index)
     }
 }
+
+macro_rules! at {
+    ($r:ty) => {
+        impl<'a> At<'a, $r> for [Entity] {
+            type Ref = &'a [Entity];
+            type Mut = &'a mut [Entity];
+
+            #[inline]
+            fn at(&'a self, index: $r) -> Option<Self::Ref> {
+                self.get(index)
+            }
+
+            #[inline]
+            unsafe fn at_unchecked(&'a self, index: $r) -> Self::Ref {
+                self.get_unchecked(index)
+            }
+
+            #[inline]
+            fn at_mut(&'a mut self, index: $r) -> Option<Self::Mut> {
+                self.get_mut(index)
+            }
+
+            #[inline]
+            unsafe fn at_unchecked_mut(&'a mut self, index: $r) -> Self::Mut {
+                self.get_unchecked_mut(index)
+            }
+        }
+    };
+    ($($r:ty,)*) => { $(at!($r);)* };
+}
+
+at!(
+    RangeFull,
+    Range<usize>,
+    RangeInclusive<usize>,
+    RangeFrom<usize>,
+    RangeTo<usize>,
+    RangeToInclusive<usize>,
+);
 
 unsafe impl Depend for State {
     fn depend(&self, _: &World) -> Vec<Dependency> {

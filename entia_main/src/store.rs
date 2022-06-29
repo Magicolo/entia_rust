@@ -102,8 +102,8 @@ impl Store {
 
     /// SAFETY: Both 'index' and 'count' must be within the bounds of the store.
     #[inline]
-    pub unsafe fn get_all<T: Send + Sync + 'static>(&self, index: usize, count: usize) -> &mut [T] {
-        from_raw_parts_mut(self.data::<T>().add(index), count)
+    pub unsafe fn get_all<T: Send + Sync + 'static>(&self, count: usize) -> &mut [T] {
+        from_raw_parts_mut(self.data::<T>(), count)
     }
 
     #[inline]

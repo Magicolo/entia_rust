@@ -1,15 +1,19 @@
 use crate::{
-    component,
     depend::{Depend, Dependency},
     entities::Entities,
-    entity::Entity,
+    entity::{self, Entity},
     error,
     inject::Inject,
-    item::{At, Context, Item},
+    item::{At, Chunk, Context, Item},
     resource,
+    segment::Segment,
     world::World,
 };
-use std::{fmt, iter::from_fn};
+use std::{
+    fmt,
+    iter::from_fn,
+    ops::{Range, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive},
+};
 
 // Do not replace '&'a Entities' by 'Read<Entities>' to remove the lifetime. This would allow users store a module that has
 // dependencies which would effectively hide those dependencies and potentially cause non-deterministic behaviours.
@@ -17,7 +21,7 @@ use std::{fmt, iter::from_fn};
 // of being scheduled in sequence because of the 'defer-read' dependency conflict that couldn't be seen.
 #[derive(Clone)]
 pub struct Family<'a>(Entity, &'a Entities);
-pub struct State(component::Read<Entity>, resource::Read<Entities>);
+pub struct State(entity::State, resource::Read<Entities>);
 
 impl<'a> Family<'a> {
     #[inline]
@@ -148,32 +152,92 @@ impl Item for Family<'_> {
 
     fn initialize(mut context: Context) -> Result<Self::State, error::Error> {
         Ok(State(
-            <component::Read<_> as Item>::initialize(context.owned())?,
+            <Entity as Item>::initialize(context.owned())?,
             <resource::Read<_> as Inject>::initialize(None, context.into())?,
         ))
     }
 }
 
-impl<'a> At<'a> for State {
-    type State = (*const Entity, &'a Entities);
+struct FamilyChunk<'a>(&'a [Entity], &'a Entities);
+
+impl<'a> Chunk<'a> for State {
+    type Ref = FamilyChunk<'a>;
+    type Mut = Self::Ref;
+
+    #[inline]
+    fn chunk(&'a self, segment: &'a Segment) -> Option<Self::Ref> {
+        Some(FamilyChunk(self.0.chunk(segment)?, self.1.as_ref()))
+    }
+
+    #[inline]
+    fn chunk_mut(&'a self, segment: &'a Segment) -> Option<Self::Mut> {
+        self.chunk(segment)
+    }
+}
+
+impl<'a> At<'a, usize> for FamilyChunk<'a> {
     type Ref = Family<'a>;
     type Mut = Self::Ref;
 
     #[inline]
-    fn get(&'a self, world: &'a World) -> Self::State {
-        (self.0.get(world), self.1.as_ref())
+    fn at(&'a self, index: usize) -> Option<Self::Ref> {
+        Some(Family(self.0.at(index)?, self.1))
     }
 
     #[inline]
-    fn at(state: &Self::State, index: usize) -> Self::Ref {
-        Family(unsafe { *state.0.add(index) }, state.1)
+    unsafe fn at_unchecked(&'a self, index: usize) -> Self::Ref {
+        Family(self.0.at_unchecked(index), self.1)
     }
 
     #[inline]
-    fn at_mut(state: &mut Self::State, index: usize) -> Self::Ref {
-        Self::at(state, index)
+    fn at_mut(&'a mut self, index: usize) -> Option<Self::Mut> {
+        Self::at(self, index)
+    }
+
+    #[inline]
+    unsafe fn at_unchecked_mut(&'a mut self, index: usize) -> Self::Mut {
+        Self::at_unchecked(self, index)
     }
 }
+
+macro_rules! at {
+    ($r:ty) => {
+        impl<'a> At<'a, $r> for FamilyChunk<'a> {
+            type Ref = Self;
+            type Mut = Self::Ref;
+
+            #[inline]
+            fn at(&'a self, index: $r) -> Option<Self::Ref> {
+                Some(Self(self.0.at(index)?, self.1))
+            }
+
+            #[inline]
+            unsafe fn at_unchecked(&'a self, index: $r) -> Self::Ref {
+                Self(self.0.at_unchecked(index), self.1)
+            }
+
+            #[inline]
+            fn at_mut(&'a mut self, index: $r) -> Option<Self::Mut> {
+                Self::at(self, index)
+            }
+
+            #[inline]
+            unsafe fn at_unchecked_mut(&'a mut self, index: $r) -> Self::Mut {
+                Self::at_unchecked(self, index)
+            }
+        }
+    };
+    ($($r:ty,)*) => { $(at!($r);)* };
+}
+
+at!(
+    RangeFull,
+    Range<usize>,
+    RangeInclusive<usize>,
+    RangeFrom<usize>,
+    RangeTo<usize>,
+    RangeToInclusive<usize>,
+);
 
 unsafe impl Depend for State {
     fn depend(&self, world: &World) -> Vec<Dependency> {

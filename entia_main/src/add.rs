@@ -7,9 +7,10 @@ use crate::{
     error::{Error, Result},
     family::template::{EntityIndices, SegmentIndices},
     inject::Inject,
-    item::{At, Context, Item},
+    item::{At, Chunk, Context, Item},
     resource,
     resource::Write,
+    segment::Segment,
     template::{
         ApplyContext, CountContext, DeclareContext, InitializeContext, LeafTemplate, Template,
     },
@@ -145,21 +146,38 @@ where
     }
 }
 
-impl<'a, T: LeafTemplate + 'a, R> At<'a> for State<T, R> {
-    type State = ();
+pub struct AddChunk<'a, T, R>(PhantomData<&'a ()>, PhantomData<T>, PhantomData<R>);
+impl<'a, T: LeafTemplate + 'a, R> Chunk<'a> for State<T, R> {
+    type Ref = ();
+    type Mut = AddChunk<'a, T, R>;
+
+    fn chunk(&'a self, segment: &'a Segment) -> Option<Self::Ref> {
+        todo!()
+    }
+
+    fn chunk_mut(&'a self, segment: &'a Segment) -> Option<Self::Mut> {
+        todo!()
+    }
+}
+
+impl<'a, T: LeafTemplate + 'a, R> At<'a, usize> for AddChunk<'a, T, R> {
     type Ref = Add<'a, T, R>;
-    type Mut = Add<'a, T, R>;
+    type Mut = Self::Ref;
 
-    fn get(&'a self, world: &'a crate::World) -> Self::State {
+    fn at(&'a self, index: usize) -> Option<Self::Ref> {
         todo!()
     }
 
-    fn at(state: &Self::State, index: usize) -> Self::Ref {
+    unsafe fn at_unchecked(&'a self, index: usize) -> Self::Ref {
         todo!()
     }
 
-    fn at_mut(state: &mut Self::State, index: usize) -> Self::Mut {
-        Self::at(state, index)
+    fn at_mut(&'a mut self, index: usize) -> Option<Self::Mut> {
+        todo!()
+    }
+
+    unsafe fn at_unchecked_mut(&'a mut self, index: usize) -> Self::Mut {
+        todo!()
     }
 }
 

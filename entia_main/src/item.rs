@@ -8,17 +8,24 @@ pub struct Context<'a> {
 }
 
 pub trait Item {
-    type State: for<'a> At<'a> + Depend;
+    type State: for<'a> Chunk<'a> + Depend;
     fn initialize(context: Context) -> Result<Self::State>;
 }
 
-pub trait At<'a> {
-    type State;
+pub trait Chunk<'a> {
+    type Ref: At<'a>;
+    type Mut: At<'a>;
+    fn chunk(&'a self, segment: &'a Segment) -> Option<Self::Ref>;
+    fn chunk_mut(&'a self, segment: &'a Segment) -> Option<Self::Mut>;
+}
+
+pub trait At<'a, I = usize> {
     type Ref;
     type Mut;
-    fn get(&'a self, world: &'a World) -> Self::State;
-    fn at(state: &Self::State, index: usize) -> Self::Ref;
-    fn at_mut(state: &mut Self::State, index: usize) -> Self::Mut;
+    fn at(&'a self, index: I) -> Option<Self::Ref>;
+    unsafe fn at_unchecked(&'a self, index: I) -> Self::Ref;
+    fn at_mut(&'a mut self, index: I) -> Option<Self::Mut>;
+    unsafe fn at_unchecked_mut(&'a mut self, index: I) -> Self::Mut;
 }
 
 impl<'a> Context<'a> {
@@ -57,6 +64,78 @@ impl<'a> Into<inject::Context<'a>> for Context<'a> {
     }
 }
 
+impl<'a, C: Chunk<'a> + ?Sized> Chunk<'a> for &C {
+    type Ref = C::Ref;
+    type Mut = C::Mut;
+
+    #[inline]
+    fn chunk(&'a self, segment: &'a Segment) -> Option<Self::Ref> {
+        C::chunk(self, segment)
+    }
+    #[inline]
+    fn chunk_mut(&'a self, segment: &'a Segment) -> Option<Self::Mut> {
+        C::chunk_mut(self, segment)
+    }
+}
+
+impl<'a, C: Chunk<'a> + ?Sized> Chunk<'a> for &mut C {
+    type Ref = C::Ref;
+    type Mut = C::Mut;
+
+    #[inline]
+    fn chunk(&'a self, segment: &'a Segment) -> Option<Self::Ref> {
+        C::chunk(self, segment)
+    }
+    #[inline]
+    fn chunk_mut(&'a self, segment: &'a Segment) -> Option<Self::Mut> {
+        C::chunk_mut(self, segment)
+    }
+}
+
+impl<'a, I, A: At<'a, I> + ?Sized> At<'a, I> for &A {
+    type Ref = A::Ref;
+    type Mut = Self::Ref;
+
+    #[inline]
+    fn at(&'a self, index: I) -> Option<Self::Ref> {
+        A::at(self, index)
+    }
+    #[inline]
+    unsafe fn at_unchecked(&'a self, index: I) -> Self::Ref {
+        A::at_unchecked(self, index)
+    }
+    #[inline]
+    fn at_mut(&'a mut self, index: I) -> Option<Self::Mut> {
+        Self::at(self, index)
+    }
+    #[inline]
+    unsafe fn at_unchecked_mut(&'a mut self, index: I) -> Self::Mut {
+        Self::at_unchecked(self, index)
+    }
+}
+
+impl<'a, I, A: At<'a, I> + ?Sized> At<'a, I> for &mut A {
+    type Ref = A::Ref;
+    type Mut = A::Mut;
+
+    #[inline]
+    fn at(&'a self, index: I) -> Option<Self::Ref> {
+        A::at(self, index)
+    }
+    #[inline]
+    unsafe fn at_unchecked(&'a self, index: I) -> Self::Ref {
+        A::at_unchecked(self, index)
+    }
+    #[inline]
+    fn at_mut(&'a mut self, index: I) -> Option<Self::Mut> {
+        A::at_mut(self, index)
+    }
+    #[inline]
+    unsafe fn at_unchecked_mut(&'a mut self, index: I) -> Self::Mut {
+        A::at_unchecked_mut(self, index)
+    }
+}
+
 impl<I: Item> Item for Option<I> {
     type State = Option<I::State>;
 
@@ -65,24 +144,61 @@ impl<I: Item> Item for Option<I> {
     }
 }
 
-impl<'a, A: At<'a>> At<'a> for Option<A> {
-    type State = Option<A::State>;
+impl<'a, C: Chunk<'a>> Chunk<'a> for Option<C> {
+    type Ref = Option<C::Ref>;
+    type Mut = Option<C::Mut>;
+
+    #[inline]
+    fn chunk(&'a self, segment: &'a Segment) -> Option<Self::Ref> {
+        Some(match self {
+            Some(chunk) => Some(chunk.chunk(segment)?),
+            None => None,
+        })
+    }
+
+    #[inline]
+    fn chunk_mut(&'a self, segment: &'a Segment) -> Option<Self::Mut> {
+        Some(match self {
+            Some(chunk) => Some(chunk.chunk_mut(segment)?),
+            None => None,
+        })
+    }
+}
+
+impl<'a, I, A: At<'a, I>> At<'a, I> for Option<A> {
     type Ref = Option<A::Ref>;
     type Mut = Option<A::Mut>;
 
     #[inline]
-    fn get(&'a self, world: &'a World) -> Self::State {
-        Some(self.as_ref()?.get(world))
+    fn at(&'a self, index: I) -> Option<Self::Ref> {
+        Some(match self {
+            Some(at) => Some(at.at(index)?),
+            None => None,
+        })
     }
 
     #[inline]
-    fn at(state: &Self::State, index: usize) -> Self::Ref {
-        Some(A::at(state.as_ref()?, index))
+    unsafe fn at_unchecked(&'a self, index: I) -> Self::Ref {
+        match self {
+            Some(at) => Some(at.at_unchecked(index)),
+            None => None,
+        }
     }
 
     #[inline]
-    fn at_mut(state: &mut Self::State, index: usize) -> Self::Mut {
-        Some(A::at_mut(state.as_mut()?, index))
+    fn at_mut(&'a mut self, index: I) -> Option<Self::Mut> {
+        Some(match self {
+            Some(at) => Some(at.at_mut(index)?),
+            None => None,
+        })
+    }
+
+    #[inline]
+    unsafe fn at_unchecked_mut(&'a mut self, index: I) -> Self::Mut {
+        match self {
+            Some(at) => Some(at.at_unchecked_mut(index)),
+            None => None,
+        }
     }
 }
 
@@ -93,27 +209,7 @@ impl<T> Item for PhantomData<T> {
     }
 }
 
-impl<'a, T> At<'a> for PhantomData<T> {
-    type State = <() as At<'a>>::State;
-    type Ref = <() as At<'a>>::Ref;
-    type Mut = <() as At<'a>>::Mut;
-
-    #[inline]
-    fn get(&'a self, world: &'a World) -> Self::State {
-        ().get(world)
-    }
-
-    #[inline]
-    fn at(state: &Self::State, index: usize) -> Self::Ref {
-        <()>::at(state, index)
-    }
-
-    #[inline]
-    fn at_mut(state: &mut Self::State, index: usize) -> Self::Mut {
-        <()>::at_mut(state, index)
-    }
-}
-
+pub struct TupleIterator<T>(T);
 macro_rules! item {
     ($($p:ident, $t:ident),*) => {
         impl<$($t: Item,)*> Item for ($($t,)*) {
@@ -124,27 +220,49 @@ macro_rules! item {
             }
         }
 
-        impl<'a, $($t: At<'a>,)*> At<'a> for ($($t,)*) {
-            type State = ($($t::State,)*);
+        impl<'a, $($t: Chunk<'a>,)*> Chunk<'a> for ($($t,)*) {
             type Ref = ($($t::Ref,)*);
             type Mut = ($($t::Mut,)*);
 
             #[inline]
-            fn get(&'a self, _world: &'a World) -> Self::State {
+            fn chunk(&'a self, _segment: &'a Segment) -> Option<Self::Ref> {
                 let ($($p,)*) = self;
-                ($($p.get(_world),)*)
+                Some(($($p.chunk(_segment)?,)*))
             }
 
             #[inline]
-            fn at(_state: &Self::State, _index: usize) -> Self::Ref {
-                let ($($p,)*) = _state;
-                ($($t::at($p, _index),)*)
+            fn chunk_mut(&'a self, _segment: &'a Segment) -> Option<Self::Mut> {
+                let ($($p,)*) = self;
+                Some(($($p.chunk_mut(_segment)?,)*))
+            }
+        }
+
+        impl<'a, I: Clone, $($t: At<'a, I>,)*> At<'a, I> for ($($t,)*) {
+            type Ref = ($($t::Ref,)*);
+            type Mut = ($($t::Mut,)*);
+
+            #[inline]
+            fn at(&'a self, _index: I) -> Option<Self::Ref> {
+                let ($($p,)*) = self;
+                Some(($($p.at(_index.clone())?,)*))
             }
 
             #[inline]
-            fn at_mut(_state: &mut Self::State, _index: usize) -> Self::Mut {
-                let ($($p,)*) = _state;
-                ($($t::at_mut($p, _index),)*)
+            unsafe fn at_unchecked(&'a self, _index: I) -> Self::Ref {
+                let ($($p,)*) = self;
+                ($($p.at_unchecked(_index.clone()),)*)
+            }
+
+            #[inline]
+            fn at_mut(&'a mut self, _index: I) -> Option<Self::Mut> {
+                let ($($p,)*) = self;
+                Some(($($p.at_mut(_index.clone())?,)*))
+            }
+
+            #[inline]
+            unsafe fn at_unchecked_mut(&'a mut self, _index: I) -> Self::Mut {
+                let ($($p,)*) = self;
+                ($($p.at_unchecked_mut(_index.clone()),)*)
             }
         }
     };

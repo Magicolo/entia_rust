@@ -69,8 +69,8 @@ impl<R: Resource> Inject for Write<R> {
     }
 }
 
-impl<'a, T: Send + Sync + 'static> Get<'a> for Write<T> {
-    type Item = &'a mut T;
+impl<'a, R: Resource> Get<'a> for Write<R> {
+    type Item = &'a mut R;
 
     #[inline]
     fn get(&'a mut self, _: &World) -> Self::Item {
@@ -128,8 +128,8 @@ impl<R: Resource> Inject for Read<R> {
     }
 }
 
-impl<'a, T: Send + Sync + 'static> Get<'a> for Read<T> {
-    type Item = &'a T;
+impl<'a, R: Resource> Get<'a> for Read<R> {
+    type Item = &'a R;
 
     #[inline]
     fn get(&'a mut self, _: &World) -> Self::Item {

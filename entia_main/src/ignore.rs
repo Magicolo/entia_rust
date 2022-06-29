@@ -3,7 +3,7 @@ use crate::{
     depend::{self, Depend, Dependency},
     error::Result,
     inject::{self, Get, Inject},
-    item::{self, At, Item},
+    item::{self, Chunk, Item},
     world::World,
 };
 use std::marker::PhantomData;
@@ -55,24 +55,18 @@ impl<I: Item, S: Scope> Item for Ignore<I, S> {
     }
 }
 
-impl<'a, T: At<'a>, S: Scope> At<'a> for State<T, S> {
-    type State = T::State;
-    type Ref = Ignore<T::Ref>;
-    type Mut = Ignore<T::Mut>;
+impl<'a, C: Chunk<'a>, S: Scope> Chunk<'a> for State<C, S> {
+    type Ref = C::Ref;
+    type Mut = C::Mut;
 
     #[inline]
-    fn get(&'a self, world: &'a World) -> Self::State {
-        self.0.get(world)
+    fn chunk(&'a self, segment: &'a crate::segment::Segment) -> Option<Self::Ref> {
+        self.0.chunk(segment)
     }
 
     #[inline]
-    fn at(state: &Self::State, index: usize) -> Self::Ref {
-        Ignore(T::at(state, index), PhantomData)
-    }
-
-    #[inline]
-    fn at_mut(state: &mut Self::State, index: usize) -> Self::Mut {
-        Ignore(T::at_mut(state, index), PhantomData)
+    fn chunk_mut(&'a self, segment: &'a crate::segment::Segment) -> Option<Self::Mut> {
+        self.0.chunk_mut(segment)
     }
 }
 

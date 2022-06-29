@@ -198,6 +198,7 @@ impl<'a> IntoIterator for &'a Bits {
 impl iter::Iterator for Iterator<'_> {
     type Item = usize;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         while let Some(&bucket) = self.bits.buckets.get(self.bucket) {
             if bucket > 0 {
@@ -222,6 +223,7 @@ impl iter::Iterator for Iterator<'_> {
         None
     }
 
+    #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         let upper = self.bits.capacity() - self.bucket * Bits::SIZE - self.shift;
         (0, Some(upper))
