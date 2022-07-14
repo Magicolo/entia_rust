@@ -13,14 +13,12 @@ use std::{collections::HashSet, marker::PhantomData};
 /// Resolves destroy operations such that coherence rules are strictly maintained
 /// at the cost of likely causing a synchronization point.
 /// Can be used as the resolution parameter of the 'Destroy' type.
-#[derive(Debug)]
 pub struct Early;
 
 /// Resolves destroy operations at the next synchronization point without adding
 /// additionnal dependencies at the cost of allowing further systems
 /// to observe a destroyed entity (with its state intact).
 /// Can be used as the resolution parameter of the 'Destroy' type.
-#[derive(Debug)]
 pub struct Late;
 
 pub struct Destroy<'a, R = Early>(defer::Defer<'a, Inner>, PhantomData<R>);

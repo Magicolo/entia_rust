@@ -1,4 +1,4 @@
-use entia::*;
+use entia::{system::Barrier, *};
 use entia_main as entia;
 
 fn main() {
@@ -10,7 +10,7 @@ fn main() {
     struct Position(Vec<usize>);
     #[derive(Component, Default, Clone)]
     struct Velocity(Vec<usize>);
-    #[derive(Component, Default, Clone)]
+    #[derive(Component, Default, Copy, Clone)]
     struct Frozen;
     #[derive(Component)]
     struct Target(Entity);
@@ -90,6 +90,7 @@ fn main() {
                 Add::new(Frozen),
             ));
         })
+        .add(Barrier)
         .add(|mut create: Create<_>| {
             create.one(complex());
         })
@@ -126,12 +127,21 @@ fn main() {
         .add(|query: Query<Entity>, mut destroy: Destroy| {
             query.each(|entity| destroy.one(entity, true))
         })
-        .add(|mut receive: Receive<OnDeath>, mut destroy: Destroy| destroy.all(&mut receive, true))
         .add(
-            |mut query: Query<Entity, Has<Dead>>, mut destroy: Destroy| {
-                destroy.all(&mut query, true)
+            |mut query: Query<(&mut Position, &Velocity, Option<&mut Frozen>)>| {
+                for (_positions, _velocities, _frozen) in query.chunks() {}
+                for (positions, velocities, frozen) in query.chunks_mut() {
+                    match frozen {
+                        Some(frozen) => frozen[0] = Frozen,
+                        None => positions[0].0[0] += velocities[0].0[0],
+                    }
+                }
             },
         )
+        .add(|mut receive: Receive<OnDeath>, mut destroy: Destroy| destroy.all(&mut receive, true))
+        .add(|query: Query<Entity, Has<Dead>>, mut destroy: Destroy| {
+            destroy.all(query.iter(), true)
+        })
         .add(
             |mut receive: Receive<OnDeath>| {
                 if let Some(_message) = receive.first() {}

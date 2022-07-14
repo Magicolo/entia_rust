@@ -5,7 +5,7 @@ use crate::{
     error::Result,
     filter::Filter,
     inject::{self, Get, Inject},
-    item::{At, Chunk, Context, Item},
+    item::{At, Context, Item},
     meta::Meta,
     resource::{Read, Write},
     world::World,
@@ -16,6 +16,7 @@ use std::{
     fmt::{self},
     iter,
     marker::PhantomData,
+    ops::RangeFull,
 };
 
 pub struct Query<'a, I: Item, F = ()> {
@@ -119,45 +120,49 @@ where
 }
 
 macro_rules! iterator {
-    ($t:ident, $chunk:ident, $chunks:ident, $at:ident, $iter:ident, $each:ident, $get:ident, $item:ident, [$($mut:tt)?]) => {
+    ($t:ident, $at:ident, $chunks:ident, $iter:ident, $each:ident, $get:ident, $item:ident, [$($mut:tt)?]) => {
         impl<'a, I: Item, F> Query<'a, I, F> {
             #[inline]
             pub fn $iter<'b>(&'b $($mut)? self) -> $t<'a, 'b, I, F> where 'a: 'b {
                 self.into_iter()
             }
 
-            pub fn $chunks(& $($mut)? self) -> impl Iterator<Item = <I::State as Chunk<'a>>::$item> {
+            pub fn $chunks(& $($mut)? self) -> impl Iterator<Item = <I::State as At<'_, RangeFull>>::$item>
+            where
+                I::State: for<'b> At<'b, RangeFull>
+            {
                 let segments = self.world.segments();
                 self.inner.states.iter().filter_map(|(state, segment)| {
                     // SAFETY: The 'segment' index has already been checked to be in range and the 'world.segments' vector never shrinks.
-                    state.$chunk(unsafe { segments.get_unchecked(*segment) })
+                    let $($mut)? state = state.get(unsafe { segments.get_unchecked(*segment) })?;
+                    Some(unsafe { I::State::$at(& $($mut)? state, ..) })
                 })
             }
 
-            pub fn $each<E: FnMut(<<I::State as Chunk<'a>>::$item as At<'a>>::$item)>(& $($mut)? self, mut each: E) {
+            pub fn $each<E: FnMut(<I::State as At<'_>>::$item)>(& $($mut)? self, mut each: E) {
                 let segments = self.world.segments();
                 for (state, segment) in &self.inner.states {
                     // SAFETY: The 'segment' index has already been checked to be in range and the 'world.segments' vector never shrinks.
                     let segment = unsafe { segments.get_unchecked(*segment) };
-                    if let Some($($mut)? chunk) = state.$chunk(segment) {
+                    if let Some($($mut)? state) = state.get(segment) {
                         for i in 0..segment.count() {
-                            // SAFETY: The safety requirements of 'at_unchecked' guarantee that is it safe to provide an index
+                            // SAFETY: The safety requirements of 'at_unchecked/_mut' guarantee that is it safe to provide an index
                             // within '0..segment.count()'.
-                            each(unsafe { chunk.$at(i) });
+                            each(unsafe { I::State::$at(& $($mut)? state, i) });
                         }
                     }
                 }
             }
 
-            pub fn $get<E: Into<Entity>>(& $($mut)? self, entity: E) -> Option<<<I::State as Chunk<'a>>::$item as At<'a>>::$item> {
+            pub fn $get<E: Into<Entity>>(& $($mut)? self, entity: E) -> Option<<I::State as At<'_>>::$item> {
                 let datum = self.entities.get_datum(entity.into())?;
                 let index = self.inner.segments[datum.segment_index as usize]?;
                 let (state, segment) = &self.inner.states[index];
                 // SAFETY: The 'segment' index has already been checked to be in range and the 'world.segments' vector never shrinks.
                 let segment = unsafe { self.world.segments().get_unchecked(*segment) };
-                let $($mut)? chunk = state.$chunk(segment)?;
+                let $($mut)? state = state.get(segment)?;
                 // SAFETY: 'entities.get_datum' validates that the 'store_index' is valid and is therefore safe to use.
-                Some(unsafe { chunk.$at(datum.store_index as usize) })
+                Some(unsafe { I::State::$at(& $($mut)? state, datum.store_index as usize) })
             }
         }
 
@@ -166,11 +171,11 @@ macro_rules! iterator {
             count: usize,
             segment: usize,
             query: &'b $($mut)? Query<'a, I, F>,
-            chunk: Option<<I::State as Chunk<'a>>::$item>,
+            state: Option<<I::State as At<'a>>::State>,
         }
 
         impl<'a: 'b, 'b, I: Item, F> IntoIterator for &'b $($mut)? Query<'a, I, F> {
-            type Item = <<I::State as Chunk<'a>>::$item as At<'a>>::$item;
+            type Item = <I::State as At<'a>>::$item;
             type IntoIter = $t<'a, 'b, I, F>;
 
             #[inline]
@@ -180,22 +185,22 @@ macro_rules! iterator {
                     count: 0,
                     segment: 0,
                     query: self,
-                    chunk: None,
+                    state: None,
                }
             }
         }
 
         impl<'a: 'b, 'b, I: Item, F> iter::Iterator for $t<'a, 'b, I, F> {
-            type Item = <<I::State as Chunk<'a>>::$item as At<'a>>::$item;
+            type Item = <I::State as At<'a>>::$item;
 
             fn next(&mut self) -> Option<Self::Item> {
                 loop {
                     if self.index < self.count {
                         // SAFETY: In order to pass the 'self.index < self.count' check, 'self.state' had to be set.
                         // This holds as long as 'self.count' was initialized to 0.
-                        let $($mut)? chunk = unsafe { self.chunk.as_mut().unwrap_unchecked() };
+                        let $($mut)? state = unsafe { self.state.as_mut().unwrap_unchecked() };
                         // SAFETY: 'self.index' has been checked to be in range.
-                        let item = unsafe { chunk.$at(self.index) };
+                        let item = unsafe { I::State::$at(& $($mut)? state, self.index) };
                         self.index += 1;
                         break Some(item);
                     } else {
@@ -204,11 +209,11 @@ macro_rules! iterator {
                         // SAFETY: The 'segment' index has already been checked to be in range and the 'world.segments' vector never shrinks..
                         let segment = unsafe { segments.get_unchecked(*segment) };
                         self.segment += 1;
-                        // The chunk may be skipped.
-                        if let Some(chunk) = state.$chunk(segment) {
+                        // The segment may be skipped.
+                        if let Some(state) = state.get(segment) {
                             self.index = 0;
                             self.count = segment.count();
-                            self.chunk = Some(chunk);
+                            self.state = Some(state);
                         }
                     }
                 }
@@ -216,15 +221,5 @@ macro_rules! iterator {
         }
     };
 }
-iterator!(
-    IteratorRef,
-    chunk,
-    chunks,
-    at_unchecked,
-    iter,
-    each,
-    get,
-    Ref,
-    []
-);
-iterator!(IteratorMut, chunk_mut, chunks_mut, at_unchecked_mut, iter_mut, each_mut, get_mut, Mut, [mut]);
+iterator!(IteratorRef, at_ref, chunks, iter, each, get, Ref, []);
+iterator!(IteratorMut, at_mut, chunks_mut, iter_mut, each_mut, get_mut, Mut, [mut]);

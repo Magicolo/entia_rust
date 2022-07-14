@@ -204,7 +204,7 @@ macro_rules! primitive {
                 self,
                 deserializer: D,
             ) -> Result<Self::Value, D::Error> {
-                *self = New::<$t>::new().deserialize(deserializer)?;
+                *self = deserializer.$t()?;
                 Ok(())
             }
         }

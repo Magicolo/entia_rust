@@ -1,13 +1,17 @@
 use crate::{
     depend::{Depend, Dependency},
     error::Result,
-    item::{self, At, Chunk, Item},
+    item::{self, At, Item},
     meta::Meta,
     segment::Segment,
     store::Store,
     world::World,
 };
-use std::{marker::PhantomData, slice::SliceIndex, sync::Arc};
+use std::{
+    marker::PhantomData,
+    slice::{from_raw_parts, from_raw_parts_mut, SliceIndex},
+    sync::Arc,
+};
 
 pub struct Write<T>(Arc<Store>, usize, PhantomData<T>);
 pub struct Read<T>(Write<T>);
@@ -15,34 +19,6 @@ pub struct Read<T>(Write<T>);
 pub trait Component: Sized + Send + Sync + 'static {
     fn meta() -> Meta {
         crate::meta!(Self)
-    }
-}
-
-impl<'a, C: Component, I: SliceIndex<[C]>> At<'a, I> for [C]
-where
-    I::Output: 'a,
-{
-    type Ref = &'a I::Output;
-    type Mut = &'a mut I::Output;
-
-    #[inline]
-    fn at(&'a self, index: I) -> Option<Self::Ref> {
-        self.get(index)
-    }
-
-    #[inline]
-    unsafe fn at_unchecked(&'a self, index: I) -> Self::Ref {
-        self.get_unchecked(index)
-    }
-
-    #[inline]
-    fn at_mut(&'a mut self, index: I) -> Option<Self::Mut> {
-        self.get_mut(index)
-    }
-
-    #[inline]
-    unsafe fn at_unchecked_mut(&'a mut self, index: I) -> Self::Mut {
-        self.get_unchecked_mut(index)
     }
 }
 
@@ -63,14 +39,6 @@ impl<T> Write<T> {
     }
 }
 
-impl<C: Component> Item for &mut C {
-    type State = <Write<C> as Item>::State;
-
-    fn initialize(context: item::Context) -> Result<Self::State> {
-        Write::<C>::initialize(context)
-    }
-}
-
 impl<C: Component> Item for Write<C> {
     type State = Self;
 
@@ -82,20 +50,36 @@ impl<C: Component> Item for Write<C> {
     }
 }
 
-impl<'a, C: Component> Chunk<'a> for Write<C> {
-    type Ref = &'a [C];
-    type Mut = &'a mut [C];
+impl<C: Component> Item for &mut C {
+    type State = <Write<C> as Item>::State;
+
+    fn initialize(context: item::Context) -> Result<Self::State> {
+        Write::<C>::initialize(context)
+    }
+}
+
+impl<'a, C: Component, I: SliceIndex<[C]>> At<'a, I> for Write<C>
+where
+    I::Output: 'a,
+{
+    type State = (*mut C, usize);
+    type Ref = &'a I::Output;
+    type Mut = &'a mut I::Output;
 
     #[inline]
-    fn chunk(&'a self, segment: &'a Segment) -> Option<Self::Ref> {
+    fn get(&'a self, segment: &Segment) -> Option<Self::State> {
         debug_assert_eq!(self.segment(), segment.index());
-        Some(unsafe { self.store().get_all(segment.count()) })
+        Some((self.store().data(), segment.count()))
     }
 
     #[inline]
-    fn chunk_mut(&'a self, segment: &'a Segment) -> Option<Self::Mut> {
-        debug_assert_eq!(self.segment(), segment.index());
-        Some(unsafe { self.store().get_all(segment.count()) })
+    unsafe fn at_ref(state: &Self::State, index: I) -> Self::Ref {
+        from_raw_parts(state.0, state.1).get_unchecked(index)
+    }
+
+    #[inline]
+    unsafe fn at_mut(state: &mut Self::State, index: I) -> Self::Mut {
+        from_raw_parts_mut(state.0, state.1).get_unchecked_mut(index)
     }
 }
 
@@ -122,14 +106,6 @@ impl<T> Read<T> {
     }
 }
 
-impl<C: Component> Item for &C {
-    type State = <Read<C> as Item>::State;
-
-    fn initialize(context: item::Context) -> Result<Self::State> {
-        <Read<_> as Item>::initialize(context)
-    }
-}
-
 impl<C: Component> Item for Read<C> {
     type State = Self;
 
@@ -138,18 +114,35 @@ impl<C: Component> Item for Read<C> {
     }
 }
 
-impl<'a, C: Component> Chunk<'a> for Read<C> {
-    type Ref = <Write<C> as Chunk<'a>>::Ref;
+impl<C: Component> Item for &C {
+    type State = <Read<C> as Item>::State;
+
+    fn initialize(context: item::Context) -> Result<Self::State> {
+        <Read<_> as Item>::initialize(context)
+    }
+}
+
+impl<'a, C: Component, I: SliceIndex<[C]>> At<'a, I> for Read<C>
+where
+    I::Output: 'a,
+{
+    type State = <Write<C> as At<'a, I>>::State;
+    type Ref = <Write<C> as At<'a, I>>::Ref;
     type Mut = Self::Ref;
 
     #[inline]
-    fn chunk(&'a self, segment: &'a Segment) -> Option<Self::Ref> {
-        self.0.chunk(segment)
+    fn get(&'a self, segment: &Segment) -> Option<Self::State> {
+        <Write<C> as At<'a, I>>::get(&self.0, segment)
     }
 
     #[inline]
-    fn chunk_mut(&'a self, segment: &'a Segment) -> Option<Self::Mut> {
-        self.0.chunk(segment)
+    unsafe fn at_ref(state: &Self::State, index: I) -> Self::Ref {
+        <Write<C> as At<'a, I>>::at_ref(state, index)
+    }
+
+    #[inline]
+    unsafe fn at_mut(state: &mut Self::State, index: I) -> Self::Mut {
+        Self::at_ref(state, index)
     }
 }
 

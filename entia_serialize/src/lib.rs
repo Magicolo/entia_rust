@@ -1,14 +1,12 @@
 pub mod deserialize;
 pub mod deserializer;
 pub mod json;
+pub mod meta;
 pub mod node;
 pub mod serialize;
 pub mod serializer;
 
 pub(crate) use entia_macro::recurse_16 as recurse;
-
-#[cfg(test)]
-mod test;
 
 pub struct Boba {
     a: bool,
@@ -24,7 +22,19 @@ pub enum Fett {
 
 mod example {
     use super::*;
-    use crate::{deserialize::*, deserializer::*};
+    use crate::{deserialize::*, deserializer::*, meta::Meta};
+
+    impl<T> Meta<T> for Boba {
+        fn meta() -> &'static T {
+            todo!()
+        }
+    }
+
+    impl<T> Meta<T> for Fett {
+        fn meta() -> &'static T {
+            todo!()
+        }
+    }
 
     macro_rules! new_map {
         ($f:expr, $l:expr $(,$p:ident, $n:expr, $t:ty)*) => {{

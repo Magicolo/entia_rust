@@ -4,7 +4,7 @@ use crate::{
     entity::{self, Entity},
     error,
     inject::Inject,
-    item::{At, Chunk, Context, Item},
+    item::{At, Context, Item},
     resource,
     segment::Segment,
     world::World,
@@ -158,72 +158,52 @@ impl Item for Family<'_> {
     }
 }
 
-struct FamilyChunk<'a>(&'a [Entity], &'a Entities);
+pub struct FamilyChunk<'a>(&'a [Entity], &'a Entities);
 
-impl<'a> Chunk<'a> for State {
-    type Ref = FamilyChunk<'a>;
-    type Mut = Self::Ref;
-
-    #[inline]
-    fn chunk(&'a self, segment: &'a Segment) -> Option<Self::Ref> {
-        Some(FamilyChunk(self.0.chunk(segment)?, self.1.as_ref()))
-    }
-
-    #[inline]
-    fn chunk_mut(&'a self, segment: &'a Segment) -> Option<Self::Mut> {
-        self.chunk(segment)
-    }
-}
-
-impl<'a> At<'a, usize> for FamilyChunk<'a> {
+impl<'a> At<'a> for State {
+    type State = (<entity::State as At<'a>>::State, &'a Entities);
     type Ref = Family<'a>;
     type Mut = Self::Ref;
 
     #[inline]
-    fn at(&'a self, index: usize) -> Option<Self::Ref> {
-        Some(Family(self.0.at(index)?, self.1))
+    fn get(&'a self, segment: &Segment) -> Option<Self::State> {
+        Some((
+            <entity::State as At<'a>>::get(&self.0, segment)?,
+            self.1.as_ref(),
+        ))
     }
 
     #[inline]
-    unsafe fn at_unchecked(&'a self, index: usize) -> Self::Ref {
-        Family(self.0.at_unchecked(index), self.1)
+    unsafe fn at_ref(state: &Self::State, index: usize) -> Self::Ref {
+        Family::new(<entity::State as At<'a>>::at_ref(&state.0, index), state.1)
     }
 
     #[inline]
-    fn at_mut(&'a mut self, index: usize) -> Option<Self::Mut> {
-        Self::at(self, index)
-    }
-
-    #[inline]
-    unsafe fn at_unchecked_mut(&'a mut self, index: usize) -> Self::Mut {
-        Self::at_unchecked(self, index)
+    unsafe fn at_mut(state: &mut Self::State, index: usize) -> Self::Mut {
+        Self::at_ref(state, index)
     }
 }
 
 macro_rules! at {
     ($r:ty) => {
-        impl<'a> At<'a, $r> for FamilyChunk<'a> {
-            type Ref = Self;
+        impl<'a> At<'a, $r> for State {
+            type State = (<entity::State as At<'a, $r>>::State, &'a Entities);
+            type Ref = FamilyChunk<'a>;
             type Mut = Self::Ref;
 
             #[inline]
-            fn at(&'a self, index: $r) -> Option<Self::Ref> {
-                Some(Self(self.0.at(index)?, self.1))
+            fn get(&'a self, segment: &Segment) -> Option<Self::State> {
+                Some((<entity::State as At<'a, $r>>::get(&self.0, segment)?, self.1.as_ref()))
             }
 
             #[inline]
-            unsafe fn at_unchecked(&'a self, index: $r) -> Self::Ref {
-                Self(self.0.at_unchecked(index), self.1)
+            unsafe fn at_ref(state: &Self::State, index: $r) -> Self::Ref {
+                FamilyChunk(entity::State::at_ref(&state.0, index), state.1)
             }
 
             #[inline]
-            fn at_mut(&'a mut self, index: $r) -> Option<Self::Mut> {
-                Self::at(self, index)
-            }
-
-            #[inline]
-            unsafe fn at_unchecked_mut(&'a mut self, index: $r) -> Self::Mut {
-                Self::at_unchecked(self, index)
+            unsafe fn at_mut(state: &mut Self::State, index: $r) -> Self::Mut {
+                Self::at_ref(state, index)
             }
         }
     };

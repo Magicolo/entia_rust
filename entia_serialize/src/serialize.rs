@@ -25,7 +25,7 @@ impl<T: Serialize + ?Sized> Serialize for &mut T {
 impl<T: Serialize> Serialize for Option<T> {
     #[inline]
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Value, S::Error> {
-        let enumeration = serializer.enumeration()?;
+        let enumeration = serializer.enumeration::<Self>()?;
         match self {
             None => enumeration.variant("None", 0)?.unit(),
             Some(value) => enumeration.variant("Some", 1)?.tuple()?.item(value)?.end(),
@@ -36,7 +36,7 @@ impl<T: Serialize> Serialize for Option<T> {
 impl<T: Serialize, E: Serialize> Serialize for Result<T, E> {
     #[inline]
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Value, S::Error> {
-        let enumeration = serializer.enumeration()?;
+        let enumeration = serializer.enumeration::<Self>()?;
         match self {
             Ok(value) => enumeration.variant("Ok", 0)?.tuple()?.item(value)?.end(),
             Err(error) => enumeration.variant("Err", 1)?.tuple()?.item(error)?.end(),
@@ -47,7 +47,7 @@ impl<T: Serialize, E: Serialize> Serialize for Result<T, E> {
 impl<T: ?Sized> Serialize for PhantomData<T> {
     #[inline]
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Value, S::Error> {
-        serializer.structure()?.unit()
+        serializer.structure::<Self>()?.unit()
     }
 }
 
@@ -89,7 +89,7 @@ impl<T: Serialize, const N: usize> Serialize for [T; N] {
 impl Serialize for RangeFull {
     #[inline]
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Value, S::Error> {
-        serializer.structure()?.unit()
+        serializer.structure::<Self>()?.unit()
     }
 }
 
@@ -97,7 +97,7 @@ impl<T: Serialize> Serialize for Range<T> {
     #[inline]
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Value, S::Error> {
         serializer
-            .structure()?
+            .structure::<Self>()?
             .map()?
             .pairs([("start", &self.start), ("end", &self.end)])
     }
@@ -107,7 +107,7 @@ impl<T: Serialize> Serialize for RangeInclusive<T> {
     #[inline]
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Value, S::Error> {
         serializer
-            .structure()?
+            .structure::<Self>()?
             .map()?
             .pairs([("start", self.start()), ("end", self.end())])
     }
@@ -116,14 +116,22 @@ impl<T: Serialize> Serialize for RangeInclusive<T> {
 impl<T: Serialize> Serialize for RangeTo<T> {
     #[inline]
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Value, S::Error> {
-        serializer.structure()?.map()?.pair("end", &self.end)?.end()
+        serializer
+            .structure::<Self>()?
+            .map()?
+            .pair("end", &self.end)?
+            .end()
     }
 }
 
 impl<T: Serialize> Serialize for RangeToInclusive<T> {
     #[inline]
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Value, S::Error> {
-        serializer.structure()?.map()?.pair("end", &self.end)?.end()
+        serializer
+            .structure::<Self>()?
+            .map()?
+            .pair("end", &self.end)?
+            .end()
     }
 }
 
@@ -131,7 +139,7 @@ impl<T: Serialize> Serialize for RangeFrom<T> {
     #[inline]
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Value, S::Error> {
         serializer
-            .structure()?
+            .structure::<Self>()?
             .map()?
             .pair("start", &self.start)?
             .end()
@@ -141,7 +149,7 @@ impl<T: Serialize> Serialize for RangeFrom<T> {
 impl<T: Serialize> Serialize for Bound<T> {
     #[inline]
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Value, S::Error> {
-        let enumeration = serializer.enumeration()?;
+        let enumeration = serializer.enumeration::<Self>()?;
         match self {
             Bound::Included(value) => enumeration
                 .variant("Included", 0)?
@@ -188,7 +196,7 @@ macro_rules! tuple {
             #[inline]
             fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Value, S::Error> {
                 let ($($p,)*) = self;
-                serializer.tuple()? $(.item($p)?)* .end()
+                serializer.tuple::<Self>()? $(.item($p)?)* .end()
             }
         }
     };

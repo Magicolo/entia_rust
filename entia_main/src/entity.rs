@@ -1,7 +1,7 @@
 use crate::{
     depend::{Depend, Dependency},
     error::Result,
-    item::{At, Chunk, Context, Item},
+    item::{At, Context, Item},
     segment::Segment,
     store::Store,
     world::World,
@@ -9,6 +9,7 @@ use crate::{
 use std::{
     fmt,
     ops::{Range, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive},
+    slice::from_raw_parts,
     sync::Arc,
 };
 
@@ -71,71 +72,43 @@ impl Item for Entity {
     }
 }
 
-impl<'a> Chunk<'a> for State {
-    type Ref = &'a [Entity];
-    type Mut = Self::Ref;
-
-    #[inline]
-    fn chunk(&'a self, segment: &'a Segment) -> Option<Self::Ref> {
-        debug_assert_eq!(self.1, segment.index());
-        Some(unsafe { self.0.get_all(segment.count()) })
-    }
-
-    #[inline]
-    fn chunk_mut(&'a self, segment: &'a Segment) -> Option<Self::Mut> {
-        self.chunk(segment)
-    }
-}
-
-impl<'a> At<'a, usize> for [Entity] {
+impl<'a> At<'a> for State {
+    type State = (*const Entity, usize);
     type Ref = Entity;
     type Mut = Self::Ref;
 
-    #[inline]
-    fn at(&'a self, index: usize) -> Option<Self::Ref> {
-        Some(*self.get(index)?)
+    fn get(&'a self, segment: &Segment) -> Option<Self::State> {
+        debug_assert_eq!(self.1, segment.index());
+        Some((self.0.data(), segment.count()))
     }
 
-    #[inline]
-    unsafe fn at_unchecked(&'a self, index: usize) -> Self::Ref {
-        *self.get_unchecked(index)
+    unsafe fn at_ref(state: &Self::State, index: usize) -> Self::Ref {
+        *from_raw_parts(state.0, state.1).get_unchecked(index)
     }
 
-    #[inline]
-    fn at_mut(&'a mut self, index: usize) -> Option<Self::Mut> {
-        Self::at(self, index)
-    }
-
-    #[inline]
-    unsafe fn at_unchecked_mut(&'a mut self, index: usize) -> Self::Mut {
-        Self::at_unchecked(self, index)
+    unsafe fn at_mut(state: &mut Self::State, index: usize) -> Self::Mut {
+        Self::at_ref(state, index)
     }
 }
 
 macro_rules! at {
     ($r:ty) => {
-        impl<'a> At<'a, $r> for [Entity] {
+        impl<'a> At<'a, $r> for State {
+            type State = (*const Entity, usize);
             type Ref = &'a [Entity];
-            type Mut = &'a mut [Entity];
+            type Mut = Self::Ref;
 
-            #[inline]
-            fn at(&'a self, index: $r) -> Option<Self::Ref> {
-                self.get(index)
+            fn get(&'a self, segment: &Segment) -> Option<Self::State> {
+                debug_assert_eq!(self.1, segment.index());
+                Some((self.0.data(), segment.count()))
             }
 
-            #[inline]
-            unsafe fn at_unchecked(&'a self, index: $r) -> Self::Ref {
-                self.get_unchecked(index)
+            unsafe fn at_ref(state: &Self::State, index: $r) -> Self::Ref {
+                from_raw_parts(state.0, state.1).get_unchecked(index)
             }
 
-            #[inline]
-            fn at_mut(&'a mut self, index: $r) -> Option<Self::Mut> {
-                self.get_mut(index)
-            }
-
-            #[inline]
-            unsafe fn at_unchecked_mut(&'a mut self, index: $r) -> Self::Mut {
-                self.get_unchecked_mut(index)
+            unsafe fn at_mut(state: &mut Self::State, index: $r) -> Self::Mut {
+                Self::at_ref(state, index)
             }
         }
     };

@@ -28,7 +28,7 @@ macro_rules! last {
 #[macro_export]
 macro_rules! recurse {
     ($m:ident) => { $m!(); };
-    ($m:ident, $p:ident, $t:ident $(,$ps:ident, $ts:ident)*) => {
+    ($m:ident, $p:ident, $t:ident $(,$ps:ident, $ts:ident)* $(,)?) => {
         $m!($p, $t $(,$ps, $ts)*);
         $crate::recurse!($m $(,$ps, $ts)*);
     };

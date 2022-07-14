@@ -50,7 +50,7 @@ impl Runner {
         // Updating systems may cause more changes of the 'world.version()'. Loop until the version has stabilized.
         while version.change(world.version()) {
             for system in self.systems.iter_mut() {
-                (system.update)(world)?;
+                system.update(world)?;
             }
         }
 
@@ -67,21 +67,22 @@ impl Runner {
         self.update(world)?;
 
         for block in self.blocks.iter_mut() {
-            // If world's version has changed, this may mean that the dependencies used to schedule the systems
+            // If the world's version has changed, this may mean that the dependencies used to schedule the systems
             // are not up to date, therefore it is not safe to run the systems in parallel.
             if self.version == world.version() {
                 if block.runs.len() > 1 {
-                    struct Systems<'a>(&'a [System]);
-                    unsafe impl Sync for Systems<'_> {}
+                    struct Systems(*mut System);
+                    unsafe impl Sync for Systems {}
 
                     let result = &mut self.result;
-                    let systems = Systems(&mut self.systems);
+                    let systems = Systems(self.systems.as_mut_ptr());
                     block.runs.par_iter().for_each(|&index| {
                         // SAFETY: The indices stored in 'runs' are guaranteed to be unique and ordered. Therefore, there
                         // is no concurrence on the 'run: Fn'.
                         // See 'Runner::schedule'.
                         let Systems(systems) = &systems;
-                        if let Err(error) = (systems[index].run)(world) {
+                        let system = unsafe { &mut *systems.add(index) };
+                        if let Err(error) = system.run(world) {
                             if let Ok(mut guard) = result.lock() {
                                 *guard = Err(error);
                             }
@@ -92,19 +93,19 @@ impl Runner {
                         .map_or(Err(Error::MutexPoison), |result| replace(result, Ok(())))?;
                 } else {
                     for &index in block.runs.iter() {
-                        (self.systems[index].run)(world)?;
+                        self.systems[index].run(world)?;
                     }
                 }
             } else {
                 for &index in block.runs.iter() {
                     let system = &mut self.systems[index];
-                    (system.update)(world)?;
-                    (system.run)(world)?;
+                    system.update(world)?;
+                    system.run(world)?;
                 }
             }
 
             for &index in block.resolves.iter() {
-                (self.systems[index].resolve)(world)?;
+                self.systems[index].resolve(world)?;
             }
         }
 
@@ -152,7 +153,7 @@ impl Runner {
             self.blocks.push(Block {
                 runs: vec![index],
                 resolves: vec![index],
-                dependencies: (system.depend)(world),
+                dependencies: system.depend(world),
             });
         }
 

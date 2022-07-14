@@ -1,5 +1,4 @@
 use crate::{
-    depend::Dependency,
     error::{Error, Result},
     run::Runner,
     system::{IntoSystem, System},
@@ -9,9 +8,9 @@ use entia_core::utility::short_type_name;
 use std::any::type_name;
 
 pub struct Scheduler<'a> {
-    pub(crate) prefix: String,
-    pub(crate) systems: Vec<Result<System>>,
-    pub(crate) world: &'a mut World,
+    prefix: String,
+    systems: Vec<Result<System>>,
+    world: &'a mut World,
 }
 
 impl World {
@@ -60,17 +59,6 @@ impl<'a> Scheduler<'a> {
             scheduler.systems.push(system);
             scheduler
         })
-    }
-
-    pub fn barrier(self) -> Self {
-        self.add(System::new(
-            "barrier".into(),
-            |_| Ok(()),
-            |_, _, _| Ok(()),
-            |_, _, _| Ok(()),
-            |_, _, _| Ok(()),
-            |_, _, _| vec![Dependency::Unknown],
-        ))
     }
 
     pub fn schedule(self) -> Result<Runner> {

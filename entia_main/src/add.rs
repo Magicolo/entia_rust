@@ -7,7 +7,7 @@ use crate::{
     error::{Error, Result},
     family::template::{EntityIndices, SegmentIndices},
     inject::Inject,
-    item::{At, Chunk, Context, Item},
+    item::{At, Context, Item},
     resource,
     resource::Write,
     segment::Segment,
@@ -71,7 +71,7 @@ impl<T: LeafTemplate> Add<'_, T, Late> {
     }
 }
 
-impl<T: LeafTemplate + Send + Sync + 'static, R> Item for Add<'_, T, R>
+impl<T: LeafTemplate + Send + Sync + 'static, R: 'static> Item for Add<'_, T, R>
 where
     State<T, R>: Depend,
 {
@@ -147,39 +147,44 @@ where
 }
 
 pub struct AddChunk<'a, T, R>(PhantomData<&'a ()>, PhantomData<T>, PhantomData<R>);
-impl<'a, T: LeafTemplate + 'a, R> Chunk<'a> for State<T, R> {
+impl<'a, T: LeafTemplate + 'static, R: 'static> At<'a, usize> for State<T, R> {
+    type State = ();
     type Ref = ();
-    type Mut = AddChunk<'a, T, R>;
+    type Mut = ();
 
-    fn chunk(&'a self, segment: &'a Segment) -> Option<Self::Ref> {
+    fn get(&'a self, segment: &Segment) -> Option<Self::State> {
         todo!()
     }
 
-    fn chunk_mut(&'a self, segment: &'a Segment) -> Option<Self::Mut> {
-        todo!()
-    }
-}
-
-impl<'a, T: LeafTemplate + 'a, R> At<'a, usize> for AddChunk<'a, T, R> {
-    type Ref = Add<'a, T, R>;
-    type Mut = Self::Ref;
-
-    fn at(&'a self, index: usize) -> Option<Self::Ref> {
+    unsafe fn at_ref(state: &Self::State, index: usize) -> Self::Ref {
         todo!()
     }
 
-    unsafe fn at_unchecked(&'a self, index: usize) -> Self::Ref {
-        todo!()
-    }
-
-    fn at_mut(&'a mut self, index: usize) -> Option<Self::Mut> {
-        todo!()
-    }
-
-    unsafe fn at_unchecked_mut(&'a mut self, index: usize) -> Self::Mut {
+    unsafe fn at_mut(state: &mut Self::State, index: usize) -> Self::Mut {
         todo!()
     }
 }
+
+// impl<T: LeafTemplate, R> At<usize> for AddChunk<'_, T, R> {
+//     type Ref<'a> = Add<'a, T, R> where Self: 'a;
+//     type Mut<'a> = Self::Ref<'a> where Self: 'a;
+
+//     fn at<'a>(&'a self, index: usize) -> Option<Self::Ref<'a>> {
+//         todo!()
+//     }
+
+//     unsafe fn at_unchecked<'a>(&'a self, index: usize) -> Self::Ref<'a> {
+//         todo!()
+//     }
+
+//     fn at_mut<'a>(&'a mut self, index: usize) -> Option<Self::Mut<'a>> {
+//         todo!()
+//     }
+
+//     unsafe fn at_unchecked_mut<'a>(&'a mut self, index: usize) -> Self::Mut<'a> {
+//         todo!()
+//     }
+// }
 
 impl<T: Template> Resolve for Outer<T> {
     type Item = Defer<T>;

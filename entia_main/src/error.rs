@@ -5,6 +5,7 @@ use std::{any::TypeId, result};
 pub enum Error {
     WrongWorld,
     WrongSegment,
+    WrongState,
     MutexPoison,
     MissingSystem,
     MissingStore {

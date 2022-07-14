@@ -4,10 +4,10 @@ use crate::{
     deserializer::{
         self, Deserializer, Enumeration as _, List as _, Map as _, Structure as _, Variant as _,
     },
+    meta::{self, Meta},
     serialize::Serialize,
     serializer::{
         self, adapt::Adapt, state::State, Enumeration as _, List as _, Map as _, Serializer,
-        Structure as _,
     },
 };
 use entia_core::each::{EachMut, EachRef};
@@ -34,7 +34,8 @@ pub enum Node {
     F64(f64),
     String(String),
     Bytes(Vec<u8>),
-    Array(Items),
+    Slice(Items),
+    Tuple(Items),
     List(Items),
     Map(Pairs),
     Structure(Structure),
@@ -59,11 +60,16 @@ pub enum Enumeration {
     Variant(String, usize, Structure),
 }
 
+#[derive(Clone, Debug)]
+pub enum Error {
+    Invalid,
+}
+
 impl From<Node> for Structure {
     fn from(node: Node) -> Self {
         match node {
             Node::Unit => Structure::Unit,
-            Node::List(items) | Node::Array(items) => Structure::Tuple(items),
+            Node::List(items) | Node::Slice(items) => Structure::Tuple(items),
             Node::Map(pairs) => Structure::Map(pairs),
             Node::Structure(structure) => structure,
             Node::Enumeration(enumeration) => enumeration.into(),
@@ -79,11 +85,6 @@ impl From<Enumeration> for Structure {
             Enumeration::Variant(_, _, structure) => structure,
         }
     }
-}
-
-#[derive(Clone, Debug)]
-pub enum Error {
-    Invalid,
 }
 
 macro_rules! from {
@@ -127,7 +128,8 @@ macro_rules! number {
                     Node::String(value) => value.parse().ok(),
                     Node::Bytes(value) => Some($t::from_ne_bytes(value[..size_of::<$t>()].try_into().ok()?)),
                     Node::List(Items(items))
-                    | Node::Array(Items(items))
+                    | Node::Tuple(Items(items))
+                    | Node::Slice(Items(items))
                     | Node::Structure(Structure::Tuple(Items(items)))
                     | Node::Enumeration(Enumeration::Variant(_, _, Structure::Tuple(Items(items)))) => items.iter().find_map(|node| node.$t()),
                     Node::Map(Pairs(pairs))
@@ -168,6 +170,12 @@ impl Default for Node {
     }
 }
 
+impl<T> Meta<T> for Node {
+    fn meta() -> &'static T {
+        todo!()
+    }
+}
+
 pub mod serialize {
     use super::*;
 
@@ -177,6 +185,18 @@ pub mod serialize {
 
     impl Serialize for Node {
         fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Value, S::Error> {
+            fn serialize_structure<S: serializer::Structure>(
+                serializer: S,
+                structure: &Structure,
+            ) -> Result<S::Value, S::Error> {
+                match structure {
+                    Structure::Unit => serializer.unit(),
+                    Structure::Tuple(Items(items)) => serializer.tuple()?.items(items),
+                    Structure::Map(Pairs(pairs)) => {
+                        serializer.map()?.pairs(pairs.iter().map(EachRef::each_ref))
+                    }
+                }
+            }
             match self {
                 Node::Unit => serializer.unit(),
                 Node::Bool(value) => serializer.bool(*value),
@@ -197,36 +217,23 @@ pub mod serialize {
                 Node::F64(value) => serializer.f64(*value),
                 Node::String(value) => serializer.string(value),
                 Node::Bytes(value) => serializer.bytes(value),
-                Node::Array(Items(_items)) => todo!(), // serializer.array(items),
+                Node::Tuple(Items(items)) => serializer.tuple::<Self>()?.items(items),
+                Node::Slice(Items(items)) => serializer.slice(items),
                 Node::List(Items(items)) => serializer.list()?.items(items),
                 Node::Map(Pairs(pairs)) => {
                     serializer.map()?.pairs(pairs.iter().map(EachRef::each_ref))
                 }
                 Node::Enumeration(enumeration) => {
-                    let serializer = serializer.enumeration()?;
+                    let serializer = serializer.enumeration::<Self>()?;
                     match enumeration {
                         Enumeration::Never => serializer.never(),
                         Enumeration::Variant(name, index, structure) => {
-                            let serializer = serializer.variant(name, *index)?;
-                            match structure {
-                                Structure::Unit => serializer.unit(),
-                                Structure::Tuple(Items(items)) => serializer.tuple()?.items(items),
-                                Structure::Map(Pairs(pairs)) => {
-                                    serializer.map()?.pairs(pairs.iter().map(EachRef::each_ref))
-                                }
-                            }
+                            serialize_structure(serializer.variant(name, *index)?, structure)
                         }
                     }
                 }
                 Node::Structure(structure) => {
-                    let serializer = serializer.structure()?;
-                    match structure {
-                        Structure::Unit => serializer.unit(),
-                        Structure::Tuple(Items(items)) => serializer.tuple()?.items(items),
-                        Structure::Map(Pairs(pairs)) => {
-                            serializer.map()?.pairs(pairs.iter().map(EachRef::each_ref))
-                        }
-                    }
+                    serialize_structure(serializer.structure::<Self>()?, structure)
                 }
             }
         }
@@ -302,7 +309,7 @@ pub mod serialize {
             self,
             value: &[T; N],
         ) -> Result<Self::Value, Self::Error> {
-            ListSerializer(Vec::with_capacity(N), Node::Array).items(value)
+            ListSerializer(Vec::with_capacity(N), Node::Slice).items(value)
         }
         fn list(self) -> Result<Self::List, Self::Error> {
             Ok(ListSerializer(Vec::new(), Node::List))
@@ -310,11 +317,23 @@ pub mod serialize {
         fn map(self) -> Result<Self::Map, Self::Error> {
             Ok(MapSerializer(Vec::new(), Node::Map))
         }
-        fn structure(self) -> Result<Self::Structure, Self::Error> {
+        fn structure<T: Meta<meta::Structure>>(self) -> Result<Self::Structure, Self::Error> {
             Ok(self)
         }
-        fn enumeration(self) -> Result<Self::Enumeration, Self::Error> {
+        fn enumeration<T: Meta<meta::Enumeration>>(self) -> Result<Self::Enumeration, Self::Error> {
             Ok(self)
+        }
+        fn tuple<T: Meta<meta::Structure>>(self) -> Result<Self::List, Self::Error>
+        where
+            Self: Sized,
+        {
+            Ok(ListSerializer(Vec::new(), Node::Tuple))
+        }
+        fn slice<T: Serialize>(self, value: &[T]) -> Result<Self::Value, Self::Error>
+        where
+            Self: Sized,
+        {
+            ListSerializer(Vec::with_capacity(value.len()), Node::Slice).items(value)
         }
     }
 
@@ -418,7 +437,7 @@ pub mod deserialize {
 
         fn deserialize<D: Deserializer>(self, deserializer: D) -> Result<Self::Value, D::Error> {
             match self {
-                Node::Unit => deserializer.unit()?,
+                Node::Unit => ().deserialize(deserializer)?,
                 Node::Bool(value) => value.deserialize(deserializer)?,
                 Node::Char(value) => value.deserialize(deserializer)?,
                 Node::U8(value) => value.deserialize(deserializer)?,
@@ -437,8 +456,9 @@ pub mod deserialize {
                 Node::F64(value) => value.deserialize(deserializer)?,
                 Node::String(value) => value.deserialize(deserializer)?,
                 Node::Bytes(value) => value.deserialize(deserializer)?,
-                Node::Array(Items(items)) => items.deserialize(deserializer)?,
-                Node::List(Items(items)) => deserializer.list()?.items(items)?,
+                Node::Slice(Items(items))
+                | Node::Tuple(Items(items))
+                | Node::List(Items(items)) => items.deserialize(deserializer)?,
                 Node::Map(Pairs(pairs)) => deserializer
                     .map()?
                     .pairs(&mut Node::Unit, pairs.iter_mut().map(EachMut::each_mut))?,
@@ -634,7 +654,7 @@ pub mod deserialize {
         fn item(&mut self) -> Result<Option<Self::Item>, Self::Error> {
             let item = match &self.0 {
                 Node::List(Items(nodes))
-                | Node::Array(Items(nodes))
+                | Node::Slice(Items(nodes))
                 | Node::Structure(Structure::Tuple(Items(nodes)))
                 | Node::Enumeration(Enumeration::Variant(_, _, Structure::Tuple(Items(nodes)))) => {
                     nodes.get(self.1).map(|node| NodeDeserializer(node.clone()))
@@ -679,7 +699,7 @@ pub mod deserialize {
         ) -> Result<Option<(K::Value, Self::Item)>, Self::Error> {
             let pair = match &self.0 {
                 Node::List(Items(nodes))
-                | Node::Array(Items(nodes))
+                | Node::Slice(Items(nodes))
                 | Node::Structure(Structure::Tuple(Items(nodes)))
                 | Node::Enumeration(Enumeration::Variant(_, _, Structure::Tuple(Items(nodes)))) => {
                     match nodes.get(self.1) {
@@ -727,17 +747,29 @@ pub mod deserialize {
 #[cfg(test)]
 mod tests {
     use super::{convert::*, *};
-    use crate::deserialize::New;
+    use crate::{deserialize::New, meta::Meta};
 
     #[derive(Debug, Clone, Copy)]
     struct Boba(bool);
     #[derive(Debug, Clone, Copy)]
     struct Fett(bool);
 
+    impl<T> Meta<T> for Boba {
+        fn meta() -> &'static T {
+            todo!()
+        }
+    }
+
+    impl<T> Meta<T> for Fett {
+        fn meta() -> &'static T {
+            todo!()
+        }
+    }
+
     impl Serialize for Boba {
         fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Value, S::Error> {
             use serializer::*;
-            serializer.structure()?.tuple()?.item(self.0)?.end()
+            serializer.structure::<Boba>()?.tuple()?.item(self.0)?.end()
         }
     }
 

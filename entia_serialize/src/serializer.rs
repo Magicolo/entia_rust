@@ -1,5 +1,8 @@
 use self::{adapt::*, state::*};
-use crate::{recurse, serialize::*};
+use crate::{
+    meta::{self, Meta},
+    serialize::*,
+};
 use std::marker::PhantomData;
 
 pub trait Serializer {
@@ -101,7 +104,7 @@ pub trait Serializer {
     fn map(self) -> Result<Self::Map, Self::Error>;
 
     #[inline]
-    fn tuple(self) -> Result<Self::List, Self::Error>
+    fn tuple<T: Meta<meta::Structure>>(self) -> Result<Self::List, Self::Error>
     where
         Self: Sized,
     {
@@ -136,8 +139,8 @@ pub trait Serializer {
         self.list()?.items(value)
     }
 
-    fn structure(self) -> Result<Self::Structure, Self::Error>;
-    fn enumeration(self) -> Result<Self::Enumeration, Self::Error>;
+    fn structure<T: Meta<meta::Structure>>(self) -> Result<Self::Structure, Self::Error>;
+    fn enumeration<T: Meta<meta::Enumeration>>(self) -> Result<Self::Enumeration, Self::Error>;
 
     #[inline]
     fn state<T>(self, state: T) -> State<Self, T>
@@ -219,248 +222,6 @@ pub trait List: Sized {
     }
 }
 
-macro_rules! tuple {
-    () => { tuple!(()); };
-    ($p:ident, $t:ident $(, $ps:ident, $ts:ident)*) => { tuple!($t::Error, $p, $t $(, $ps, $ts)*); };
-    ($e:ty $(, $p:ident, $t:ident)*) => {
-        impl<$($t: Serializer,)*> Serializer for ($($t,)*)
-        where
-            $($e: From<$t::Error>,)*
-        {
-            type Value = ($($t::Value,)*);
-            type Error = $e;
-            type Map = ($($t::Map,)*);
-            type List = ($($t::List,)*);
-            type Structure = ($($t::Structure,)*);
-            type Enumeration = ($($t::Enumeration,)*);
-
-            #[inline]
-            fn unit(self) -> Result<Self::Value, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.unit()?,)*))
-            }
-            #[inline]
-            fn bool(self, _value: bool) -> Result<Self::Value, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.bool(_value)?,)*))
-            }
-            #[inline]
-            fn char(self, _value: char) -> Result<Self::Value, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.char(_value)?,)*))
-            }
-            #[inline]
-            fn u8(self, _value: u8) -> Result<Self::Value, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.u8(_value)?,)*))
-            }
-            #[inline]
-            fn u16(self, _value: u16) -> Result<Self::Value, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.u16(_value)?,)*))
-            }
-            #[inline]
-            fn u32(self, _value: u32) -> Result<Self::Value, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.u32(_value)?,)*))
-            }
-            #[inline]
-            fn u64(self, _value: u64) -> Result<Self::Value, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.u64(_value)?,)*))
-            }
-            #[inline]
-            fn usize(self, _value: usize) -> Result<Self::Value, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.usize(_value)?,)*))
-            }
-            #[inline]
-            fn u128(self, _value: u128) -> Result<Self::Value, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.u128(_value)?,)*))
-            }
-            #[inline]
-            fn i8(self, _value: i8) -> Result<Self::Value, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.i8(_value)?,)*))
-            }
-            #[inline]
-            fn i16(self, _value: i16) -> Result<Self::Value, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.i16(_value)?,)*))
-            }
-            #[inline]
-            fn i32(self, _value: i32) -> Result<Self::Value, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.i32(_value)?,)*))
-            }
-            #[inline]
-            fn i64(self, _value: i64) -> Result<Self::Value, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.i64(_value)?,)*))
-            }
-            #[inline]
-            fn isize(self, _value: isize) -> Result<Self::Value, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.isize(_value)?,)*))
-            }
-            #[inline]
-            fn i128(self, _value: i128) -> Result<Self::Value, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.i128(_value)?,)*))
-            }
-            #[inline]
-            fn f32(self, _value: f32) -> Result<Self::Value, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.f32(_value)?,)*))
-            }
-            #[inline]
-            fn f64(self, _value: f64) -> Result<Self::Value, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.f64(_value)?,)*))
-            }
-            #[inline]
-            fn list(self) -> Result<Self::List, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.list()?,)*))
-            }
-            #[inline]
-            fn map(self) -> Result<Self::Map, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.map()?,)*))
-            }
-            #[inline]
-            fn tuple(self) -> Result<Self::List, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.tuple()?,)*))
-            }
-            #[inline]
-            fn string(self, _value: &str) -> Result<Self::Value, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.string(_value)?,)*))
-            }
-            #[inline]
-            fn slice<T: Serialize>(self, _value: &[T]) -> Result<Self::Value, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.slice(_value)?,)*))
-            }
-            #[inline]
-            fn array<T: Serialize, const N: usize>(
-                self,
-                _value: &[T; N],
-            ) -> Result<Self::Value, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.array(_value)?,)*))
-            }
-            #[inline]
-            fn bytes(self, _value: &[u8]) -> Result<Self::Value, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.bytes(_value)?,)*))
-            }
-            #[inline]
-            fn structure(self) -> Result<Self::Structure, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.structure()?,)*))
-            }
-            #[inline]
-            fn enumeration(self) -> Result<Self::Enumeration, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.enumeration()?,)*))
-            }
-        }
-
-        impl<$($t: Map,)*> Map for ($($t,)*)
-        where
-            $($e: From<$t::Error>,)*
-        {
-            type Value = ($($t::Value,)*);
-            type Error = $e;
-
-            #[inline]
-            fn pair<K: Serialize, V: Serialize>(self, _key: K, _value: V) -> Result<Self, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.pair(&_key, &_value)?,)*))
-            }
-            #[inline]
-            fn end(self) -> Result<Self::Value, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.end()?,)*))
-            }
-        }
-
-        impl<$($t: List,)*> List for ($($t,)*)
-        where
-            $($e: From<$t::Error>,)*
-        {
-            type Value = ($($t::Value,)*);
-            type Error = $e;
-
-            #[inline]
-            fn item<T: Serialize>(self, _item: T) -> Result<Self, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.item(&_item)?,)*))
-            }
-            #[inline]
-            fn end(self) -> Result<Self::Value, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.end()?,)*))
-            }
-        }
-
-        impl<$($t: Structure,)*> Structure for ($($t,)*)
-        where
-            $($e: From<$t::Error>,)*
-        {
-            type Value = ($($t::Value,)*);
-            type Error = $e;
-            type Map = ($($t::Map,)*);
-            type List = ($($t::List,)*);
-
-            #[inline]
-            fn unit(self) -> Result<Self::Value, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.unit()?,)*))
-            }
-            #[inline]
-            fn tuple(self) -> Result<Self::List, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.tuple()?,)*))
-            }
-            #[inline]
-            fn map(self) -> Result<Self::Map, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.map()?,)*))
-            }
-        }
-
-        impl<$($t: Enumeration,)*> Enumeration for ($($t,)*)
-        where
-            $($e: From<$t::Error>,)*
-        {
-            type Value = ($($t::Value,)*);
-            type Error = $e;
-            type Structure = ($($t::Structure,)*);
-
-            #[inline]
-            fn never(self) -> Result<Self::Value, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.never()?,)*))
-            }
-            #[inline]
-            fn variant(
-                self,
-                _name: &str,
-                _index: usize,
-            ) -> Result<Self::Structure, Self::Error> {
-                let ($($p,)*) = self;
-                Ok(($($p.variant(_name, _index)?,)*))
-            }
-        }
-    };
-}
-
-recurse!(tuple);
-
 pub mod state {
     use super::*;
 
@@ -510,12 +271,12 @@ pub mod state {
             Ok((self.0.u64(value)?, self.1))
         }
         #[inline]
-        fn u128(self, value: u128) -> Result<Self::Value, Self::Error> {
-            Ok((self.0.u128(value)?, self.1))
-        }
-        #[inline]
         fn usize(self, value: usize) -> Result<Self::Value, Self::Error> {
             Ok((self.0.usize(value)?, self.1))
+        }
+        #[inline]
+        fn u128(self, value: u128) -> Result<Self::Value, Self::Error> {
+            Ok((self.0.u128(value)?, self.1))
         }
         #[inline]
         fn i8(self, value: i8) -> Result<Self::Value, Self::Error> {
@@ -534,12 +295,12 @@ pub mod state {
             Ok((self.0.i64(value)?, self.1))
         }
         #[inline]
-        fn i128(self, value: i128) -> Result<Self::Value, Self::Error> {
-            Ok((self.0.i128(value)?, self.1))
-        }
-        #[inline]
         fn isize(self, value: isize) -> Result<Self::Value, Self::Error> {
             Ok((self.0.isize(value)?, self.1))
+        }
+        #[inline]
+        fn i128(self, value: i128) -> Result<Self::Value, Self::Error> {
+            Ok((self.0.i128(value)?, self.1))
         }
         #[inline]
         fn f32(self, value: f32) -> Result<Self::Value, Self::Error> {
@@ -558,8 +319,8 @@ pub mod state {
             Ok(State::new(self.0.map()?, self.1))
         }
         #[inline]
-        fn tuple(self) -> Result<Self::List, Self::Error> {
-            Ok(State::new(self.0.tuple()?, self.1))
+        fn tuple<T: Meta<meta::Structure>>(self) -> Result<Self::List, Self::Error> {
+            Ok(State::new(self.0.tuple::<T>()?, self.1))
         }
         #[inline]
         fn string(self, value: &str) -> Result<Self::Value, Self::Error> {
@@ -581,12 +342,12 @@ pub mod state {
             Ok((self.0.bytes(value)?, self.1))
         }
         #[inline]
-        fn structure(self) -> Result<Self::Structure, Self::Error> {
-            Ok(State::new(self.0.structure()?, self.1))
+        fn structure<T: Meta<meta::Structure>>(self) -> Result<Self::Structure, Self::Error> {
+            Ok(State::new(self.0.structure::<T>()?, self.1))
         }
         #[inline]
-        fn enumeration(self) -> Result<Self::Enumeration, Self::Error> {
-            Ok(State::new(self.0.enumeration()?, self.1))
+        fn enumeration<T: Meta<meta::Enumeration>>(self) -> Result<Self::Enumeration, Self::Error> {
+            Ok(State::new(self.0.enumeration::<T>()?, self.1))
         }
     }
 
@@ -782,8 +543,8 @@ pub mod adapt {
             Ok(Adapt::new(self.0.map()?, self.1))
         }
         #[inline]
-        fn tuple(self) -> Result<Self::List, Self::Error> {
-            Ok(Adapt::new(self.0.tuple()?, self.1))
+        fn tuple<T: Meta<meta::Structure>>(self) -> Result<Self::List, Self::Error> {
+            Ok(Adapt::new(self.0.tuple::<T>()?, self.1))
         }
         #[inline]
         fn string(self, value: &str) -> Result<Self::Value, Self::Error> {
@@ -805,12 +566,12 @@ pub mod adapt {
             self.1(self.0.bytes(value))
         }
         #[inline]
-        fn structure(self) -> Result<Self::Structure, Self::Error> {
-            Ok(Adapt::new(self.0.structure()?, self.1))
+        fn structure<T: Meta<meta::Structure>>(self) -> Result<Self::Structure, Self::Error> {
+            Ok(Adapt::new(self.0.structure::<T>()?, self.1))
         }
         #[inline]
-        fn enumeration(self) -> Result<Self::Enumeration, Self::Error> {
-            Ok(Adapt::new(self.0.enumeration()?, self.1))
+        fn enumeration<T: Meta<meta::Enumeration>>(self) -> Result<Self::Enumeration, Self::Error> {
+            Ok(Adapt::new(self.0.enumeration::<T>()?, self.1))
         }
     }
 
