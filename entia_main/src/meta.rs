@@ -108,7 +108,7 @@ impl Meta {
     }
 
     pub fn default<T: 'static>(&self) -> Option<T> {
-        if TypeId::of::<T>() == self.identifier {
+        if TypeId::of::<T>() == self.identifier() {
             let defaulter = self.defaulter.as_ref()?;
             Some(unsafe {
                 let mut target = MaybeUninit::<T>::uninit();

@@ -1,3 +1,5 @@
+use entia_core::FullIterator;
+
 use crate::{
     defer::{self, Resolve},
     depend::{Depend, Dependency},
@@ -191,10 +193,10 @@ impl<T: Template> Resolve for Outer<T> {
 
     fn resolve(
         &mut self,
-        items: impl ExactSizeIterator<Item = Self::Item>,
+        items: impl FullIterator<Item = Self::Item>,
         world: &mut World,
     ) -> Result {
-        let entities = self.entities.as_mut();
+        // let entities = self.entities.as_mut();
         todo!()
     }
 }

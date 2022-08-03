@@ -18,7 +18,10 @@ pub struct Entity {
     index: u32,
     generation: u32,
 }
-pub struct State(Arc<Store>, usize);
+pub struct State {
+    store: Arc<Store>,
+    segment: usize,
+}
 
 impl Entity {
     pub const NULL: Self = Self {
@@ -68,7 +71,10 @@ impl Item for Entity {
 
     fn initialize(context: Context) -> Result<Self::State> {
         let segment = context.segment();
-        Ok(State(segment.entity_store(), segment.index()))
+        Ok(State {
+            store: segment.entity_store(),
+            segment: segment.index(),
+        })
     }
 }
 
@@ -78,8 +84,8 @@ impl<'a> At<'a> for State {
     type Mut = Self::Ref;
 
     fn get(&'a self, segment: &Segment) -> Option<Self::State> {
-        debug_assert_eq!(self.1, segment.index());
-        Some((self.0.data(), segment.count()))
+        debug_assert_eq!(self.segment, segment.index());
+        Some((self.store.data(), segment.count()))
     }
 
     unsafe fn at_ref(state: &Self::State, index: usize) -> Self::Ref {
@@ -99,8 +105,8 @@ macro_rules! at {
             type Mut = Self::Ref;
 
             fn get(&'a self, segment: &Segment) -> Option<Self::State> {
-                debug_assert_eq!(self.1, segment.index());
-                Some((self.0.data(), segment.count()))
+                debug_assert_eq!(self.segment, segment.index());
+                Some((self.store.data(), segment.count()))
             }
 
             unsafe fn at_ref(state: &Self::State, index: $r) -> Self::Ref {
@@ -126,6 +132,6 @@ at!(
 
 unsafe impl Depend for State {
     fn depend(&self, _: &World) -> Vec<Dependency> {
-        vec![Dependency::read::<Entity>().segment(self.1)]
+        vec![Dependency::read::<Entity>(self.store.identifier()).at(self.segment)]
     }
 }

@@ -1,6 +1,6 @@
 use crate::{
     depend::{Depend, Dependency},
-    error::{Error, Result},
+    error::Result,
     inject::{self, Get},
     meta::Meta,
     store::Store,
@@ -8,29 +8,20 @@ use crate::{
     Inject,
 };
 use std::{
-    any::{type_name, TypeId},
     marker::PhantomData,
+    ops::{Deref, DerefMut},
     sync::Arc,
 };
 
 pub struct Write<T>(Arc<Store>, PhantomData<T>);
 pub struct Read<T>(Write<T>);
 
-pub trait Resource: Sized + Send + Sync + 'static {
+pub trait Resource: Sized + Default + Send + Sync + 'static {
     fn meta() -> Meta {
         crate::meta!(Self)
     }
-
-    fn initialize(meta: &Meta, _: &mut World) -> Result<Self> {
-        match meta.default() {
-            Some(resource) => Ok(resource),
-            None => Err(Error::MissingResource {
-                name: type_name::<Self>(),
-                identifier: TypeId::of::<Self>(),
-            }),
-        }
-    }
 }
+impl<T: Default + Send + Sync + 'static> Resource for T {}
 
 impl<T> Write<T> {
     #[inline]
@@ -58,13 +49,9 @@ impl<R: Resource> Inject for Write<R> {
     type State = Self;
 
     fn initialize(input: Self::Input, mut context: inject::Context) -> Result<Self::State> {
-        let store =
-            context
-                .world()
-                .get_or_add_resource_store(R::meta, |meta, world| match input {
-                    Some(resource) => Ok(resource),
-                    None => R::initialize(meta, world),
-                })?;
+        let store = context
+            .world()
+            .get_or_add_resource_store(R::meta, || input.unwrap_or_else(R::default));
         Ok(Self(store, PhantomData))
     }
 }
@@ -73,27 +60,29 @@ impl<'a, R: Resource> Get<'a> for Write<R> {
     type Item = &'a mut R;
 
     #[inline]
-    fn get(&'a mut self, _: &World) -> Self::Item {
-        unsafe { &mut *self.store().data() }
+    unsafe fn get(&'a mut self, _: &World) -> Self::Item {
+        &mut *self.store().data()
     }
 }
 
 unsafe impl<T: 'static> Depend for Write<T> {
     fn depend(&self, _: &World) -> Vec<Dependency> {
-        vec![Dependency::write::<T>().segment(usize::MAX)]
+        vec![Dependency::write::<T>(self.store().identifier())]
     }
 }
 
-impl<T: Send + Sync + 'static> AsRef<T> for Write<T> {
+impl<T: Send + Sync + 'static> Deref for Write<T> {
+    type Target = T;
+
     #[inline]
-    fn as_ref(&self) -> &T {
+    fn deref(&self) -> &Self::Target {
         unsafe { &*self.store().data() }
     }
 }
 
-impl<T: Send + Sync + 'static> AsMut<T> for Write<T> {
+impl<T: Send + Sync + 'static> DerefMut for Write<T> {
     #[inline]
-    fn as_mut(&mut self) -> &mut T {
+    fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { &mut *self.store().data() }
     }
 }
@@ -132,20 +121,22 @@ impl<'a, R: Resource> Get<'a> for Read<R> {
     type Item = &'a R;
 
     #[inline]
-    fn get(&'a mut self, _: &World) -> Self::Item {
-        unsafe { &*self.store().data() }
+    unsafe fn get(&'a mut self, _: &World) -> Self::Item {
+        &*self.store().data()
     }
 }
 
 unsafe impl<T: 'static> Depend for Read<T> {
     fn depend(&self, _: &World) -> Vec<Dependency> {
-        vec![Dependency::read::<T>().segment(usize::MAX)]
+        vec![Dependency::read::<T>(self.store().identifier())]
     }
 }
 
-impl<T: Send + Sync + 'static> AsRef<T> for Read<T> {
+impl<T: Send + Sync + 'static> Deref for Read<T> {
+    type Target = T;
+
     #[inline]
-    fn as_ref(&self) -> &T {
-        unsafe { &*self.store().data() }
+    fn deref(&self) -> &Self::Target {
+        self.0.deref()
     }
 }

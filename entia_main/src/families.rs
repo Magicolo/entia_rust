@@ -9,6 +9,7 @@ use crate::{
     resource::{Read, Write},
     world::World,
 };
+use entia_core::FullIterator;
 
 pub struct Families<'a>(&'a Entities);
 pub struct State(Read<Entities>);
@@ -44,16 +45,14 @@ impl<'a> Get<'a> for State {
     type Item = Families<'a>;
 
     #[inline]
-    fn get(&'a mut self, world: &'a World) -> Self::Item {
+    unsafe fn get(&'a mut self, world: &'a World) -> Self::Item {
         Families(self.0.get(world))
     }
 }
 
 unsafe impl Depend for State {
     fn depend(&self, world: &World) -> Vec<Dependency> {
-        let mut dependencies = self.0.depend(world);
-        dependencies.push(Dependency::read::<Entity>());
-        dependencies
+        self.0.depend(world)
     }
 }
 
@@ -104,26 +103,25 @@ pub mod adopt {
 
         fn resolve(
             &mut self,
-            items: impl ExactSizeIterator<Item = Self::Item>,
+            items: impl FullIterator<Item = Self::Item>,
             _: &mut World,
         ) -> Result {
-            let entities = self.0.as_mut();
             for defer in items {
                 match defer {
                     Defer::At(parent, child, index) => {
-                        entities.adopt_at(parent, child, index);
+                        self.0.adopt_at(parent, child, index);
                     }
                     Defer::First(parent, child) => {
-                        entities.adopt_first(parent, child);
+                        self.0.adopt_first(parent, child);
                     }
                     Defer::Last(parent, child) => {
-                        entities.adopt_last(parent, child);
+                        self.0.adopt_last(parent, child);
                     }
                     Defer::Before(sibling, child) => {
-                        entities.adopt_before(sibling, child);
+                        self.0.adopt_before(sibling, child);
                     }
                     Defer::After(sibling, child) => {
-                        entities.adopt_after(sibling, child);
+                        self.0.adopt_after(sibling, child);
                     }
                 }
             }
@@ -135,7 +133,7 @@ pub mod adopt {
         type Item = Adopt<'a>;
 
         #[inline]
-        fn get(&'a mut self, world: &'a World) -> Self::Item {
+        unsafe fn get(&'a mut self, world: &'a World) -> Self::Item {
             Adopt(self.0.get(world).0)
         }
     }
@@ -196,26 +194,25 @@ pub mod reject {
 
         fn resolve(
             &mut self,
-            items: impl ExactSizeIterator<Item = Self::Item>,
+            items: impl FullIterator<Item = Self::Item>,
             _: &mut World,
         ) -> Result {
-            let entities = self.0.as_mut();
             for defer in items {
                 match defer {
                     Defer::One(child) => {
-                        entities.reject(child);
+                        self.0.reject(child);
                     }
                     Defer::At(parent, index) => {
-                        entities.reject_at(parent, index);
+                        self.0.reject_at(parent, index);
                     }
                     Defer::First(parent) => {
-                        entities.reject_first(parent);
+                        self.0.reject_first(parent);
                     }
                     Defer::Last(parent) => {
-                        entities.reject_last(parent);
+                        self.0.reject_last(parent);
                     }
                     Defer::All(parent) => {
-                        entities.reject_all(parent);
+                        self.0.reject_all(parent);
                     }
                 }
             }
@@ -227,7 +224,7 @@ pub mod reject {
         type Item = Reject<'a>;
 
         #[inline]
-        fn get(&'a mut self, world: &'a World) -> Self::Item {
+        unsafe fn get(&'a mut self, world: &'a World) -> Self::Item {
             Reject(self.0.get(world).0)
         }
     }

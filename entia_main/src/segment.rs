@@ -1,13 +1,12 @@
 use crate::{
-    entity::Entity,
     error::{Error, Result},
+    identify,
     meta::Meta,
     store::Store,
 };
 use entia_core::{utility::next_power_of_2, Flags, IntoFlags};
 use std::{
     any::TypeId,
-    cmp::min,
     collections::HashSet,
     iter::once,
     mem::replace,
@@ -22,6 +21,10 @@ pub enum Flag {
     None = 0,
     Clone = 1 << 0,
 }
+
+// SAFETY: The inner vector may only 'push', never 'pop'; otherwise some unsafe index access may become invalid.
+#[derive(Default)]
+pub struct Segments(Vec<Segment>);
 
 // The 'entity_store' must be kept separate from the 'component_stores' to prevent undesired behavior that may arise
 // from using queries such as '&mut Entity' or templates such as 'Add<Entity>'.
@@ -39,27 +42,17 @@ pub struct Segment {
 
 impl Segment {
     pub(super) fn new(
-        identifier: usize,
         index: usize,
         capacity: usize,
-        types: HashSet<TypeId>,
-        metas: &[Arc<Meta>],
+        entity_meta: Arc<Meta>,
+        component_types: HashSet<TypeId>,
+        component_metas: &[Arc<Meta>],
     ) -> Self {
-        let entity_store = metas
-            .iter()
-            .find_map(|meta| {
-                if meta.identifier() == TypeId::of::<Entity>() {
-                    Some(Arc::new(unsafe { Store::new(meta.clone(), capacity) }))
-                } else {
-                    None
-                }
-            })
-            .expect("Entity meta must be included.");
-
+        let entity_store = Arc::new(unsafe { Store::new(entity_meta.clone(), capacity) });
         // Iterate over all metas in order to have them consistently ordered.
-        let component_stores: Box<_> = metas
+        let component_stores: Box<_> = component_metas
             .iter()
-            .filter(|meta| types.contains(&meta.identifier()))
+            .filter(|meta| component_types.contains(&meta.identifier()))
             .map(|meta| Arc::new(unsafe { Store::new(meta.clone(), capacity) }))
             .collect();
         let mut flags = Flag::None.flags();
@@ -71,11 +64,11 @@ impl Segment {
         }
 
         Self {
-            identifier,
+            identifier: identify(),
             index,
             count: 0,
             flags,
-            component_types: types,
+            component_types,
             entity_store,
             component_stores,
             reserved: 0.into(),
@@ -162,7 +155,7 @@ impl Segment {
     pub fn reserve(&self, count: usize) -> (usize, usize) {
         let index = self.count + self.reserved.fetch_add(count, Ordering::Relaxed);
         if index + count > self.capacity {
-            (index, self.capacity - min(index, self.capacity))
+            (index, self.capacity - index.min(self.capacity))
         } else {
             (index, count)
         }

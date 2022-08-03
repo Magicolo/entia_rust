@@ -1,6 +1,7 @@
-use crate::{entity::Entity, error, meta::Meta, world::World, Resource};
+use entia_core::FullIterator;
+
+use crate::entity::Entity;
 use std::{
-    cmp::{max, min},
     mem::replace,
     sync::atomic::{AtomicIsize, AtomicUsize, Ordering},
 };
@@ -10,9 +11,9 @@ pub struct Entities {
     data: (Vec<Datum>, AtomicUsize),
 }
 
-impl Resource for Entities {
-    fn initialize(_: &Meta, _: &mut World) -> error::Result<Self> {
-        Ok(Self::new(32))
+impl Default for Entities {
+    fn default() -> Self {
+        Self::new(32)
     }
 }
 
@@ -75,7 +76,7 @@ impl Datum {
     }
 
     #[inline]
-    pub const fn entity(&self, index: u32) -> Entity {
+    pub(crate) const fn entity(&self, index: u32) -> Entity {
         Entity::new(index, self.generation)
     }
 
@@ -104,7 +105,7 @@ impl Entities {
 
         let count = entities.len() as isize;
         let last = self.free.1.fetch_sub(count, Ordering::Relaxed);
-        let count = max(min(count, last), 0) as usize;
+        let count = count.min(last).max(0) as usize;
         for i in 0..count {
             let index = last as usize - i - 1;
             let entity = self.free.0[index];
@@ -132,7 +133,7 @@ impl Entities {
     pub(crate) fn resolve(&mut self) {
         self.data.0.resize(*self.data.1.get_mut(), Datum::DEFAULT);
         let free = self.free.1.get_mut();
-        let count = max(*free, 0) as usize;
+        let count = (*free).max(0) as usize;
         self.free.0.truncate(count);
         *free = self.free.0.len() as isize;
     }
@@ -189,10 +190,10 @@ impl Entities {
             .iter()
             .enumerate()
             .filter_map(move |(index, datum)| {
-                if datum.initialized() && datum.parent == u32::MAX {
-                    Some(datum.entity(index as u32))
-                } else {
-                    None
+                let entity = datum.entity(index as u32);
+                match self.parent(entity) {
+                    Some(_) => None,
+                    None => Some(entity),
                 }
             })
     }
@@ -264,7 +265,7 @@ impl Entities {
             .filter(move |&child| child != entity)
     }
 
-    pub fn ancestors(&self, entity: Entity) -> impl DoubleEndedIterator<Item = Entity> {
+    pub fn ancestors(&self, entity: Entity) -> impl FullIterator<Item = Entity> {
         let mut entities = Vec::new();
         self.ascend::<(), _, _>(
             entity,
@@ -278,7 +279,7 @@ impl Entities {
         entities.into_iter()
     }
 
-    pub fn descendants(&self, entity: Entity) -> impl DoubleEndedIterator<Item = Entity> {
+    pub fn descendants(&self, entity: Entity) -> impl FullIterator<Item = Entity> {
         let mut entities = Vec::new();
         self.descend::<(), _, _>(
             entity,

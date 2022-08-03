@@ -41,26 +41,35 @@ impl Runner {
         &self.systems
     }
 
-    pub fn update(&mut self, world: &mut World) -> Result {
+    pub fn update(&mut self, world: &mut World) -> Result<bool> {
         if self.identifier != world.identifier() {
             return Err(Error::WrongWorld);
         }
 
         let mut version = self.version;
         // Updating systems may cause more changes of the 'world.version()'. Loop until the version has stabilized.
-        while version.change(world.version()) {
-            for system in self.systems.iter_mut() {
-                system.update(world)?;
+        for _ in 0..1_000 {
+            if version.change(world.version()) {
+                for system in self.systems.iter_mut() {
+                    system.update(world)?;
+                }
+            } else {
+                break;
             }
         }
 
-        if self.version != version {
-            self.schedule(world)?;
-            // Only commit the new version if the scheduling succeeds.
-            self.version = version;
+        if version != world.version() {
+            return Err(Error::UnstableWorldVersion);
         }
 
-        Ok(())
+        if self.version == version {
+            Ok(false)
+        } else {
+            self.schedule(world)?;
+            // Only commit the new version if all updates and scheduling succeed.
+            self.version = version;
+            Ok(true)
+        }
     }
 
     pub fn run(&mut self, world: &mut World) -> Result {
@@ -112,7 +121,7 @@ impl Runner {
         Ok(())
     }
 
-    /// Batches the systems in blocks that can be executed in parallel using the dependencies produces by each system
+    /// Batches the systems in blocks that can be executed in parallel using the dependencies produced by each system
     /// to ensure safety. The indices stored in the blocks are guaranteed to be unique and ordered within each block.
     /// Note that systems may be reordered if their dependencies allow it.
     fn schedule(&mut self, world: &mut World) -> Result {

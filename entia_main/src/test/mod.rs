@@ -1,20 +1,19 @@
-use crate::{self as entia, *};
+use crate::*;
 use error::Result;
 
 pub mod create;
 pub mod depend;
 
-#[derive(Resource, Default)]
+#[derive(Default)]
 pub struct Time(f64);
-#[derive(Resource, Default)]
+#[derive(Default)]
 pub struct Physics;
-#[derive(Component)]
 pub struct Frozen;
-#[derive(Component, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Position(f64, f64, f64);
-#[derive(Component, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Velocity(f64, f64, f64);
-#[derive(Message, Clone)]
+#[derive(Clone)]
 pub struct OnKill(Entity);
 
 fn inject<I: Inject>() -> Result

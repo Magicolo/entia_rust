@@ -1,19 +1,17 @@
+use crate::{
+    depend::{Depend, Dependency},
+    error::Result,
+    inject::{Context, Get, Inject},
+    resource::Write,
+    world::World,
+};
+use entia_core::FullIterator;
 use std::{
     any::Any,
     collections::{HashMap, VecDeque},
     marker::PhantomData,
     mem::replace,
     sync::atomic::{AtomicUsize, Ordering},
-};
-
-use crate::{
-    depend::{Depend, Dependency},
-    error::Result,
-    inject::{Context, Get, Inject},
-    meta::Meta,
-    resource::Write,
-    world::World,
-    Resource,
 };
 
 pub struct Defer<'a, R: Resolve> {
@@ -49,21 +47,35 @@ struct Inner {
 #[allow(type_alias_bounds)]
 type Triple<R: Resolve> = (R, Vec<(usize, usize)>, VecDeque<R::Item>);
 
+/*
+    TODO:
+    Is is possible to share the 'reserved' counter between systems such that no identifier is needed for systems?
+    - There must be a strict ordering between the overlaping operations of system A and system B.
+    - Currently all deferred operations (including 'Create/Destroy/Adopt/Reject/Add/Remove') depend on 'Write<Entities>',
+    which means that they can't be resolved concurrently.
+    - 'Create' can be more specific by depending on:
+        inject: for each segment: Read<Entities>.at(segment) + Read<Segment>.at(segment)
+        resolve: for each segment: Write<Entities>.at(segment) + Write<Segment>.at(segment)
+        - This way, it doesn't overlap with 'Query' if the segments don't overlap.
+            inject: for each segment: Read<Entities>.at(segment) /* because of query.get */ + Read<Segment>.at(segment)
+    - 'Adopt/Reject' can be more specific by depending on:
+        inject: Nothing?
+        resolve: Read<Entities> + Write<Datum> // since it only changes the family members
+        - This way, there is a way for 'Query' to not overlap if it doesn't read the family members.
+*/
+
 pub trait Resolve {
     type Item;
-    fn resolve(
-        &mut self,
-        items: impl ExactSizeIterator<Item = Self::Item>,
-        world: &mut World,
-    ) -> Result;
+    fn resolve(&mut self, items: impl FullIterator<Item = Self::Item>, world: &mut World)
+        -> Result;
 }
 
-impl Resource for Outer {
-    fn initialize(_: &Meta, _: &mut World) -> Result<Self> {
-        Ok(Outer {
+impl Default for Outer {
+    fn default() -> Self {
+        Outer {
             indices: HashMap::new(),
             inners: Vec::new(),
-        })
+        }
     }
 }
 
@@ -113,7 +125,6 @@ where
         let identifier = context.identifier();
         let mut outer = <Write<Outer> as Inject>::initialize(None, context)?;
         let inner = {
-            let outer = outer.as_mut();
             match outer.indices.get(&identifier) {
                 Some(&index) => index,
                 None => {
@@ -131,7 +142,6 @@ where
         };
 
         let resolver = {
-            let outer = outer.as_mut();
             let inner = &mut outer.inners[inner];
             let index = inner.resolvers.len();
             inner.resolvers.push(Resolver {
@@ -159,8 +169,7 @@ where
     }
 
     fn resolve(state: &mut Self::State, mut context: Context) -> Result {
-        let outer = state.outer.as_mut();
-        let inner = &mut outer.inners[state.inner];
+        let inner = &mut state.outer.inners[state.inner];
         let mut resolve = 0;
         let reserved = inner.reserved.get_mut();
         let resolver = &mut inner.resolvers[state.resolver];
@@ -177,6 +186,7 @@ where
         }
 
         if resolve > 0 {
+            // Resolve the items of this 'Defer' instance if possible without the to go through the abstract 'Resolver'.
             resolver.resolve(items.drain(..resolve), context.world())?;
         }
 
@@ -186,6 +196,7 @@ where
                     inner.resolved += 1;
                     resolver.resolve(*count, context.world())?;
                 }
+                // Can't make further progress; other 'Defer' instances will need to complete the resolution.
                 None => return Ok(()),
             }
         }
@@ -202,9 +213,8 @@ impl<'a, R: Resolve + 'static> Get<'a> for State<R> {
     type Item = (Defer<'a, R>, &'a mut R);
 
     #[inline]
-    fn get(&'a mut self, _: &'a World) -> Self::Item {
-        let outer = self.outer.as_mut();
-        let inner = &mut outer.inners[self.inner];
+    unsafe fn get(&'a mut self, _: &World) -> Self::Item {
+        let inner = &mut self.outer.inners[self.inner];
         let resolver = &mut inner.resolvers[self.resolver];
         let (resolver, indices, items) = resolver.state_mut::<R>().unwrap();
         (
@@ -226,18 +236,14 @@ unsafe impl<T> Depend for State<T> {
 
 impl<R: Resolve + 'static> AsRef<R> for State<R> {
     fn as_ref(&self) -> &R {
-        let outer = self.outer.as_ref();
-        let inner = &outer.inners[self.inner];
-        let resolver = &inner.resolvers[self.resolver];
+        let resolver = &self.outer.inners[self.inner].resolvers[self.resolver];
         &resolver.state_ref::<R>().unwrap().0
     }
 }
 
 impl<R: Resolve + 'static> AsMut<R> for State<R> {
     fn as_mut(&mut self) -> &mut R {
-        let outer = self.outer.as_mut();
-        let inner = &mut outer.inners[self.inner];
-        let resolver = &mut inner.resolvers[self.resolver];
+        let resolver = &mut self.outer.inners[self.inner].resolvers[self.resolver];
         &mut resolver.state_mut::<R>().unwrap().0
     }
 }

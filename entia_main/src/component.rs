@@ -13,7 +13,11 @@ use std::{
     sync::Arc,
 };
 
-pub struct Write<T>(Arc<Store>, usize, PhantomData<T>);
+pub struct Write<T> {
+    store: Arc<Store>,
+    segment: usize,
+    _marker: PhantomData<T>,
+}
 pub struct Read<T>(Write<T>);
 
 pub trait Component: Sized + Send + Sync + 'static {
@@ -21,16 +25,17 @@ pub trait Component: Sized + Send + Sync + 'static {
         crate::meta!(Self)
     }
 }
+impl<T: Send + Sync + 'static> Component for T {}
 
 impl<T> Write<T> {
     #[inline]
     pub const fn segment(&self) -> usize {
-        self.1
+        self.segment
     }
 
     #[inline]
     pub fn store(&self) -> &Store {
-        &self.0
+        &self.store
     }
 
     #[inline]
@@ -46,7 +51,11 @@ impl<C: Component> Item for Write<C> {
         let meta = context.world().get_meta::<C>()?;
         let segment = context.segment();
         let store = segment.component_store(&meta)?;
-        Ok(Self(store, segment.index(), PhantomData))
+        Ok(Self {
+            store,
+            segment: segment.index(),
+            _marker: PhantomData,
+        })
     }
 }
 
@@ -85,7 +94,7 @@ where
 
 unsafe impl<T: 'static> Depend for Write<T> {
     fn depend(&self, _: &World) -> Vec<Dependency> {
-        vec![Dependency::write::<T>().segment(self.1)]
+        vec![Dependency::write::<T>(self.store().identifier()).at(self.segment())]
     }
 }
 
@@ -148,6 +157,6 @@ where
 
 unsafe impl<T: 'static> Depend for Read<T> {
     fn depend(&self, _: &World) -> Vec<Dependency> {
-        vec![Dependency::read::<T>().segment(self.segment())]
+        vec![Dependency::read::<T>(self.store().identifier()).at(self.segment())]
     }
 }

@@ -9,6 +9,7 @@ use crate::{
     segment::Segment,
     world::World,
 };
+use entia_core::FullIterator;
 use std::{
     fmt,
     iter::from_fn,
@@ -167,10 +168,7 @@ impl<'a> At<'a> for State {
 
     #[inline]
     fn get(&'a self, segment: &Segment) -> Option<Self::State> {
-        Some((
-            <entity::State as At<'a>>::get(&self.0, segment)?,
-            self.1.as_ref(),
-        ))
+        Some((<entity::State as At<'a>>::get(&self.0, segment)?, &self.1))
     }
 
     #[inline]
@@ -193,7 +191,7 @@ macro_rules! at {
 
             #[inline]
             fn get(&'a self, segment: &Segment) -> Option<Self::State> {
-                Some((<entity::State as At<'a, $r>>::get(&self.0, segment)?, self.1.as_ref()))
+                Some((<entity::State as At<'a, $r>>::get(&self.0, segment)?, &self.1))
             }
 
             #[inline]
@@ -221,9 +219,8 @@ at!(
 
 unsafe impl Depend for State {
     fn depend(&self, world: &World) -> Vec<Dependency> {
-        let mut dependencies = self.1.depend(world);
-        // 'Family' may read entities from any segment.
-        dependencies.push(Dependency::read::<Entity>());
+        let mut dependencies = self.0.depend(world);
+        dependencies.append(&mut self.1.depend(world));
         dependencies
     }
 }
@@ -416,6 +413,13 @@ pub mod template {
         }
     }
 
+    impl Into<Entity> for Family<'_> {
+        #[inline]
+        fn into(self) -> Entity {
+            self.entity()
+        }
+    }
+
     impl<'a> Families<'a> {
         pub(crate) const EMPTY: Self = Self {
             entity_roots: &[],
@@ -438,7 +442,7 @@ pub mod template {
             }
         }
 
-        pub fn roots(&self) -> impl DoubleEndedIterator<Item = Family<'a>> + ExactSizeIterator {
+        pub fn roots(&self) -> impl FullIterator<Item = Family<'a>> {
             let families = self.clone();
             families
                 .entity_roots

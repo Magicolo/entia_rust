@@ -6,6 +6,7 @@ pub mod each;
 pub mod empty;
 pub mod few;
 pub mod flags;
+pub mod iterator;
 pub mod marker;
 pub mod maybe;
 pub mod slice;
@@ -18,6 +19,7 @@ pub use crate::{
     call::Call,
     change::Change,
     flags::{Flags, IntoFlags},
+    iterator::FullIterator,
     marker::{Indirect, Marker},
     maybe::{Maybe, Wrap},
     slice::Slice,

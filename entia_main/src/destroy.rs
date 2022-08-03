@@ -8,6 +8,7 @@ use crate::{
     resource::Write,
     world::World,
 };
+use entia_core::FullIterator;
 use std::{collections::HashSet, marker::PhantomData};
 
 /// Resolves destroy operations such that coherence rules are strictly maintained
@@ -84,7 +85,7 @@ impl Resolve for Inner {
 
     fn resolve(
         &mut self,
-        items: impl ExactSizeIterator<Item = Self::Item>,
+        items: impl FullIterator<Item = Self::Item>,
         world: &mut World,
     ) -> Result {
         fn destroy(
@@ -149,26 +150,25 @@ impl Resolve for Inner {
             Ok(Some(datum.next_sibling))
         }
 
-        let entities = self.entities.as_mut();
         for Defer {
             entity,
             descendants,
         } in items
         {
-            if entities.has(entity) {
+            if self.entities.has(entity) {
                 destroy(
                     entity.index(),
                     true,
                     descendants,
                     &mut self.set,
-                    entities,
+                    &mut self.entities,
                     world,
                 )?;
             }
         }
 
         if self.set.len() > 0 {
-            entities.release(self.set.drain());
+            self.entities.release(self.set.drain());
         }
 
         Ok(())
@@ -179,7 +179,7 @@ impl<'a, R> Get<'a> for State<R> {
     type Item = Destroy<'a, R>;
 
     #[inline]
-    fn get(&'a mut self, world: &'a World) -> Self::Item {
+    unsafe fn get(&'a mut self, world: &'a World) -> Self::Item {
         Destroy(self.0.get(world).0, PhantomData)
     }
 }

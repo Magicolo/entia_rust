@@ -1,10 +1,15 @@
 use crate::{
     error::{Error, Result},
+    identify,
     meta::Meta,
 };
 use std::{any::TypeId, cell::Cell, slice::from_raw_parts_mut, sync::Arc};
 
-pub struct Store(Arc<Meta>, Cell<*mut ()>);
+pub struct Store {
+    identifier: usize,
+    meta: Arc<Meta>,
+    data: Cell<*mut ()>,
+}
 
 // SAFETY: 'Sync' and 'Send' can be implemented for 'Store' because this crate ensures its proper usage. Other users
 // of this type must fulfill the safety requirements of its unsafe methods.
@@ -15,27 +20,36 @@ impl Store {
     /// SAFETY: Owner of the 'Store' is responsible to track its 'count' and 'capacity' and to call 'free' whenever it is dropped.
     pub(crate) unsafe fn new(meta: Arc<Meta>, capacity: usize) -> Self {
         let pointer = (meta.allocate)(capacity);
-        Self(meta, pointer.into())
+        Self {
+            identifier: identify(),
+            meta,
+            data: pointer.into(),
+        }
+    }
+
+    #[inline]
+    pub const fn identifier(&self) -> usize {
+        self.identifier
     }
 
     #[inline]
     pub fn meta(&self) -> &Meta {
-        &self.0
+        &self.meta
     }
 
     /// In order to be consistent with the requirements of 'Meta::new', 'T' is required to be 'Send + Sync'.
     #[inline]
     pub fn data<T: Send + Sync + 'static>(&self) -> *mut T {
         debug_assert_eq!(TypeId::of::<T>(), self.meta().identifier());
-        self.1.get().cast()
+        self.data.get().cast()
     }
 
     #[inline]
     pub unsafe fn copy(source: (&Self, usize), target: (&Self, usize), count: usize) {
         debug_assert_eq!(source.0.meta().identifier(), target.0.meta().identifier());
         (source.0.meta().copy)(
-            (source.0 .1.get(), source.1),
-            (target.0 .1.get(), target.1),
+            (source.0.data.get(), source.1),
+            (target.0.data.get(), target.1),
             count,
         );
     }
@@ -54,8 +68,8 @@ impl Store {
         );
         let cloner = cloners.0.or(cloners.1)?;
         (cloner.clone)(
-            (source.0 .1.get(), source.1),
-            (target.0 .1.get(), target.1),
+            (source.0.data.get(), source.1),
+            (target.0.data.get(), target.1),
             count,
         );
         Ok(())
@@ -75,8 +89,8 @@ impl Store {
             .or(metas.1.cloner.as_ref())
             .ok_or(error)?;
         (cloner.fill)(
-            (source.0 .1.get(), source.1),
-            (target.0 .1.get(), target.1),
+            (source.0.data.get(), source.1),
+            (target.0.data.get(), target.1),
             count,
         );
         Ok(())
@@ -84,7 +98,7 @@ impl Store {
 
     #[inline]
     pub unsafe fn chunk(&self, index: usize, count: usize) -> Result<Self> {
-        let store = Self::new(self.0.clone(), count);
+        let store = Self::new(self.meta.clone(), count);
         match Self::clone((self, index), (&store, 0), count) {
             Ok(_) => Ok(store),
             Err(error) => {
@@ -126,27 +140,27 @@ impl Store {
     #[inline]
     pub unsafe fn squash(&self, source_index: usize, target_index: usize, count: usize) {
         let meta = self.meta();
-        let pointer = self.1.get();
+        let pointer = self.data.get();
         (meta.drop)(pointer, target_index, count);
         (meta.copy)((pointer, source_index), (pointer, target_index), count);
     }
 
     #[inline]
     pub unsafe fn drop(&self, index: usize, count: usize) {
-        (self.meta().drop)(self.1.get(), index, count);
+        (self.meta().drop)(self.data.get(), index, count);
     }
 
     #[inline]
     pub unsafe fn free(&self, count: usize, capacity: usize) {
-        (self.meta().free)(self.1.get(), count, capacity);
+        (self.meta().free)(self.data.get(), count, capacity);
     }
 
     pub unsafe fn resize(&self, old_capacity: usize, new_capacity: usize) {
         let meta = self.meta();
-        let old_pointer = self.1.get();
+        let old_pointer = self.data.get();
         let new_pointer = (self.meta().allocate)(new_capacity);
         (meta.copy)((old_pointer, 0), (new_pointer, 0), old_capacity);
         (meta.free)(old_pointer, 0, old_capacity);
-        self.1.set(new_pointer);
+        self.data.set(new_pointer);
     }
 }

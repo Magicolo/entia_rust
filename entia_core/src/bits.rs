@@ -1,5 +1,4 @@
 use std::{
-    cmp::min,
     convert::TryInto,
     hash::Hash,
     iter::{self, FromIterator},
@@ -168,7 +167,7 @@ impl Bits {
             self.ensure(bits.capacity());
             self.buckets.len()
         } else {
-            min(self.buckets.len(), bits.buckets.len())
+            self.buckets.len().min(bits.buckets.len())
         };
 
         for i in 0..count {

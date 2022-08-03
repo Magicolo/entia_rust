@@ -6,17 +6,16 @@ use crate::{
     filter::Filter,
     inject::{self, Get, Inject},
     item::{At, Context, Item},
-    meta::Meta,
     resource::{Read, Write},
+    segment::Segment,
     world::World,
-    Resource,
 };
 use std::{
     any::type_name,
     fmt::{self},
     iter,
     marker::PhantomData,
-    ops::RangeFull,
+    ops::{DerefMut, RangeFull},
 };
 
 pub struct Query<'a, I: Item, F = ()> {
@@ -36,13 +35,13 @@ pub struct Inner<S, F> {
     _marker: PhantomData<fn(F)>,
 }
 
-impl<S: Send + Sync + 'static, F: 'static> Resource for Inner<S, F> {
-    fn initialize(_: &Meta, _: &mut World) -> Result<Self> {
-        Ok(Self {
+impl<S: Send + Sync + 'static, F: 'static> Default for Inner<S, F> {
+    fn default() -> Self {
+        Self {
             segments: Vec::new(),
             states: Vec::new(),
             _marker: PhantomData,
-        })
+        }
     }
 }
 
@@ -72,7 +71,7 @@ where
     fn update(state: &mut Self::State, mut context: inject::Context) -> Result {
         let identifier = context.identifier();
         let world = context.world();
-        let inner = state.inner.as_mut();
+        let inner = state.inner.deref_mut();
         while let Some(segment) = world.segments().get(inner.segments.len()) {
             if F::filter(segment, world) {
                 let segment = segment.index();
@@ -95,10 +94,10 @@ where
     type Item = Query<'a, I, F>;
 
     #[inline]
-    fn get(&'a mut self, world: &'a World) -> Self::Item {
+    unsafe fn get(&'a mut self, world: &'a World) -> Self::Item {
         Query {
-            inner: self.inner.as_ref(),
-            entities: self.entities.as_ref(),
+            inner: &self.inner,
+            entities: &self.entities,
             world,
         }
     }
@@ -110,9 +109,10 @@ where
 {
     fn depend(&self, world: &World) -> Vec<Dependency> {
         let mut dependencies = self.entities.depend(world);
-        let inner = self.inner.as_ref();
-        for (item, segment) in inner.states.iter() {
-            dependencies.push(Dependency::read::<Entity>().segment(*segment));
+        for (item, segment) in self.inner.states.iter() {
+            dependencies.push(Dependency::read::<Segment>(
+                world.segments()[*segment].identifier(),
+            ));
             dependencies.append(&mut item.depend(world));
         }
         dependencies
@@ -139,7 +139,7 @@ macro_rules! iterator {
                 })
             }
 
-            pub fn $each<E: FnMut(<I::State as At<'_>>::$item)>(& $($mut)? self, mut each: E) {
+            pub fn $each<E: FnMut(<I::State as At<'a>>::$item)>(& $($mut)? self, mut each: E) {
                 let segments = self.world.segments();
                 for (state, segment) in &self.inner.states {
                     // SAFETY: The 'segment' index has already been checked to be in range and the 'world.segments' vector never shrinks.

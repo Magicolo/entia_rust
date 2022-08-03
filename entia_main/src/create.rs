@@ -10,10 +10,8 @@ use crate::{
     template::{ApplyContext, CountContext, DeclareContext, InitializeContext, Spawn, Template},
     world::World,
 };
-use std::{
-    collections::HashMap,
-    iter::{empty, once},
-};
+use entia_core::FullIterator;
+use std::{collections::HashMap, iter::empty};
 
 pub struct Create<'a, T: Template + 'a> {
     defer: defer::Defer<'a, Outer<T>>,
@@ -30,7 +28,7 @@ struct Outer<T: Template> {
 
 struct Inner<T: Template> {
     count: Option<usize>,
-    segment_indices: Vec<SegmentIndices>,
+    segment_indices: Box<[SegmentIndices]>,
     entity_indices: Vec<EntityIndices>,
     entity_instances: Vec<Entity>,
     entity_roots: Vec<(usize, usize)>,
@@ -45,7 +43,7 @@ struct Defer<T: Template> {
     entity_roots: Vec<(usize, usize)>,
     entity_instances: Vec<Entity>,
     entity_indices: Vec<EntityIndices>,
-    segment_indices: Vec<SegmentIndices>,
+    segment_indices: Box<[SegmentIndices]>,
 }
 
 impl<T: Template> Create<'_, T> {
@@ -58,7 +56,7 @@ impl<T: Template> Create<'_, T> {
 
     #[inline]
     pub fn one(&mut self, template: T) -> Family {
-        self.all(once(template))
+        self.all([template])
             .get(0)
             .expect("There must be have at least one root.")
     }
@@ -87,10 +85,9 @@ impl<T: Template> Create<'_, T> {
             world,
         } = self;
         // 'apply_or_defer' is responsible for clearing 'initial_roots'.
-        for template in templates {
-            inner.initial_roots.push(Spawn::new(template));
-        }
-
+        inner
+            .initial_roots
+            .extend(templates.into_iter().map(Spawn::new));
         inner.entity_roots.truncate(inner.initial_roots.len());
         while inner.entity_roots.len() < inner.initial_roots.len() {
             inner.entity_roots.push((inner.entity_roots.len(), 0));
@@ -241,6 +238,7 @@ where
             metas_to_segment.insert(i, index);
         }
 
+        let mut segment_indices = segment_indices.into_boxed_slice();
         let state = Spawn::<T>::initialize(
             initial,
             InitializeContext::new(0, &segment_indices, &metas_to_segment, world),
@@ -291,13 +289,12 @@ impl<T: Template> Resolve for Outer<T> {
 
     fn resolve(
         &mut self,
-        items: impl ExactSizeIterator<Item = Self::Item>,
+        items: impl FullIterator<Item = Self::Item>,
         world: &mut World,
     ) -> Result {
         let inner = &mut self.inner;
-        let entities = self.entities.as_mut();
         let segments = world.segments_mut();
-        entities.resolve();
+        self.entities.resolve();
 
         for segment_indices in inner.segment_indices.iter() {
             segments[segment_indices.segment].resolve();
@@ -333,7 +330,7 @@ impl<T: Template> Resolve for Outer<T> {
         }
 
         for (index, datum) in inner.initialize.drain(..) {
-            entities.initialize(index, datum);
+            self.entities.initialize(index, datum);
         }
 
         Ok(())
@@ -367,7 +364,7 @@ impl<'a, T: Template + 'static> Get<'a> for State<T> {
     type Item = Create<'a, T>;
 
     #[inline]
-    fn get(&'a mut self, world: &'a World) -> Self::Item {
+    unsafe fn get(&'a mut self, world: &'a World) -> Self::Item {
         let (defer, outer) = self.0.get(world);
         Create {
             defer,
@@ -384,7 +381,7 @@ unsafe impl<T: Template + 'static> Depend for State<T> {
         let state = self.0.as_ref();
         dependencies.push(Dependency::defer::<Entities>());
         for indices in state.inner.segment_indices.iter() {
-            dependencies.push(Dependency::defer::<Entity>().segment(indices.segment));
+            dependencies.push(Dependency::defer::<Entity>().at(indices.segment));
         }
         dependencies
     }

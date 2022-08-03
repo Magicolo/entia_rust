@@ -42,19 +42,19 @@ pub enum Scope {
 #[derive(Debug, Clone)]
 pub enum Dependency {
     Unknown,
-    Read(TypeId, String),
-    Write(TypeId, String),
-    Defer(TypeId, String),
-    Segment(usize, Box<Dependency>),
+    Read(Identifier, fn() -> String),
+    Write(Identifier, fn() -> String),
+    Defer(Identifier, fn() -> String),
+    At(usize, Box<Dependency>),
     Ignore(Scope, Box<Dependency>),
 }
 
 #[derive(Debug, Default)]
 pub struct Conflict {
     unknown: bool,
-    reads: HashMap<TypeId, Has>,
-    writes: HashMap<TypeId, Has>,
-    defers: HashMap<TypeId, Has>,
+    reads: HashMap<Identifier, Has>,
+    writes: HashMap<Identifier, Has>,
+    defers: HashMap<Identifier, Has>,
 }
 
 #[derive(Debug)]
@@ -64,6 +64,12 @@ pub enum Error {
     WriteWriteConflict(Scope, String, Option<usize>),
     ReadDeferConflict(Scope, String, Option<usize>),
     WriteDeferConflict(Scope, String, Option<usize>),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Identifier {
+    Value(usize),
+    Type(TypeId),
 }
 
 #[derive(Debug)]
@@ -77,28 +83,42 @@ error::error!(Error, error::Error::Depend);
 
 impl Dependency {
     #[inline]
-    pub fn read<T: 'static>() -> Self {
-        Self::Read(TypeId::of::<T>(), short_type_name::<T>())
+    pub fn read<T: 'static>(identifier: usize) -> Self {
+        Self::Read(Identifier::Value(identifier), short_type_name::<T>)
     }
 
     #[inline]
-    pub fn write<T: 'static>() -> Self {
-        Self::Write(TypeId::of::<T>(), short_type_name::<T>())
+    pub fn write<T: 'static>(identifier: usize) -> Self {
+        Self::Write(Identifier::Value(identifier), short_type_name::<T>)
     }
 
     #[inline]
     pub fn defer<T: 'static>() -> Self {
-        Self::Defer(TypeId::of::<T>(), short_type_name::<T>())
+        Self::Defer(Identifier::Type(TypeId::of::<T>()), short_type_name::<T>)
     }
 
     #[inline]
-    pub fn segment(self, index: usize) -> Self {
-        Self::Segment(index, self.into())
+    pub fn at(self, index: usize) -> Self {
+        Self::At(index, self.into())
     }
 
     #[inline]
     pub fn ignore(self, scope: Scope) -> Self {
         Self::Ignore(scope, self.into())
+    }
+
+    pub fn map(
+        dependencies: impl IntoIterator<Item = Self>,
+        map: impl FnMut(Self) -> Self,
+    ) -> impl Iterator<Item = Self> {
+        dependencies.into_iter().map(map)
+    }
+
+    pub fn map_at(
+        dependencies: impl IntoIterator<Item = Self>,
+        index: usize,
+    ) -> impl Iterator<Item = Self> {
+        Self::map(dependencies, move |dependency| dependency.at(index))
     }
 }
 
@@ -166,7 +186,7 @@ impl Conflict {
         }
 
         for dependency in dependencies {
-            self.conflict(scope, None, dependency.clone())?;
+            self.conflict(scope, None, dependency)?;
         }
 
         Ok(())
@@ -182,12 +202,12 @@ impl Conflict {
     fn conflict(
         &mut self,
         scope: Scope,
-        segment: Option<usize>,
-        dependency: Dependency,
+        at: Option<usize>,
+        dependency: &Dependency,
     ) -> Result<(), Error> {
         use self::{Dependency::*, Error::*, Scope::*};
 
-        match (segment, dependency) {
+        match (at, dependency) {
             (_, Unknown) => {
                 self.unknown = true;
                 if scope == Outer {
@@ -196,82 +216,82 @@ impl Conflict {
                     Ok(())
                 }
             }
-            (_, Segment(index, dependency)) => self.conflict(scope, Some(index), *dependency),
-            (segment, Ignore(inner, dependency)) => {
-                if scope == inner || inner == All {
-                    self.conflict(scope, segment, *dependency)
+            (_, At(index, dependency)) => self.conflict(scope, Some(*index), dependency),
+            (at, Ignore(inner, dependency)) => {
+                if scope == *inner || *inner == All {
+                    self.conflict(scope, at, dependency)
                 } else {
                     Ok(())
                 }
             }
-            (Some(segment), Read(identifier, name)) => {
-                if has(&self.writes, identifier, segment) {
-                    Err(ReadWriteConflict(scope, name, Some(segment)))
-                } else if scope == Outer && has(&self.defers, identifier, segment) {
-                    Err(ReadDeferConflict(scope, name, Some(segment)))
+            (Some(at), Read(identifier, name)) => {
+                if has(&self.writes, *identifier, at) {
+                    Err(ReadWriteConflict(scope, name(), Some(at)))
+                } else if scope == Outer && has(&self.defers, *identifier, at) {
+                    Err(ReadDeferConflict(scope, name(), Some(at)))
                 } else {
-                    add(&mut self.reads, identifier, segment);
+                    add(&mut self.reads, *identifier, at);
                     Ok(())
                 }
             }
-            (Some(segment), Write(identifier, name)) => {
-                if has(&self.reads, identifier, segment) {
-                    Err(ReadWriteConflict(scope, name, Some(segment)))
-                } else if has(&self.writes, identifier, segment) {
-                    Err(WriteWriteConflict(scope, name, Some(segment)))
-                } else if scope == Outer && has(&self.defers, identifier, segment) {
-                    Err(WriteDeferConflict(scope, name, Some(segment)))
+            (Some(at), Write(identifier, name)) => {
+                if has(&self.reads, *identifier, at) {
+                    Err(ReadWriteConflict(scope, name(), Some(at)))
+                } else if has(&self.writes, *identifier, at) {
+                    Err(WriteWriteConflict(scope, name(), Some(at)))
+                } else if scope == Outer && has(&self.defers, *identifier, at) {
+                    Err(WriteDeferConflict(scope, name(), Some(at)))
                 } else {
-                    add(&mut self.writes, identifier, segment);
+                    add(&mut self.writes, *identifier, at);
                     Ok(())
                 }
             }
-            (Some(segment), Defer(identifier, _)) => {
-                add(&mut self.defers, identifier, segment);
+            (Some(at), Defer(identifier, _)) => {
+                add(&mut self.defers, *identifier, at);
                 Ok(())
             }
             (None, Read(identifier, name)) => {
-                if has_any(&self.writes, identifier) {
-                    Err(ReadWriteConflict(scope, name, None))
-                } else if scope == Outer && has_any(&self.defers, identifier) {
-                    Err(ReadDeferConflict(scope, name, None))
+                if has_any(&self.writes, *identifier) {
+                    Err(ReadWriteConflict(scope, name(), None))
+                } else if scope == Outer && has_any(&self.defers, *identifier) {
+                    Err(ReadDeferConflict(scope, name(), None))
                 } else {
-                    add_all(&mut self.reads, identifier);
+                    add_all(&mut self.reads, *identifier);
                     Ok(())
                 }
             }
             (None, Write(identifier, name)) => {
-                if has_any(&self.reads, identifier) {
-                    Err(ReadWriteConflict(scope, name, None))
-                } else if has_any(&self.writes, identifier) {
-                    Err(WriteWriteConflict(scope, name, None))
-                } else if scope == Outer && has_any(&self.defers, identifier) {
-                    Err(WriteDeferConflict(scope, name, None))
+                if has_any(&self.reads, *identifier) {
+                    Err(ReadWriteConflict(scope, name(), None))
+                } else if has_any(&self.writes, *identifier) {
+                    Err(WriteWriteConflict(scope, name(), None))
+                } else if scope == Outer && has_any(&self.defers, *identifier) {
+                    Err(WriteDeferConflict(scope, name(), None))
                 } else {
-                    add_all(&mut self.writes, identifier);
+                    add_all(&mut self.writes, *identifier);
                     Ok(())
                 }
             }
             (None, Defer(identifier, _)) => {
-                add_all(&mut self.defers, identifier);
+                add_all(&mut self.defers, *identifier);
                 Ok(())
             }
         }
     }
 }
 
-fn add(map: &mut HashMap<TypeId, Has>, identifier: TypeId, index: usize) -> bool {
+fn add(map: &mut HashMap<Identifier, Has>, identifier: Identifier, index: usize) -> bool {
     map.entry(identifier).or_default().add(index)
 }
 
-fn add_all(map: &mut HashMap<TypeId, Has>, identifier: TypeId) {
+fn add_all(map: &mut HashMap<Identifier, Has>, identifier: Identifier) {
     *map.entry(identifier).or_default() = Has::All;
 }
 
-fn has(map: &HashMap<TypeId, Has>, identifier: TypeId, index: usize) -> bool {
+fn has(map: &HashMap<Identifier, Has>, identifier: Identifier, index: usize) -> bool {
     map.get(&identifier).map_or(false, |has| has.has(index))
 }
 
-fn has_any(map: &HashMap<TypeId, Has>, identifier: TypeId) -> bool {
+fn has_any(map: &HashMap<Identifier, Has>, identifier: Identifier) -> bool {
     has(map, identifier, usize::MAX)
 }

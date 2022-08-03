@@ -22,18 +22,11 @@ impl World {
         }
     }
 
-    pub fn run<I: Default, M, S: for<'a> IntoSystem<'a, M, Input = I>>(
-        &mut self,
-        system: S,
-    ) -> Result {
+    pub fn run<I: Default, M, S: IntoSystem<M, Input = I>>(&mut self, system: S) -> Result {
         self.scheduler().add(system).schedule()?.run(self)
     }
 
-    pub fn run_with<I, M, S: for<'a> IntoSystem<'a, M, Input = I>>(
-        &mut self,
-        input: I,
-        system: S,
-    ) -> Result {
+    pub fn run_with<I, M, S: IntoSystem<M, Input = I>>(&mut self, input: I, system: S) -> Result {
         self.scheduler()
             .add_with(input, system)
             .schedule()?
@@ -41,16 +34,16 @@ impl World {
     }
 }
 
-impl<'a> Scheduler<'a> {
+impl Scheduler<'_> {
     pub fn pipe<F: FnOnce(Self) -> Self>(self, schedule: F) -> Self {
         self.with_prefix::<F, _>(schedule)
     }
 
-    pub fn add<I: Default, M, S: IntoSystem<'a, M, Input = I>>(self, system: S) -> Self {
+    pub fn add<I: Default, M, S: IntoSystem<M, Input = I>>(self, system: S) -> Self {
         self.add_with(I::default(), system)
     }
 
-    pub fn add_with<I, M, S: IntoSystem<'a, M, Input = I>>(self, input: I, system: S) -> Self {
+    pub fn add_with<I, M, S: IntoSystem<M, Input = I>>(self, input: I, system: S) -> Self {
         self.with_prefix::<S, _>(|mut scheduler| {
             let system = system.system(input, scheduler.world).map(|mut system| {
                 system.name.insert_str(0, &scheduler.prefix);

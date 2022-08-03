@@ -1,7 +1,7 @@
 use crate::{
     depend::{Conflict, Depend, Dependency, Scope},
     error::{Error, Result},
-    recurse,
+    identify, recurse,
     world::World,
 };
 use entia_core::{utility::short_type_name, Change};
@@ -44,13 +44,9 @@ pub trait Inject {
     }
 }
 
-/// SAFETY: The implementations of the 'get' method must ensure that no reference to the 'World' are kept within 'self'
-/// because it would violate this crate's lifetime requirements. In principle, this is prevented by the fact that the
-/// trait is 'static and as such, it is not marked as unsafe. This note serves to prevent any unseen sneaky way to
-/// retain a reference to the 'World' that lives outside of 'Item'.
 pub trait Get<'a> {
     type Item;
-    fn get(&'a mut self, world: &'a World) -> Self::Item;
+    unsafe fn get(&'a mut self, world: &'a World) -> Self::Item;
 }
 
 impl<'a> Context<'a> {
@@ -84,7 +80,7 @@ impl World {
     }
 
     pub fn injector_with<I: Inject>(&mut self, input: I::Input) -> Result<Injector<I>> {
-        let identifier = World::reserve();
+        let identifier = identify();
         let state = I::initialize(input, Context::new(identifier, self))?;
         Ok(Injector {
             identifier,
@@ -109,7 +105,7 @@ impl<I: Inject> Injector<I> {
         self.version
     }
 
-    pub fn update<'a>(&mut self, world: &mut World) -> Result {
+    pub fn update(&mut self, world: &mut World) -> Result {
         if self.world != world.identifier() {
             return Err(Error::WrongWorld);
         }
@@ -136,13 +132,13 @@ impl<I: Inject> Injector<I> {
         }
     }
 
-    pub fn run<T, F: FnOnce(<I::State as Get<'_>>::Item) -> T>(
+    pub fn run<T, R: FnOnce(<I::State as Get<'_>>::Item) -> T>(
         &mut self,
         world: &mut World,
-        run: F,
+        run: R,
     ) -> Result<T> {
         self.update(world)?;
-        let value = run(self.state.get(world));
+        let value = run(unsafe { self.state.get(world) });
         self.resolve(world)?;
         Ok(value)
     }
@@ -181,7 +177,7 @@ impl<'a, T: Get<'a>, const N: usize> Get<'a> for [T; N] {
     type Item = [T::Item; N];
 
     #[inline]
-    fn get(&'a mut self, world: &'a World) -> Self::Item {
+    unsafe fn get(&'a mut self, world: &'a World) -> Self::Item {
         let mut iterator = self.iter_mut();
         [(); N].map(|_| iterator.next().unwrap().get(world))
     }
@@ -237,7 +233,7 @@ macro_rules! inject {
             type Item = ($($t::Item,)*);
 
             #[inline]
-            fn get(&'a mut self, _world: &'a World) -> Self::Item {
+            unsafe fn get(&'a mut self, _world: &'a World) -> Self::Item {
                 let ($($p,)*) = self;
                 ($($p.get(_world),)*)
             }

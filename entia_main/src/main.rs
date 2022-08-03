@@ -1,24 +1,22 @@
-use entia::{system::Barrier, *};
+use entia::{message::keep, system::Barrier, *};
 use entia_main as entia;
 
 fn main() {
-    #[derive(Resource, Default, Clone)]
+    #[derive(Default, Clone)]
     struct Time;
-    #[derive(Resource, Default, Clone)]
+    #[derive(Default, Clone)]
     struct Physics;
-    #[derive(Component, Default, Clone)]
+    #[derive(Default, Clone)]
     struct Position(Vec<usize>);
-    #[derive(Component, Default, Clone)]
+    #[derive(Default, Clone)]
     struct Velocity(Vec<usize>);
-    #[derive(Component, Default, Copy, Clone)]
+    #[derive(Default, Copy, Clone)]
     struct Frozen;
-    #[derive(Component)]
     struct Target(Entity);
-    #[derive(Message, Default, Clone)]
+    #[derive(Default, Clone)]
     struct OnKill;
-    #[derive(Message, Default, Clone)]
+    #[derive(Default, Clone)]
     struct OnDeath(Entity);
-    #[derive(Component)]
     struct Dead;
 
     impl Into<Entity> for OnDeath {
@@ -57,14 +55,10 @@ fn main() {
 
     let mut world = World::new();
     world
-        .scheduler()
-        .add(|mut create: Create<_>| {
+        .run(|mut create: Create<_>| {
             let families = create.all((3..=4).map(dynamic));
             println!("CREATE: {:?}", families);
         })
-        .schedule()
-        .unwrap()
-        .run(&mut world)
         .unwrap();
 
     let mut runner = world
@@ -91,6 +85,9 @@ fn main() {
             ));
         })
         .add(Barrier)
+        // .add(Boba::new::<Read<Position>, _, _>(|physics: &Physics| {
+        //     |position: &Position| {}
+        // }))
         .add(|mut create: Create<_>| {
             create.one(complex());
         })
@@ -138,13 +135,17 @@ fn main() {
                 }
             },
         )
-        .add(|mut receive: Receive<OnDeath>, mut destroy: Destroy| destroy.all(&mut receive, true))
+        .add(
+            |receive: Receive<OnDeath, keep::First<10>>, mut destroy: Destroy| {
+                destroy.all(receive, true)
+            },
+        )
         .add(|query: Query<Entity, Has<Dead>>, mut destroy: Destroy| {
             destroy.all(query.iter(), true)
         })
         .add(
-            |mut receive: Receive<OnDeath>| {
-                if let Some(_message) = receive.first() {}
+            |mut receive: Receive<OnDeath, keep::Last<5>>| {
+                if let Some(_message) = receive.next() {}
             },
         )
         .add(|mut emit: Emit<_>| emit.one(OnDeath(Entity::NULL)))

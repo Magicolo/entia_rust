@@ -1,55 +1,68 @@
+use self::keep::{IntoKeep, Keep};
 use crate::{
     depend::{Depend, Dependency},
     error::Result,
     inject::{Context, Get, Inject},
+    inject2::Inject2,
     meta::Meta,
     resource::Write,
     world::World,
-    Resource,
 };
-use std::{collections::VecDeque, iter::FusedIterator};
+use std::{collections::VecDeque, iter::FusedIterator, marker::PhantomData};
 
 pub trait Message: Sized + Clone + Send + Sync + 'static {
     fn meta() -> Meta {
         crate::meta!(Self)
     }
 }
+impl<T: Clone + Send + Sync + 'static> Message for T {}
 
-struct Queue<T>(usize, VecDeque<T>);
+struct Queue<T> {
+    keep: Keep,
+    items: VecDeque<T>,
+}
 
 struct Inner<T> {
     pub queues: Vec<Queue<T>>,
 }
 
-impl<T: Send + Sync + 'static> Resource for Inner<T> {
-    fn initialize(_: &Meta, _: &mut World) -> Result<Self> {
-        Ok(Self { queues: Vec::new() })
+impl<T: Send + Sync + 'static> Default for Inner<T> {
+    fn default() -> Self {
+        Self { queues: Vec::new() }
     }
 }
 
-impl<T> Queue<T> {
-    #[inline]
-    pub fn new(capacity: usize) -> Self {
-        Self(capacity, VecDeque::new())
+pub mod keep {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+    pub enum Keep {
+        All,
+        Last(usize),
+        First(usize),
     }
 
-    #[inline]
-    pub fn enqueue(&mut self, messages: impl IntoIterator<Item = T>) {
-        self.1.extend(messages);
-        self.truncate();
+    pub trait IntoKeep {
+        fn keep() -> Keep;
     }
 
-    #[inline]
-    pub fn dequeue(&mut self) -> Option<T> {
-        self.1.pop_front()
+    pub struct All;
+    pub struct First<const N: usize>;
+    pub struct Last<const N: usize>;
+
+    impl IntoKeep for All {
+        fn keep() -> Keep {
+            Keep::All
+        }
     }
 
-    #[inline]
-    fn truncate(&mut self) {
-        if self.0 > 0 {
-            while self.1.len() > self.0 {
-                self.dequeue();
-            }
+    impl<const N: usize> IntoKeep for First<N> {
+        fn keep() -> Keep {
+            Keep::First(N)
+        }
+    }
+
+    impl<const N: usize> IntoKeep for Last<N> {
+        fn keep() -> Keep {
+            Keep::Last(N)
         }
     }
 }
@@ -57,61 +70,123 @@ impl<T> Queue<T> {
 pub mod emit {
     use super::*;
 
-    pub struct Emit<'a, M>(&'a mut Vec<M>);
-    pub struct State<T>(Write<Inner<T>>, Vec<T>);
+    pub struct Emit<'a, M>(&'a mut [Queue<M>]);
+    pub struct State<T>(Write<Inner<T>>);
 
-    impl<T> Emit<'_, T> {
-        #[inline]
+    impl<T: Clone> Emit<'_, T> {
         pub fn all(&mut self, messages: impl IntoIterator<Item = T>) {
-            self.0.extend(messages);
+            fn enqueue<I: IntoIterator>(queue: &mut Queue<I::Item>, messages: I) {
+                match queue.keep {
+                    Keep::All => queue.items.extend(messages),
+                    Keep::Last(count) => {
+                        for message in messages {
+                            if queue.items.len() >= count {
+                                queue.items.pop_front();
+                            }
+                            queue.items.push_back(message);
+                        }
+                    }
+                    Keep::First(count) => {
+                        let take = count.saturating_sub(queue.items.len());
+                        queue.items.extend(messages.into_iter().take(take));
+                    }
+                }
+            }
+
+            match self.0.split_first_mut() {
+                Some((head, [])) => enqueue(head, messages),
+                Some((head, rest)) => {
+                    // Use 'head' as a buffer for the 'rest' queues.
+                    let start = head.items.len();
+                    head.items.extend(messages);
+
+                    for queue in rest {
+                        enqueue(queue, head.items.range(start..).cloned());
+                    }
+
+                    // Remove overflow from 'head'.
+                    match head.keep {
+                        Keep::First(count) => head.items.truncate(count),
+                        Keep::Last(count) => {
+                            head.items.drain(..head.items.len().saturating_sub(count));
+                        }
+                        _ => {}
+                    }
+                }
+                None => {}
+            }
         }
 
-        #[inline]
         pub fn one(&mut self, message: T) {
-            self.0.push(message.into());
-        }
+            fn enqueue<T>(queue: &mut Queue<T>, message: T) {
+                match queue.keep {
+                    Keep::All => queue.items.push_back(message),
+                    Keep::Last(count) => {
+                        if queue.items.len() >= count {
+                            queue.items.pop_front();
+                        }
+                        queue.items.push_back(message);
+                    }
+                    Keep::First(count) => {
+                        if queue.items.len() < count {
+                            queue.items.push_front(message);
+                        }
+                    }
+                }
+            }
 
-        #[inline]
-        pub fn clear(&mut self) {
-            self.0.clear()
+            if let Some((head, rest)) = self.0.split_first_mut() {
+                for queue in rest {
+                    enqueue(queue, message.clone());
+                }
+                enqueue(head, message);
+            }
         }
     }
 
-    impl<'a, M: Message> Inject for Emit<'a, M> {
+    unsafe impl<M: Message> Inject2 for Emit<'_, M> {
+        type Input = ();
+        type State = State<M>;
+
+        fn initialize(_: Self::Input, world: &mut World) -> Result<Self::State> {
+            // TODO: Context is wrongly built.
+            Ok(State(Write::initialize(None, Context::new(0, world))?))
+        }
+
+        fn depend(state: &Self::State, world: &World) -> Vec<Dependency> {
+            state.0.depend(world)
+        }
+    }
+
+    impl<M: Message> Inject for Emit<'_, M> {
         type Input = ();
         type State = State<M>;
 
         fn initialize(_: Self::Input, context: Context) -> Result<Self::State> {
-            Ok(State(Write::initialize(None, context)?, Vec::new()))
+            Ok(State(Write::initialize(None, context)?))
         }
 
-        fn resolve(State(inner, messages): &mut Self::State, _: Context) -> Result {
-            let inner = inner.as_mut();
-            let mut iterator = inner.queues.iter_mut();
-            if let Some(first) = iterator.next() {
-                for queue in iterator {
-                    queue.enqueue(messages.iter().cloned());
-                }
-                first.enqueue(messages.drain(..));
-            } else {
-                messages.clear();
-            }
+        fn resolve(State { .. }: &mut Self::State, _: Context) -> Result {
+            // for queue in inner.queues.iter_mut() {
+            //     queue.enqueue(buffer.iter().cloned());
+            // }
+            // buffer.clear();
             Ok(())
         }
     }
 
-    impl<'a, T: 'a> Get<'a> for State<T> {
+    impl<'a, T: Send + Sync + 'static> Get<'a> for State<T> {
         type Item = Emit<'a, T>;
 
         #[inline]
-        fn get(&'a mut self, _: &'a World) -> Self::Item {
-            Emit(&mut self.1)
+        unsafe fn get(&'a mut self, _: &World) -> Self::Item {
+            Emit(&mut self.0.queues)
         }
     }
 
     unsafe impl<T: 'static> Depend for State<T> {
         fn depend(&self, _: &World) -> Vec<Dependency> {
-            vec![Dependency::defer::<T>().segment(usize::MAX)]
+            vec![Dependency::defer::<T>().at(usize::MAX)]
         }
     }
 }
@@ -119,90 +194,124 @@ pub mod emit {
 pub mod receive {
     use super::*;
 
-    pub struct Receive<'a, T>(&'a mut VecDeque<T>);
-    pub struct State<T>(usize, Write<Inner<T>>);
+    pub struct Receive<'a, T, K = keep::All>(&'a mut VecDeque<T>, PhantomData<K>);
+    pub struct State<T, K> {
+        queue: usize,
+        inner: Write<Inner<T>>,
+        _marker: PhantomData<K>,
+    }
 
-    impl<T> Receive<'_, T> {
-        #[inline]
-        pub fn len(&self) -> usize {
-            self.0.len()
-        }
-
+    impl<T, K> Receive<'_, T, K> {
         #[inline]
         pub fn clear(&mut self) {
             self.0.clear()
         }
-
-        #[inline]
-        pub fn first(&mut self) -> Option<T> {
-            self.0.pop_front()
-        }
-
-        #[inline]
-        pub fn last(&mut self) -> Option<T> {
-            self.0.pop_back()
-        }
     }
 
-    impl<T> Iterator for &mut Receive<'_, T> {
+    impl<T, K> Iterator for Receive<'_, T, K> {
         type Item = T;
 
         #[inline]
         fn next(&mut self) -> Option<Self::Item> {
-            Receive::first(self)
+            self.0.pop_front()
+        }
+
+        #[inline]
+        fn nth(&mut self, n: usize) -> Option<Self::Item> {
+            self.0.drain(0..=n).last()
         }
 
         #[inline]
         fn size_hint(&self) -> (usize, Option<usize>) {
-            let len = Receive::len(self);
+            let len = self.len();
             (len, Some(len))
         }
     }
 
-    impl<T> DoubleEndedIterator for &mut Receive<'_, T> {
+    impl<T, K> DoubleEndedIterator for Receive<'_, T, K> {
         #[inline]
         fn next_back(&mut self) -> Option<Self::Item> {
-            Receive::last(self)
+            self.0.pop_back()
+        }
+
+        #[inline]
+        fn nth_back(&mut self, n: usize) -> Option<Self::Item> {
+            self.0.drain(self.0.len() - n - 1..).last()
         }
     }
 
-    impl<T> ExactSizeIterator for &mut Receive<'_, T> {
+    impl<T, K> ExactSizeIterator for Receive<'_, T, K> {
         #[inline]
         fn len(&self) -> usize {
-            Receive::len(self)
+            self.0.len()
         }
     }
 
-    impl<T> FusedIterator for &mut Receive<'_, T> {}
+    impl<T, K> FusedIterator for Receive<'_, T, K> {}
 
-    impl<M: Message> Inject for Receive<'_, M> {
-        type Input = usize;
-        type State = State<M>;
+    unsafe impl<M: Message, K: IntoKeep + 'static> Inject2 for Receive<'_, M, K> {
+        type Input = ();
+        type State = State<M, K>;
 
-        fn initialize(input: Self::Input, context: Context) -> Result<Self::State> {
-            let mut inner = Write::<Inner<M>>::initialize(None, context)?;
-            let index = {
-                let inner = inner.as_mut();
+        fn initialize(_: Self::Input, world: &mut World) -> Result<Self::State> {
+            // TODO: Context is wrongly built.
+            let mut inner = Write::<Inner<M>>::initialize(None, Context::new(0, world))?;
+            let queue = {
                 let index = inner.queues.len();
-                inner.queues.push(Queue::new(input));
+                inner.queues.push(Queue {
+                    keep: K::keep(),
+                    items: VecDeque::new(),
+                });
                 index
             };
-            Ok(State(index, inner))
+            // Signal that a new 'index' was created since it affects scheduling and dependencies.
+            world.modify();
+            Ok(State {
+                queue,
+                inner,
+                _marker: PhantomData,
+            })
+        }
+
+        fn depend(state: &Self::State, world: &World) -> Vec<Dependency> {
+            Dependency::map_at(state.inner.depend(world), state.queue).collect()
         }
     }
 
-    impl<'a, T: Send + Sync + 'static> Get<'a> for State<T> {
-        type Item = Receive<'a, T>;
+    impl<M: Message, K: IntoKeep> Inject for Receive<'_, M, K> {
+        type Input = ();
+        type State = State<M, K>;
+
+        fn initialize(_: Self::Input, context: Context) -> Result<Self::State> {
+            let mut inner = Write::<Inner<M>>::initialize(None, context)?;
+            let index = {
+                let index = inner.queues.len();
+                inner.queues.push(Queue {
+                    keep: K::keep(),
+                    items: VecDeque::new(),
+                });
+                index
+            };
+            Ok(State {
+                queue: index,
+                inner,
+                _marker: PhantomData,
+            })
+        }
+    }
+
+    impl<'a, T: Send + Sync + 'static, K> Get<'a> for State<T, K> {
+        type Item = Receive<'a, T, K>;
 
         #[inline]
-        fn get(&'a mut self, _: &World) -> Self::Item {
-            Receive(&mut self.1.as_mut().queues[self.0].1)
+        unsafe fn get(&'a mut self, _: &World) -> Self::Item {
+            Receive(&mut self.inner.queues[self.queue].items, PhantomData)
         }
     }
 
-    unsafe impl<T: 'static> Depend for State<T> {
-        fn depend(&self, _: &World) -> Vec<Dependency> {
-            vec![Dependency::read::<T>().segment(usize::MAX)]
+    unsafe impl<T: 'static, K> Depend for State<T, K> {
+        fn depend(&self, world: &World) -> Vec<Dependency> {
+            self.inner.depend(world)
         }
     }
 }

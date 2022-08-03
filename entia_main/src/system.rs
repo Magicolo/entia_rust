@@ -1,6 +1,7 @@
 use crate::{
     depend::{Depend, Dependency},
     error::{Error, Result},
+    identify,
     inject::{Context, Get, Inject},
     output::IntoOutput,
     world::World,
@@ -22,7 +23,7 @@ pub struct System {
     depend: Box<dyn Fn(&dyn Any, usize, &World) -> Vec<Dependency>>,
 }
 
-pub trait IntoSystem<'a, M = ()> {
+pub trait IntoSystem<M = ()> {
     type Input;
     fn system(self, input: Self::Input, world: &mut World) -> Result<System>;
 }
@@ -36,7 +37,7 @@ impl System {
         resolve: impl Fn(&mut T, usize, &mut World) -> Result + 'static,
         depend: impl Fn(&T, usize, &World) -> Vec<Dependency> + 'static,
     ) -> Result<Self> {
-        let identifier = World::reserve();
+        let identifier = identify();
         Ok(Self {
             name,
             identifier,
@@ -99,7 +100,7 @@ impl fmt::Debug for System {
     }
 }
 
-impl<I, S> IntoSystem<'_> for (I, S)
+impl<I, S> IntoSystem for (I, S)
 where
     (I, S): Into<System>,
 {
@@ -110,7 +111,7 @@ where
     }
 }
 
-impl<'a, M, S: IntoSystem<'a, M>> IntoSystem<'a, (M, S)> for Option<S> {
+impl<M, S: IntoSystem<M>> IntoSystem<(M, S)> for Option<S> {
     type Input = S::Input;
 
     fn system(self, input: Self::Input, world: &mut World) -> Result<System> {
@@ -121,7 +122,7 @@ impl<'a, M, S: IntoSystem<'a, M>> IntoSystem<'a, (M, S)> for Option<S> {
     }
 }
 
-impl<'a, M, S: IntoSystem<'a, M>, E: Into<Error>> IntoSystem<'a, (M, S)> for result::Result<S, E> {
+impl<M, S: IntoSystem<M>, E: Into<Error>> IntoSystem<(M, S)> for result::Result<S, E> {
     type Input = S::Input;
 
     fn system(self, input: Self::Input, world: &mut World) -> Result<System> {
@@ -132,14 +133,10 @@ impl<'a, M, S: IntoSystem<'a, M>, E: Into<Error>> IntoSystem<'a, (M, S)> for res
     }
 }
 
-impl<
-        'a,
-        I: Inject,
-        O: IntoOutput,
-        C: Call<I, O> + Call<<I::State as Get<'a>>::Item, O> + Send + Sync + 'static,
-    > IntoSystem<'a, (I, O, C)> for C
+impl<'a, I: Inject, O: IntoOutput, C: Call<I, O> + Send + Sync + 'static> IntoSystem<(I, O, C)>
+    for C
 where
-    I::State: Send + Sync + 'static,
+    I::State: Get<'a, Item = I> + Send + Sync + 'static,
 {
     type Input = I::Input;
 
@@ -147,7 +144,7 @@ where
         System::new(
             I::name(),
             |identifier| Ok((self, I::initialize(input, Context::new(identifier, world))?)),
-            |(run, state), _, world| run.call(state.get(world)).output(),
+            |(run, state), _, world| run.call(unsafe { state.get(world) }).output(),
             |(_, state), identifier, world| I::update(state, Context::new(identifier, world)),
             |(_, state), identifier, world| I::resolve(state, Context::new(identifier, world)),
             |(_, state), _, world| state.depend(world),
@@ -155,9 +152,101 @@ where
     }
 }
 
+// pub struct Boba<C>(C);
+
+// impl<C> Boba<C> {
+//     pub fn new<'a, T: Item, E: FnMut(<T::State as At<'a>>::Mut), I: Inject>(run: C) -> Self
+//     where
+//         C: Call<I, E> + Call<<I::State as Get<'a>>::Item, E> + Send + Sync + 'static,
+//         I::State: Send + Sync + 'static,
+//         T::State: Send + Sync + 'static,
+//     {
+//         Boba(run)
+//     }
+// }
+
+// pub struct Schedule {
+//     state: Box<dyn Any>,
+//     schedule: fn(&mut dyn Any, &mut World) -> Vec<Run>,
+// }
+
+// pub struct Scheduler {
+//     schedules: Vec<Schedule>,
+//     runs: Vec<Run>,
+//     indices: Vec<usize>,
+// }
+
+// pub struct Run {
+//     run: fn(&mut dyn Any, &World) -> Result,
+//     dependencies: Vec<Dependency>,
+// }
+
+// pub trait SchedulePoulah<I, S> {
+//     fn initialize(&mut self, input: I, world: &mut World) -> Result<S>;
+//     fn schedule(&mut self, state: &mut S, scheduler: Scheduler) -> Result<Scheduler>;
+// }
+
+// impl Schedule {
+//     pub fn schedule(&mut self, world: &mut World) -> Vec<Run> {
+//         (self.schedule)(&mut self.state, world)
+//     }
+// }
+
+// impl Scheduler {
+//     fn schedule(&mut self, world: &mut World) {
+//         self.runs.clear();
+//         for schedule in self.schedules.iter_mut() {
+//             self.runs.append(&mut schedule.schedule(world))
+//         }
+//         // Do things to indices based on the dependencies in run.
+//     }
+// }
+
+// impl<
+//         'a,
+//         T: Item + 'static,
+//         E: FnMut(<T::State as At<'a>>::Mut),
+//         I: Inject,
+//         C: Call<I, E> + Call<<I::State as Get<'a>>::Item, E> + Send + Sync + 'static,
+//     > IntoSystem<'a, (T, E, I)> for Boba<C>
+// where
+//     I::State: Send + Sync + 'static,
+//     T::State: Send + Sync + 'static,
+// {
+//     type Input = I::Input;
+
+//     fn system(self, input: Self::Input, world: &mut World) -> Result<System> {
+//         System::new(
+//             I::name(),
+//             |identifier| {
+//                 Ok((
+//                     self,
+//                     (
+//                         I::initialize(input, Context::new(identifier, world))?,
+//                         <Query<'a, T> as Inject>::initialize((), Context::new(identifier, world))?,
+//                     ),
+//                 ))
+//             },
+//             |(run, state), _, world| {
+//                 let (inject, mut query) = unsafe { state.get(world) };
+//                 let each = run.0.call(inject);
+//                 query.each_mut(each);
+//                 Ok(())
+//             },
+//             |(_, state), identifier, world| {
+//                 <(I, Query<'a, T>) as Inject>::update(state, Context::new(identifier, world))
+//             },
+//             |(_, state), identifier, world| {
+//                 <(I, Query<'a, T>) as Inject>::resolve(state, Context::new(identifier, world))
+//             },
+//             |(_, state), _, world| state.depend(world),
+//         )
+//     }
+// }
+
 pub struct Barrier;
 
-impl IntoSystem<'_> for Barrier {
+impl IntoSystem for Barrier {
     type Input = ();
 
     fn system(self, _: Self::Input, _: &mut World) -> Result<System> {

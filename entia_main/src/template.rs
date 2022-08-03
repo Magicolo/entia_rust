@@ -434,7 +434,7 @@ impl<T: SpawnTemplate, const N: usize> Template for [T; N] {
     }
 }
 
-#[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Copy, Clone, Default)]
 pub struct Add<T>(T);
 
 unsafe impl<C: Component> StaticTemplate for Add<C> {}
@@ -479,7 +479,7 @@ impl<C: Component> Template for Add<C> {
     }
 }
 
-#[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Copy, Clone, Default)]
 pub struct With<T, F = fn(Family) -> T>(F, PhantomData<T>);
 
 unsafe impl<T: StaticTemplate + SpawnTemplate, F: FnOnce(Family) -> T> SpawnTemplate
@@ -534,7 +534,7 @@ impl<T: StaticTemplate, F: FnOnce(Family) -> T> Template for With<T, F> {
     }
 }
 
-#[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Copy, Clone, Default)]
 pub struct Spawn<T>(T);
 
 unsafe impl<T: Template> SpawnTemplate for Spawn<T> {}

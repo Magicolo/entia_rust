@@ -6,6 +6,7 @@ pub enum Error {
     WrongWorld,
     WrongSegment,
     WrongState,
+    WrongInput,
     MutexPoison,
     MissingSystem,
     MissingStore {
@@ -43,6 +44,7 @@ pub enum Error {
     },
     Depend(depend::Error),
     All(Vec<Error>),
+    UnstableWorldVersion,
 }
 
 pub type Result<T = ()> = result::Result<T, Error>;
