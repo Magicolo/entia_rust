@@ -1,13 +1,14 @@
 use crate::{
     depend::{Depend, Dependency},
     error::Result,
-    item::{self, At, Item},
-    meta::Meta,
+    item::{At, Item},
+    meta::{Describe, Meta},
     segment::Segment,
     store::Store,
     world::World,
 };
 use std::{
+    any::TypeId,
     marker::PhantomData,
     slice::{from_raw_parts, from_raw_parts_mut, SliceIndex},
     sync::Arc,
@@ -20,12 +21,8 @@ pub struct Write<T> {
 }
 pub struct Read<T>(Write<T>);
 
-pub trait Component: Sized + Send + Sync + 'static {
-    fn meta() -> Meta {
-        crate::meta!(Self)
-    }
-}
-impl<T: Send + Sync + 'static> Component for T {}
+pub trait Component: Describe {}
+impl<T: Describe> Component for T {}
 
 impl<T> Write<T> {
     #[inline]
@@ -47,12 +44,9 @@ impl<T> Write<T> {
 impl<C: Component> Item for Write<C> {
     type State = Self;
 
-    fn initialize(mut context: item::Context) -> Result<Self::State> {
-        let meta = context.world().get_meta::<C>()?;
-        let segment = context.segment();
-        let store = segment.component_store(&meta)?;
+    fn initialize(_: usize, segment: &Segment, _: &mut World) -> Result<Self::State> {
         Ok(Self {
-            store,
+            store: segment.component_store(TypeId::of::<C>())?,
             segment: segment.index(),
             _marker: PhantomData,
         })
@@ -62,8 +56,8 @@ impl<C: Component> Item for Write<C> {
 impl<C: Component> Item for &mut C {
     type State = <Write<C> as Item>::State;
 
-    fn initialize(context: item::Context) -> Result<Self::State> {
-        Write::<C>::initialize(context)
+    fn initialize(identifier: usize, segment: &Segment, world: &mut World) -> Result<Self::State> {
+        Write::<C>::initialize(identifier, segment, world)
     }
 }
 
@@ -93,7 +87,7 @@ where
 }
 
 unsafe impl<T: 'static> Depend for Write<T> {
-    fn depend(&self, _: &World) -> Vec<Dependency> {
+    fn depend(&self) -> Vec<Dependency> {
         vec![Dependency::write::<T>(self.store().identifier()).at(self.segment())]
     }
 }
@@ -118,16 +112,16 @@ impl<T> Read<T> {
 impl<C: Component> Item for Read<C> {
     type State = Self;
 
-    fn initialize(context: item::Context) -> Result<Self::State> {
-        <Write<_> as Item>::initialize(context).map(Read)
+    fn initialize(identifier: usize, segment: &Segment, world: &mut World) -> Result<Self::State> {
+        <Write<_> as Item>::initialize(identifier, segment, world).map(Read)
     }
 }
 
 impl<C: Component> Item for &C {
     type State = <Read<C> as Item>::State;
 
-    fn initialize(context: item::Context) -> Result<Self::State> {
-        <Read<_> as Item>::initialize(context)
+    fn initialize(identifier: usize, segment: &Segment, world: &mut World) -> Result<Self::State> {
+        <Read<_> as Item>::initialize(identifier, segment, world)
     }
 }
 
@@ -156,7 +150,7 @@ where
 }
 
 unsafe impl<T: 'static> Depend for Read<T> {
-    fn depend(&self, _: &World) -> Vec<Dependency> {
+    fn depend(&self) -> Vec<Dependency> {
         vec![Dependency::read::<T>(self.store().identifier()).at(self.segment())]
     }
 }

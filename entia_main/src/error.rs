@@ -10,7 +10,6 @@ pub enum Error {
     MutexPoison,
     MissingSystem,
     MissingStore {
-        name: &'static str,
         identifier: TypeId,
         segment: usize,
     },

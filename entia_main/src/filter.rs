@@ -1,9 +1,9 @@
-use std::marker::PhantomData;
+use std::{any::TypeId, marker::PhantomData};
 
-use crate::{recurse, segment::Segment, world::World};
+use crate::{recurse, segment::Segment};
 
 pub trait Filter {
-    fn filter(segment: &Segment, world: &World) -> bool;
+    fn filter(segment: &Segment) -> bool;
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -12,32 +12,28 @@ pub struct Has<T>(PhantomData<T>);
 pub struct Not<F>(PhantomData<F>);
 
 impl<T: Send + Sync + 'static> Filter for Has<T> {
-    fn filter(segment: &Segment, world: &World) -> bool {
-        if let Ok(meta) = world.get_meta::<T>() {
-            segment.component_types().contains(&meta.identifier())
-        } else {
-            false
-        }
+    fn filter(segment: &Segment) -> bool {
+        segment.component_types().contains(&TypeId::of::<T>())
     }
 }
 
 impl<F: Filter> Filter for Not<F> {
-    fn filter(segment: &Segment, world: &World) -> bool {
-        !F::filter(segment, world)
+    fn filter(segment: &Segment) -> bool {
+        !F::filter(segment)
     }
 }
 
 impl<T> Filter for PhantomData<T> {
-    fn filter(segment: &Segment, world: &World) -> bool {
-        <() as Filter>::filter(segment, world)
+    fn filter(segment: &Segment) -> bool {
+        <() as Filter>::filter(segment)
     }
 }
 
 macro_rules! filter {
         ($($p:ident, $t:ident),*) => {
             impl<$($t: Filter,)*> Filter for ($($t,)*) {
-                fn filter(_segment: &Segment, _world: &World) -> bool {
-                    $($t::filter(_segment, _world) &&)* true
+                fn filter(_segment: &Segment) -> bool {
+                    $($t::filter(_segment) &&)* true
                 }
             }
         };

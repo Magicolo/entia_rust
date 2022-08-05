@@ -2,20 +2,16 @@ use self::keep::{IntoKeep, Keep};
 use crate::{
     depend::{Depend, Dependency},
     error::Result,
-    inject::{Context, Get, Inject},
+    inject::{Get, Inject},
     inject2::Inject2,
-    meta::Meta,
+    meta::Describe,
     resource::Write,
     world::World,
 };
 use std::{collections::VecDeque, iter::FusedIterator, marker::PhantomData};
 
-pub trait Message: Sized + Clone + Send + Sync + 'static {
-    fn meta() -> Meta {
-        crate::meta!(Self)
-    }
-}
-impl<T: Clone + Send + Sync + 'static> Message for T {}
+pub trait Message: Clone + Describe {}
+impl<T: Clone + Describe> Message for T {}
 
 struct Queue<T> {
     keep: Keep,
@@ -150,11 +146,11 @@ pub mod emit {
 
         fn initialize(_: Self::Input, world: &mut World) -> Result<Self::State> {
             // TODO: Context is wrongly built.
-            Ok(State(Write::initialize(None, Context::new(0, world))?))
+            Ok(State(Write::initialize(None, 0, world)?))
         }
 
-        fn depend(state: &Self::State, world: &World) -> Vec<Dependency> {
-            state.0.depend(world)
+        fn depend(state: &Self::State) -> Vec<Dependency> {
+            state.0.depend()
         }
     }
 
@@ -162,11 +158,11 @@ pub mod emit {
         type Input = ();
         type State = State<M>;
 
-        fn initialize(_: Self::Input, context: Context) -> Result<Self::State> {
-            Ok(State(Write::initialize(None, context)?))
+        fn initialize(_: Self::Input, identifier: usize, world: &mut World) -> Result<Self::State> {
+            Ok(State(Write::initialize(None, identifier, world)?))
         }
 
-        fn resolve(State { .. }: &mut Self::State, _: Context) -> Result {
+        fn resolve(State { .. }: &mut Self::State) -> Result {
             // for queue in inner.queues.iter_mut() {
             //     queue.enqueue(buffer.iter().cloned());
             // }
@@ -179,13 +175,13 @@ pub mod emit {
         type Item = Emit<'a, T>;
 
         #[inline]
-        unsafe fn get(&'a mut self, _: &World) -> Self::Item {
+        unsafe fn get(&'a mut self) -> Self::Item {
             Emit(&mut self.0.queues)
         }
     }
 
     unsafe impl<T: 'static> Depend for State<T> {
-        fn depend(&self, _: &World) -> Vec<Dependency> {
+        fn depend(&self) -> Vec<Dependency> {
             vec![Dependency::defer::<T>().at(usize::MAX)]
         }
     }
@@ -255,7 +251,7 @@ pub mod receive {
 
         fn initialize(_: Self::Input, world: &mut World) -> Result<Self::State> {
             // TODO: Context is wrongly built.
-            let mut inner = Write::<Inner<M>>::initialize(None, Context::new(0, world))?;
+            let mut inner = Write::<Inner<M>>::initialize(None, 0, world)?;
             let queue = {
                 let index = inner.queues.len();
                 inner.queues.push(Queue {
@@ -264,8 +260,6 @@ pub mod receive {
                 });
                 index
             };
-            // Signal that a new 'index' was created since it affects scheduling and dependencies.
-            world.modify();
             Ok(State {
                 queue,
                 inner,
@@ -273,8 +267,8 @@ pub mod receive {
             })
         }
 
-        fn depend(state: &Self::State, world: &World) -> Vec<Dependency> {
-            Dependency::map_at(state.inner.depend(world), state.queue).collect()
+        fn depend(state: &Self::State) -> Vec<Dependency> {
+            Dependency::map_at(state.inner.depend(), state.queue).collect()
         }
     }
 
@@ -282,8 +276,8 @@ pub mod receive {
         type Input = ();
         type State = State<M, K>;
 
-        fn initialize(_: Self::Input, context: Context) -> Result<Self::State> {
-            let mut inner = Write::<Inner<M>>::initialize(None, context)?;
+        fn initialize(_: Self::Input, identifier: usize, world: &mut World) -> Result<Self::State> {
+            let mut inner = Write::<Inner<M>>::initialize(None, identifier, world)?;
             let index = {
                 let index = inner.queues.len();
                 inner.queues.push(Queue {
@@ -304,14 +298,14 @@ pub mod receive {
         type Item = Receive<'a, T, K>;
 
         #[inline]
-        unsafe fn get(&'a mut self, _: &World) -> Self::Item {
+        unsafe fn get(&'a mut self) -> Self::Item {
             Receive(&mut self.inner.queues[self.queue].items, PhantomData)
         }
     }
 
     unsafe impl<T: 'static, K> Depend for State<T, K> {
-        fn depend(&self, world: &World) -> Vec<Dependency> {
-            self.inner.depend(world)
+        fn depend(&self) -> Vec<Dependency> {
+            self.inner.depend()
         }
     }
 }

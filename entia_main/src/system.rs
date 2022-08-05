@@ -2,7 +2,7 @@ use crate::{
     depend::{Depend, Dependency},
     error::{Error, Result},
     identify,
-    inject::{Context, Get, Inject},
+    inject::{Get, Inject},
     output::IntoOutput,
     world::World,
 };
@@ -17,10 +17,10 @@ pub struct System {
     identifier: usize,
     pub(crate) name: String,
     state: Box<dyn Any + Send>,
-    run: Box<dyn Fn(&mut (dyn Any + Send), usize, &World) -> Result + Send + Sync>,
-    update: Box<dyn Fn(&mut dyn Any, usize, &mut World) -> Result>,
-    resolve: Box<dyn Fn(&mut dyn Any, usize, &mut World) -> Result>,
-    depend: Box<dyn Fn(&dyn Any, usize, &World) -> Vec<Dependency>>,
+    run: Box<dyn Fn(&mut (dyn Any + Send)) -> Result + Send + Sync>,
+    update: Box<dyn Fn(&mut dyn Any, &mut World) -> Result>,
+    resolve: Box<dyn Fn(&mut dyn Any) -> Result>,
+    depend: Box<dyn Fn(&dyn Any) -> Vec<Dependency>>,
 }
 
 pub trait IntoSystem<M = ()> {
@@ -32,31 +32,28 @@ impl System {
     pub fn new<'a, T: Send + Sync + 'static>(
         name: String,
         initialize: impl FnOnce(usize) -> Result<T>,
-        run: impl Fn(&'a mut T, usize, &'a World) -> Result + Send + Sync + 'static,
-        update: impl Fn(&mut T, usize, &mut World) -> Result + 'static,
-        resolve: impl Fn(&mut T, usize, &mut World) -> Result + 'static,
-        depend: impl Fn(&T, usize, &World) -> Vec<Dependency> + 'static,
+        run: impl Fn(&'a mut T) -> Result + Send + Sync + 'static,
+        update: impl Fn(&mut T, &mut World) -> Result + 'static,
+        resolve: impl Fn(&mut T) -> Result + 'static,
+        depend: impl Fn(&T) -> Vec<Dependency> + 'static,
     ) -> Result<Self> {
         let identifier = identify();
         Ok(Self {
             name,
             identifier,
             state: Box::new(initialize(identifier)?),
-            run: Box::new(move |state, identifier, world| {
-                let state = unsafe { state.downcast_mut::<T>().unwrap_unchecked() };
-                unsafe { run(&mut *(state as *mut _), identifier, &*(world as *const _)) }
+            run: Box::new(move |state| {
+                // let state = unsafe { state.downcast_mut::<T>().unwrap_unchecked() };
+                unsafe { run(&mut *(state as *mut _ as *mut T)) }
             }),
-            update: Box::new(move |state, identifier, world| {
-                let state = unsafe { state.downcast_mut().unwrap_unchecked() };
-                update(state, identifier, world)
+            update: Box::new(move |state, world| {
+                update(unsafe { state.downcast_mut().unwrap_unchecked() }, world)
             }),
-            resolve: Box::new(move |state, identifier, world| {
-                let state = unsafe { state.downcast_mut().unwrap_unchecked() };
-                resolve(state, identifier, world)
+            resolve: Box::new(move |state| {
+                resolve(unsafe { state.downcast_mut().unwrap_unchecked() })
             }),
-            depend: Box::new(move |state, identifier, world| {
-                let state = unsafe { state.downcast_ref().unwrap_unchecked() };
-                depend(state, identifier, world)
+            depend: Box::new(move |state| {
+                depend(unsafe { state.downcast_ref().unwrap_unchecked() })
             }),
         })
     }
@@ -72,23 +69,23 @@ impl System {
     }
 
     #[inline]
-    pub fn run(&mut self, world: &World) -> Result {
-        (self.run)(&mut self.state, self.identifier, world)
+    pub fn run(&mut self) -> Result {
+        (self.run)(&mut self.state)
     }
 
     #[inline]
     pub fn update(&mut self, world: &mut World) -> Result {
-        (self.update)(&mut self.state, self.identifier, world)
+        (self.update)(&mut self.state, world)
     }
 
     #[inline]
-    pub fn resolve(&mut self, world: &mut World) -> Result {
-        (self.resolve)(&mut self.state, self.identifier, world)
+    pub fn resolve(&mut self) -> Result {
+        (self.resolve)(&mut self.state)
     }
 
     #[inline]
-    pub fn depend(&mut self, world: &World) -> Vec<Dependency> {
-        (self.depend)(&self.state, self.identifier, world)
+    pub fn depend(&mut self) -> Vec<Dependency> {
+        (self.depend)(&self.state)
     }
 }
 
@@ -143,106 +140,18 @@ where
     fn system(self, input: I::Input, world: &mut World) -> Result<System> {
         System::new(
             I::name(),
-            |identifier| Ok((self, I::initialize(input, Context::new(identifier, world))?)),
-            |(run, state), _, world| run.call(unsafe { state.get(world) }).output(),
-            |(_, state), identifier, world| I::update(state, Context::new(identifier, world)),
-            |(_, state), identifier, world| I::resolve(state, Context::new(identifier, world)),
-            |(_, state), _, world| state.depend(world),
+            |identifier| {
+                let state = I::initialize(input, identifier, world)?;
+                world.modify();
+                Ok((self, state))
+            },
+            |(run, state)| run.call(unsafe { state.get() }).output(),
+            |(_, state), world| I::update(state, world),
+            |(_, state)| I::resolve(state),
+            |(_, state)| state.depend(),
         )
     }
 }
-
-// pub struct Boba<C>(C);
-
-// impl<C> Boba<C> {
-//     pub fn new<'a, T: Item, E: FnMut(<T::State as At<'a>>::Mut), I: Inject>(run: C) -> Self
-//     where
-//         C: Call<I, E> + Call<<I::State as Get<'a>>::Item, E> + Send + Sync + 'static,
-//         I::State: Send + Sync + 'static,
-//         T::State: Send + Sync + 'static,
-//     {
-//         Boba(run)
-//     }
-// }
-
-// pub struct Schedule {
-//     state: Box<dyn Any>,
-//     schedule: fn(&mut dyn Any, &mut World) -> Vec<Run>,
-// }
-
-// pub struct Scheduler {
-//     schedules: Vec<Schedule>,
-//     runs: Vec<Run>,
-//     indices: Vec<usize>,
-// }
-
-// pub struct Run {
-//     run: fn(&mut dyn Any, &World) -> Result,
-//     dependencies: Vec<Dependency>,
-// }
-
-// pub trait SchedulePoulah<I, S> {
-//     fn initialize(&mut self, input: I, world: &mut World) -> Result<S>;
-//     fn schedule(&mut self, state: &mut S, scheduler: Scheduler) -> Result<Scheduler>;
-// }
-
-// impl Schedule {
-//     pub fn schedule(&mut self, world: &mut World) -> Vec<Run> {
-//         (self.schedule)(&mut self.state, world)
-//     }
-// }
-
-// impl Scheduler {
-//     fn schedule(&mut self, world: &mut World) {
-//         self.runs.clear();
-//         for schedule in self.schedules.iter_mut() {
-//             self.runs.append(&mut schedule.schedule(world))
-//         }
-//         // Do things to indices based on the dependencies in run.
-//     }
-// }
-
-// impl<
-//         'a,
-//         T: Item + 'static,
-//         E: FnMut(<T::State as At<'a>>::Mut),
-//         I: Inject,
-//         C: Call<I, E> + Call<<I::State as Get<'a>>::Item, E> + Send + Sync + 'static,
-//     > IntoSystem<'a, (T, E, I)> for Boba<C>
-// where
-//     I::State: Send + Sync + 'static,
-//     T::State: Send + Sync + 'static,
-// {
-//     type Input = I::Input;
-
-//     fn system(self, input: Self::Input, world: &mut World) -> Result<System> {
-//         System::new(
-//             I::name(),
-//             |identifier| {
-//                 Ok((
-//                     self,
-//                     (
-//                         I::initialize(input, Context::new(identifier, world))?,
-//                         <Query<'a, T> as Inject>::initialize((), Context::new(identifier, world))?,
-//                     ),
-//                 ))
-//             },
-//             |(run, state), _, world| {
-//                 let (inject, mut query) = unsafe { state.get(world) };
-//                 let each = run.0.call(inject);
-//                 query.each_mut(each);
-//                 Ok(())
-//             },
-//             |(_, state), identifier, world| {
-//                 <(I, Query<'a, T>) as Inject>::update(state, Context::new(identifier, world))
-//             },
-//             |(_, state), identifier, world| {
-//                 <(I, Query<'a, T>) as Inject>::resolve(state, Context::new(identifier, world))
-//             },
-//             |(_, state), _, world| state.depend(world),
-//         )
-//     }
-// }
 
 pub struct Barrier;
 
@@ -253,10 +162,10 @@ impl IntoSystem for Barrier {
         System::new(
             "barrier".into(),
             |_| Ok(()),
-            |_, _, _| Ok(()),
-            |_, _, _| Ok(()),
-            |_, _, _| Ok(()),
-            |_, _, _| vec![Dependency::Unknown],
+            |_| Ok(()),
+            |_, _| Ok(()),
+            |_| Ok(()),
+            |_| vec![Dependency::Unknown],
         )
     }
 }

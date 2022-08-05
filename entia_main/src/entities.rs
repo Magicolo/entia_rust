@@ -13,7 +13,7 @@ pub struct Entities {
 
 impl Default for Entities {
     fn default() -> Self {
-        Self::new(32)
+        Self::with_capacity(32)
     }
 }
 
@@ -91,7 +91,7 @@ impl Datum {
 }
 
 impl Entities {
-    pub(crate) fn new(capacity: usize) -> Self {
+    pub(crate) fn with_capacity(capacity: usize) -> Self {
         Self {
             free: (Vec::with_capacity(capacity), 0.into()),
             data: (Vec::with_capacity(capacity), 0.into()),
@@ -267,60 +267,50 @@ impl Entities {
 
     pub fn ancestors(&self, entity: Entity) -> impl FullIterator<Item = Entity> {
         let mut entities = Vec::new();
-        self.ascend::<(), _, _>(
-            entity,
-            |parent| {
-                entities.push(parent);
-                Ok(())
-            },
-            |_| Ok(()),
-        )
-        .expect("Ascension cannot fail.");
+        self.ascend(entity, |parent| entities.push(parent), |_| {});
         entities.into_iter()
     }
 
     pub fn descendants(&self, entity: Entity) -> impl FullIterator<Item = Entity> {
         let mut entities = Vec::new();
-        self.descend::<(), _, _>(
-            entity,
-            |child| {
-                entities.push(child);
-                Ok(())
-            },
-            |_| Ok(()),
-        )
-        .expect("Descent cannot fail.");
+        self.descend(entity, |child| entities.push(child), |_| {});
         entities.into_iter()
     }
 
-    pub fn ascend<E, U: FnMut(Entity) -> Result<(), E>, D: FnMut(Entity) -> Result<(), E>>(
+    pub fn ascend<U: FnMut(Entity), D: FnMut(Entity)>(
         &self,
         entity: Entity,
         mut up: U,
         mut down: D,
-    ) -> Result<(), E> {
-        self.ascend_with(entity, (), |entity, _| up(entity), |entity, _| down(entity))
+    ) {
+        self.try_ascend(
+            entity,
+            (),
+            |entity, _| Ok::<(), ()>(up(entity)),
+            |entity, _| Ok::<(), ()>(down(entity)),
+        )
+        .unwrap_or(())
     }
 
-    pub fn ascend_with<
-        S,
+    pub fn try_ascend<
+        T,
         E,
-        U: FnMut(Entity, S) -> Result<S, E>,
-        D: FnMut(Entity, S) -> Result<S, E>,
+        U: FnMut(Entity, T) -> Result<T, E>,
+        D: FnMut(Entity, T) -> Result<T, E>,
     >(
         &self,
         entity: Entity,
-        state: S,
+        state: T,
         mut up: U,
         mut down: D,
-    ) -> Result<S, E> {
-        fn next<S, E>(
+    ) -> Result<T, E> {
+        fn next<T, E>(
             entities: &Entities,
             entity: Entity,
-            mut state: S,
-            up: &mut impl FnMut(Entity, S) -> Result<S, E>,
-            down: &mut impl FnMut(Entity, S) -> Result<S, E>,
-        ) -> Result<S, E> {
+            mut state: T,
+            up: &mut impl FnMut(Entity, T) -> Result<T, E>,
+            down: &mut impl FnMut(Entity, T) -> Result<T, E>,
+        ) -> Result<T, E> {
             if let Some(parent) = entities.parent(entity) {
                 state = up(parent, state)?;
                 state = next(entities, parent, state, up, down)?;
@@ -332,16 +322,22 @@ impl Entities {
         next(self, entity, state, &mut up, &mut down)
     }
 
-    pub fn descend<E, D: FnMut(Entity) -> Result<(), E>, U: FnMut(Entity) -> Result<(), E>>(
+    pub fn descend<D: FnMut(Entity), U: FnMut(Entity)>(
         &self,
         entity: Entity,
         mut down: D,
         mut up: U,
-    ) -> Result<(), E> {
-        self.descend_with(entity, (), |entity, _| down(entity), |entity, _| up(entity))
+    ) {
+        self.try_descend(
+            entity,
+            (),
+            |entity, _| Ok::<(), ()>(down(entity)),
+            |entity, _| Ok::<(), ()>(up(entity)),
+        )
+        .unwrap_or(())
     }
 
-    pub fn descend_with<
+    pub fn try_descend<
         S,
         E,
         D: FnMut(Entity, S) -> Result<S, E>,
@@ -528,7 +524,6 @@ impl Entities {
 
     fn detach_checked(&mut self, parent: Entity, child: Entity) -> Option<()> {
         // A parent entity can adopt an entity that is already its child. In that case, that entity will simply be moved.
-
         if parent.index() == child.index() {
             // An entity cannot adopt itself.
             // If generations don't match, then one of the entities is invalid, thus adoption also fails.
@@ -536,10 +531,11 @@ impl Entities {
         }
 
         // An entity cannot adopt an ancestor.
-        self.ascend(
+        self.try_ascend(
             parent,
-            |parent| if parent == child { Err(()) } else { Ok(()) },
-            |_| Ok(()),
+            (),
+            |parent, _| if parent == child { Err(()) } else { Ok(()) },
+            |_, _| Ok(()),
         )
         .ok()?;
 

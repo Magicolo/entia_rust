@@ -9,16 +9,17 @@ use crate::{
     error::{Error, Result},
     family::template::{EntityIndices, SegmentIndices},
     inject::Inject,
-    item::{At, Context, Item},
+    item::{At, Item},
+    meta::Metas,
     resource,
     resource::Write,
-    segment::Segment,
+    segment::{Segment, Segments},
     template::{
         ApplyContext, CountContext, DeclareContext, InitializeContext, LeafTemplate, Template,
     },
     world::World,
 };
-use std::{collections::HashMap, marker::PhantomData};
+use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
 /*
     |temperature: &Temperature, time: &Time, query: Query<(&mut Cold, Add<_, Early|Late>)>| {
@@ -79,27 +80,34 @@ where
 {
     type State = State<T, R>;
 
-    fn initialize(mut context: Context) -> Result<Self::State> {
-        let entities =
-            <resource::Write<Entities> as Inject>::initialize(None, context.owned().into())?;
-        let mut metas = vec![vec![]];
-        let initial = T::declare(DeclareContext::new(0, &mut metas, context.world()));
-        let types = metas[0]
-            .iter()
-            .map(|meta| meta.identifier())
-            .chain(context.segment().component_types().iter().copied())
-            .collect::<Vec<_>>();
-        let segment = context.world().get_or_add_segment_with(types).index();
+    fn initialize(identifier: usize, segment: &Segment, world: &mut World) -> Result<Self::State> {
+        let entities = resource::Write::<Entities>::initialize(None, identifier, world)?;
+        let mut segments = resource::Write::<Segments>::initialize(None, identifier, world)?;
+        let mut metas = resource::Write::<Metas>::initialize(None, identifier, world)?;
+        let mut segment_metas = vec![vec![]];
+        let initial = T::declare(DeclareContext::new(0, &mut segment_metas, &mut metas));
+        let entity_meta = metas.entity();
+        let metas = segment
+            .component_stores()
+            .map(|store| Arc::clone(store.meta()))
+            .chain(segment_metas[0].drain(..));
+        // let types = segment_metas[0]
+        //     .iter()
+        //     .map(|meta| meta.identifier())
+        //     .chain(segment.component_types().iter().copied())
+        //     .collect::<Vec<_>>();
+        // let segment_add = segments.get_or_add_with(types).index();
+        let segment_add = segments.get_or_add(entity_meta, metas).index();
         let metas_to_segment = [(0, 0)].into_iter().collect::<HashMap<_, _>>();
         let mut segment_indices = vec![SegmentIndices {
-            segment,
+            segment: segment_add,
             count: 0,
             index: 0,
             store: 0,
         }];
         let state = T::initialize(
             initial,
-            InitializeContext::new(0, &segment_indices, &metas_to_segment, context.world()),
+            InitializeContext::new(0, &segment_indices, &metas_to_segment, &segments),
         );
 
         let mut entity_indices = Vec::new();
@@ -115,7 +123,7 @@ where
             (0, 0),
             &[],
             &[EntityIndices {
-                segment,
+                segment: segment_add,
                 offset: 0,
                 parent: None,
                 next_sibling: None,
@@ -124,26 +132,21 @@ where
             &segment_indices,
             &mut vec![],
         );
-        context.segment().entity_store();
-        let defer = <defer::Defer<_> as Inject>::initialize(
-            Outer {
-                inner: Inner {
-                    segments: (context.segment().index(), segment),
-                    segment_indices: segment_indices
-                        .into_iter()
-                        .next()
-                        .expect("Expected segment indices."),
-                    entity_indices: entity_indices
-                        .into_iter()
-                        .next()
-                        .expect("Expected entity indices."),
-                    initial_state: state,
-                    initialize: Vec::new(),
-                },
-                entities,
-            },
-            context.into(),
-        )?;
+        let inner = Inner {
+            segments: (segment.index(), segment_add),
+            segment_indices: segment_indices
+                .into_iter()
+                .next()
+                .expect("Expected segment indices."),
+            entity_indices: entity_indices
+                .into_iter()
+                .next()
+                .expect("Expected entity indices."),
+            initial_state: state,
+            initialize: Vec::new(),
+        };
+        let outer = Outer { inner, entities };
+        let defer = defer::Defer::<Outer<T>>::initialize(outer, identifier, world)?;
         Ok(State(defer, PhantomData))
     }
 }
@@ -191,26 +194,22 @@ impl<'a, T: LeafTemplate + 'static, R: 'static> At<'a, usize> for State<T, R> {
 impl<T: Template> Resolve for Outer<T> {
     type Item = Defer<T>;
 
-    fn resolve(
-        &mut self,
-        items: impl FullIterator<Item = Self::Item>,
-        world: &mut World,
-    ) -> Result {
+    fn resolve(&mut self, items: impl FullIterator<Item = Self::Item>) -> Result {
         // let entities = self.entities.as_mut();
         todo!()
     }
 }
 
 unsafe impl<T: Template> Depend for State<T, Early> {
-    fn depend(&self, world: &crate::World) -> Vec<Dependency> {
-        let mut dependencies = self.0.depend(world);
+    fn depend(&self) -> Vec<Dependency> {
+        let mut dependencies = self.0.depend();
         // TODO: Depend on segments
         dependencies
     }
 }
 
 unsafe impl<T: Template> Depend for State<T, Late> {
-    fn depend(&self, world: &crate::World) -> Vec<Dependency> {
-        self.0.depend(world)
+    fn depend(&self) -> Vec<Dependency> {
+        self.0.depend()
     }
 }

@@ -4,11 +4,10 @@ use crate::{
     entity::Entity,
     error::{Error, Result},
     family::template::{EntityIndices, Family, SegmentIndices},
-    meta::Meta,
+    meta::{Meta, Metas},
     recurse,
-    segment::Segment,
+    segment::{Segment, Segments},
     store::Store,
-    world::World,
 };
 use entia_core::Marker;
 use std::{collections::HashMap, marker::PhantomData, sync::Arc};
@@ -16,14 +15,14 @@ use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 pub struct DeclareContext<'a> {
     metas_index: usize,
     segment_metas: &'a mut Vec<Vec<Arc<Meta>>>,
-    world: &'a mut World,
+    metas: &'a mut Metas,
 }
 
 pub struct InitializeContext<'a> {
     segment_index: usize,
     segment_indices: &'a [SegmentIndices],
     metas_to_segment: &'a HashMap<usize, usize>,
-    world: &'a World,
+    segments: &'a Segments,
 }
 
 pub struct CountContext<'a> {
@@ -78,12 +77,12 @@ impl<'a> DeclareContext<'a> {
     pub(crate) fn new(
         metas_index: usize,
         segment_metas: &'a mut Vec<Vec<Arc<Meta>>>,
-        world: &'a mut World,
+        metas: &'a mut Metas,
     ) -> Self {
         Self {
             metas_index,
             segment_metas,
-            world,
+            metas,
         }
     }
 
@@ -92,11 +91,11 @@ impl<'a> DeclareContext<'a> {
     }
 
     pub fn with(&mut self, metas_index: usize) -> DeclareContext {
-        DeclareContext::new(metas_index, self.segment_metas, self.world)
+        DeclareContext::new(metas_index, self.segment_metas, self.metas)
     }
 
     pub fn meta<C: Component>(&mut self) -> Arc<Meta> {
-        let meta = self.world.get_or_add_meta::<C, _>(C::meta);
+        let meta = self.metas.get_or_add::<C, _>(C::describe);
         self.segment_metas[self.metas_index].push(meta.clone());
         meta
     }
@@ -113,18 +112,18 @@ impl<'a> InitializeContext<'a> {
         segment_index: usize,
         segment_indices: &'a [SegmentIndices],
         metas_to_segment: &'a HashMap<usize, usize>,
-        world: &'a World,
+        segments: &'a Segments,
     ) -> Self {
         Self {
             segment_index,
             segment_indices,
             metas_to_segment,
-            world,
+            segments,
         }
     }
 
     pub fn segment(&self) -> &Segment {
-        &self.world.segments()[self.segment_indices[self.segment_index].segment]
+        &self.segments[self.segment_indices[self.segment_index].segment]
     }
 
     pub fn owned(&mut self) -> InitializeContext {
@@ -136,7 +135,7 @@ impl<'a> InitializeContext<'a> {
             segment_index,
             self.segment_indices,
             self.metas_to_segment,
-            self.world,
+            self.segments,
         )
     }
 
@@ -463,7 +462,10 @@ impl<C: Component> Template for Add<C> {
     }
 
     fn initialize(state: Self::Input, context: InitializeContext) -> Self::State {
-        context.segment().component_store(&state).unwrap()
+        context
+            .segment()
+            .component_store(state.identifier())
+            .unwrap()
     }
 
     fn static_count(_: &Self::State, _: CountContext) -> Result<bool> {

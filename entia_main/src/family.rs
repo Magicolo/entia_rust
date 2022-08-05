@@ -4,7 +4,7 @@ use crate::{
     entity::{self, Entity},
     error,
     inject::Inject,
-    item::{At, Context, Item},
+    item::{At, Item},
     resource,
     segment::Segment,
     world::World,
@@ -20,7 +20,7 @@ use std::{
 // dependencies which would effectively hide those dependencies and potentially cause non-deterministic behaviours.
 // - Ex: a system adopts could be scheduled in parallel with a system that reads the children of a family instead
 // of being scheduled in sequence because of the 'defer-read' dependency conflict that couldn't be seen.
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct Family<'a>(Entity, &'a Entities);
 pub struct State(entity::State, resource::Read<Entities>);
 
@@ -78,16 +78,12 @@ impl<'a> Family<'a> {
     }
 
     #[inline]
-    pub fn ascend<E, U: FnMut(Entity) -> Result<(), E>, D: FnMut(Entity) -> Result<(), E>>(
-        &self,
-        up: U,
-        down: D,
-    ) -> Result<(), E> {
+    pub fn ascend<U: FnMut(Entity), D: FnMut(Entity)>(&self, up: U, down: D) {
         self.1.ascend(self.0, up, down)
     }
 
     #[inline]
-    pub fn ascend_with<
+    pub fn try_ascend<
         S,
         E,
         U: FnMut(Entity, S) -> Result<S, E>,
@@ -98,20 +94,16 @@ impl<'a> Family<'a> {
         up: U,
         down: D,
     ) -> Result<S, E> {
-        self.1.ascend_with(self.0, state, up, down)
+        self.1.try_ascend(self.0, state, up, down)
     }
 
     #[inline]
-    pub fn descend<E, D: FnMut(Entity) -> Result<(), E>, U: FnMut(Entity) -> Result<(), E>>(
-        &self,
-        down: D,
-        up: U,
-    ) -> Result<(), E> {
+    pub fn descend<D: FnMut(Entity), U: FnMut(Entity)>(&self, down: D, up: U) {
         self.1.descend(self.0, down, up)
     }
 
     #[inline]
-    pub fn descend_with<
+    pub fn try_descend<
         S,
         E,
         D: FnMut(Entity, S) -> Result<S, E>,
@@ -122,7 +114,7 @@ impl<'a> Family<'a> {
         down: D,
         up: U,
     ) -> Result<S, E> {
-        self.1.descend_with(self.0, state, down, up)
+        self.1.try_descend(self.0, state, down, up)
     }
 }
 
@@ -151,10 +143,14 @@ impl fmt::Debug for Family<'_> {
 impl Item for Family<'_> {
     type State = State;
 
-    fn initialize(mut context: Context) -> Result<Self::State, error::Error> {
+    fn initialize(
+        identifier: usize,
+        segment: &Segment,
+        world: &mut World,
+    ) -> Result<Self::State, error::Error> {
         Ok(State(
-            <Entity as Item>::initialize(context.owned())?,
-            <resource::Read<_> as Inject>::initialize(None, context.into())?,
+            <Entity as Item>::initialize(identifier, segment, world)?,
+            resource::Read::<Entities>::initialize(None, identifier, world)?,
         ))
     }
 }
@@ -218,9 +214,9 @@ at!(
 );
 
 unsafe impl Depend for State {
-    fn depend(&self, world: &World) -> Vec<Dependency> {
-        let mut dependencies = self.0.depend(world);
-        dependencies.append(&mut self.1.depend(world));
+    fn depend(&self) -> Vec<Dependency> {
+        let mut dependencies = self.0.depend();
+        dependencies.append(&mut self.1.depend());
         dependencies
     }
 }

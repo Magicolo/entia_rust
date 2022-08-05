@@ -1,15 +1,9 @@
-use crate::{depend::Depend, error::Result, inject, recurse, segment::Segment, world::World};
+use crate::{depend::Depend, error::Result, recurse, segment::Segment, world::World};
 use std::marker::PhantomData;
-
-pub struct Context<'a> {
-    identifier: usize,
-    segment: usize,
-    world: &'a mut World,
-}
 
 pub trait Item {
     type State: for<'a> At<'a> + Depend;
-    fn initialize(context: Context) -> Result<Self::State>;
+    fn initialize(identifier: usize, segment: &Segment, world: &mut World) -> Result<Self::State>;
 }
 
 pub trait At<'a, I = usize> {
@@ -22,47 +16,11 @@ pub trait At<'a, I = usize> {
     unsafe fn at_mut(state: &mut Self::State, index: I) -> Self::Mut;
 }
 
-impl<'a> Context<'a> {
-    pub fn new(identifier: usize, segment: usize, world: &'a mut World) -> Self {
-        Self {
-            identifier,
-            segment,
-            world,
-        }
-    }
-
-    pub fn identifier(&self) -> usize {
-        self.identifier
-    }
-
-    pub fn segment(&self) -> &Segment {
-        &self.world.segments()[self.segment]
-    }
-
-    pub fn world(&mut self) -> &mut World {
-        self.world
-    }
-
-    pub fn owned(&mut self) -> Context {
-        self.with(self.segment)
-    }
-
-    pub fn with(&mut self, segment: usize) -> Context {
-        Context::new(self.identifier, segment, self.world)
-    }
-}
-
-impl<'a> Into<inject::Context<'a>> for Context<'a> {
-    fn into(self) -> inject::Context<'a> {
-        inject::Context::new(self.identifier, self.world)
-    }
-}
-
 impl<I: Item> Item for Option<I> {
     type State = Option<I::State>;
 
-    fn initialize(context: Context) -> Result<Self::State> {
-        Ok(I::initialize(context).ok())
+    fn initialize(identifier: usize, segment: &Segment, world: &mut World) -> Result<Self::State> {
+        Ok(I::initialize(identifier, segment, world).ok())
     }
 }
 
@@ -98,8 +56,8 @@ impl<'a, I, A: At<'a, I>> At<'a, I> for Option<A> {
 
 impl<T> Item for PhantomData<T> {
     type State = <() as Item>::State;
-    fn initialize(context: Context) -> Result<Self::State> {
-        <() as Item>::initialize(context)
+    fn initialize(identifier: usize, segment: &Segment, world: &mut World) -> Result<Self::State> {
+        <() as Item>::initialize(identifier, segment, world)
     }
 }
 
@@ -108,8 +66,8 @@ macro_rules! item {
         impl<$($t: Item,)*> Item for ($($t,)*) {
             type State = ($($t::State,)*);
 
-            fn initialize(mut _context: Context) -> Result<Self::State> {
-                Ok(($($t::initialize(_context.owned())?,)*))
+            fn initialize(_identifier: usize,_segment: &Segment, _world: &mut World) -> Result<Self::State> {
+                Ok(($($t::initialize(_identifier, _segment, _world)?,)*))
             }
         }
 

@@ -1,62 +1,141 @@
+use crate::{
+    entity::Entity,
+    error::{Error, Result},
+};
 use entia_core::{Maybe, Wrap};
 use std::{
     any::{type_name, Any, TypeId},
     collections::HashMap,
     fmt,
     mem::{needs_drop, size_of, ManuallyDrop, MaybeUninit},
-    ptr::{copy, drop_in_place, slice_from_raw_parts_mut},
+    ops::Deref,
+    ptr::{copy, drop_in_place, slice_from_raw_parts_mut, NonNull},
+    sync::Arc,
 };
 
 type Module = dyn Any + Send + Sync;
 
+#[derive(Debug, Default)]
+pub struct Metas {
+    metas: Vec<Arc<Meta>>,
+    indices: HashMap<TypeId, usize>,
+}
+
+#[derive(Debug)]
 pub struct Meta {
     identifier: TypeId,
     name: &'static str,
-    pub(super) allocate: fn(usize) -> *mut (),
-    pub(super) free: unsafe fn(*mut (), usize, usize),
-    pub(super) copy: unsafe fn((*const (), usize), (*mut (), usize), usize),
-    pub(super) drop: unsafe fn(*mut (), usize, usize),
+    pub(super) allocate: fn(usize) -> NonNull<()>,
+    pub(super) free: unsafe fn(NonNull<()>, usize, usize),
+    pub(super) copy: unsafe fn((NonNull<()>, usize), (NonNull<()>, usize), usize),
+    pub(super) drop: unsafe fn(NonNull<()>, usize, usize),
     pub(super) defaulter: Option<Defaulter>,
     pub(super) cloner: Option<Cloner>,
     pub(super) formatter: Option<Formatter>,
     modules: HashMap<TypeId, Box<Module>>,
 }
 
-#[derive(Clone)]
-pub struct Defaulter {
-    pub default: unsafe fn(target: (*mut (), usize), count: usize),
+pub trait Describe: Send + Sync + 'static {
+    fn describe() -> Meta;
 }
 
-#[derive(Clone)]
-pub struct Cloner {
-    pub clone: unsafe fn(source: (*const (), usize), target: (*mut (), usize), count: usize),
-    pub fill: unsafe fn(source: (*const (), usize), target: (*mut (), usize), count: usize),
+#[derive(Debug, Clone)]
+struct Defaulter {
+    pub default: unsafe fn(target: (NonNull<()>, usize), count: usize),
 }
 
-#[derive(Clone)]
-pub struct Formatter {
-    pub format: unsafe fn(source: *const (), index: usize) -> String,
+#[derive(Debug, Clone)]
+struct Cloner {
+    pub clone: unsafe fn(source: (NonNull<()>, usize), target: (NonNull<()>, usize), count: usize),
+    pub fill: unsafe fn(source: (NonNull<()>, usize), target: (NonNull<()>, usize), count: usize),
+}
+
+#[derive(Debug, Clone)]
+struct Formatter {
+    pub format: unsafe fn(source: NonNull<()>, index: usize) -> String,
+}
+
+impl<T: Send + Sync + 'static> Describe for T {
+    fn describe() -> Meta {
+        let mut modules: Vec<Box<dyn Any + Send + Sync>> = Vec::new();
+        if let Some(module) = Wrap::<Defaulter, Self>::default().maybe() {
+            modules.push(Box::new(module));
+        }
+        if let Some(module) = Wrap::<Cloner, Self>::default().maybe() {
+            modules.push(Box::new(module));
+        }
+        if let Some(module) = Wrap::<Formatter, Self>::default().maybe() {
+            modules.push(Box::new(module));
+        }
+        Meta::new::<Self, _>(modules)
+    }
+}
+
+impl Metas {
+    pub fn entity(&mut self) -> Arc<Meta> {
+        self.get_or_add::<Entity>()
+    }
+
+    pub fn get<T: Describe>(&self) -> Result<Arc<Meta>> {
+        self.get_with(TypeId::of::<T>())
+    }
+
+    pub fn get_with(&self, identifier: TypeId) -> Result<Arc<Meta>> {
+        match self.indices.get(&identifier) {
+            Some(&index) => Ok(self.metas[index].clone()),
+            None => Err(Error::MissingMeta { identifier }),
+        }
+    }
+
+    pub fn get_or_add<T: Describe>(&mut self) -> Arc<Meta> {
+        self.get_or_add_with(TypeId::of::<T>(), T::describe)
+    }
+
+    pub fn get_or_add_with<M: FnOnce() -> Meta>(
+        &mut self,
+        identifier: TypeId,
+        meta: M,
+    ) -> Arc<Meta> {
+        match self.get_with(identifier) {
+            Ok(meta) => meta,
+            Err(_) => {
+                let meta = Arc::new(meta());
+                assert_eq!(meta.identifier(), identifier);
+                self.indices.insert(identifier, self.metas.len());
+                self.metas.push(meta.clone());
+                meta
+            }
+        }
+    }
+}
+
+impl Deref for Metas {
+    type Target = [Arc<Meta>];
+
+    fn deref(&self) -> &Self::Target {
+        &self.metas
+    }
 }
 
 impl Meta {
-    // To increase safe usage of 'Meta' and 'Store', type 'T' is required to be 'Send' and 'Sync', therefore it is
-    // impossible to hold an instance of 'Meta' that is not 'Send' and 'Sync'.
-    pub fn new<T: Send + Sync + 'static, I: IntoIterator<Item = Box<Module>>>(modules: I) -> Self {
+    // To increase safe usage of 'Meta' and 'Store', type 'T' is required to be 'Send + Sync', therefore it is
+    // impossible to hold an instance of 'Meta' that does not describe a 'Send + Sync' type.
+    pub fn new<T: 'static, I: IntoIterator<Item = Box<Module>>>(modules: I) -> Self {
         let mut meta = Self {
             identifier: TypeId::of::<T>(),
             name: type_name::<T>(),
             allocate: |capacity| {
                 let mut pointer = ManuallyDrop::new(Vec::<T>::with_capacity(capacity));
-                pointer.as_mut_ptr().cast()
+                unsafe { NonNull::new_unchecked(pointer.as_mut_ptr().cast()) }
             },
             free: |pointer, count, capacity| unsafe {
-                Vec::from_raw_parts(pointer.cast::<T>(), count, capacity);
+                Vec::from_raw_parts(pointer.as_ptr().cast::<T>(), count, capacity);
             },
             copy: if size_of::<T>() > 0 {
                 |source, target, count| unsafe {
                     if count > 0 {
-                        let source = source.0.cast::<T>().add(source.1);
-                        let target = target.0.cast::<T>().add(target.1);
+                        let source = source.0.as_ptr().cast::<T>().add(source.1);
+                        let target = target.0.as_ptr().cast::<T>().add(target.1);
                         copy(source, target, count);
                     }
                 }
@@ -66,7 +145,7 @@ impl Meta {
             drop: if needs_drop::<T>() {
                 |pointer, index, count| unsafe {
                     if count > 0 {
-                        let pointer = pointer.cast::<T>().add(index);
+                        let pointer = pointer.as_ptr().cast::<T>().add(index);
                         drop_in_place(slice_from_raw_parts_mut(pointer, count));
                     }
                 }
@@ -112,7 +191,7 @@ impl Meta {
             let defaulter = self.defaulter.as_ref()?;
             Some(unsafe {
                 let mut target = MaybeUninit::<T>::uninit();
-                (defaulter.default)((target.as_mut_ptr() as _, 0), 1);
+                (defaulter.default)((NonNull::new_unchecked(target.as_mut_ptr() as _), 0), 1);
                 target.assume_init()
             })
         } else {
@@ -124,9 +203,13 @@ impl Meta {
         if TypeId::of::<T>() == self.identifier {
             let cloner = self.cloner.as_ref()?;
             Some(unsafe {
-                let source = value as *const _ as _;
+                let source = NonNull::new_unchecked(value as *const _ as _);
                 let mut target = MaybeUninit::<T>::uninit();
-                (cloner.clone)((source, 0), (target.as_mut_ptr() as _, 0), 1);
+                (cloner.clone)(
+                    (source, 0),
+                    (NonNull::new_unchecked(target.as_mut_ptr() as _), 0),
+                    1,
+                );
                 target.assume_init()
             })
         } else {
@@ -138,7 +221,7 @@ impl Meta {
         if TypeId::of::<T>() == self.identifier {
             let formatter = self.formatter.as_ref()?;
             Some(unsafe {
-                let source = value as *const _ as _;
+                let source = NonNull::new_unchecked(value as *const _ as _);
                 (formatter.format)(source, 0)
             })
         } else {
@@ -157,7 +240,7 @@ impl Defaulter {
     pub fn new<T: Default>() -> Self {
         Self {
             default: |target, count| unsafe {
-                let target = target.0.cast::<T>().add(target.1);
+                let target = target.0.as_ptr().cast::<T>().add(target.1);
                 for i in 0..count {
                     target.add(i).write(T::default());
                 }
@@ -177,8 +260,8 @@ impl Cloner {
         Self {
             clone: if size_of::<T>() > 0 {
                 |source, target, count| unsafe {
-                    let source = source.0.cast::<T>().add(source.1);
-                    let target = target.0.cast::<T>().add(target.1);
+                    let source = source.0.as_ptr().cast::<T>().add(source.1);
+                    let target = target.0.as_ptr().cast::<T>().add(target.1);
                     // Use 'ptd::write' to prevent the old value from being dropped since it is expected to be already
                     // dropped or uninitialized.
                     for i in 0..count {
@@ -192,8 +275,8 @@ impl Cloner {
             },
             fill: if size_of::<T>() > 0 {
                 |source, target, count| unsafe {
-                    let source = &*source.0.cast::<T>().add(source.1);
-                    let target = target.0.cast::<T>().add(target.1);
+                    let source = &*source.0.as_ptr().cast::<T>().add(source.1);
+                    let target = target.0.as_ptr().cast::<T>().add(target.1);
                     // Use 'ptd::write' to prevent the old value from being dropped since it is expected to be already
                     // dropped or uninitialized.
                     for i in 0..count {
@@ -217,7 +300,9 @@ impl<T: Clone> Maybe<Cloner> for Wrap<Cloner, T> {
 impl Formatter {
     pub fn new<T: fmt::Debug>() -> Self {
         Self {
-            format: |source, index| unsafe { format!("{:?}", &*source.cast::<T>().add(index)) },
+            format: |source, index| unsafe {
+                format!("{:?}", &*source.as_ptr().cast::<T>().add(index))
+            },
         }
     }
 }

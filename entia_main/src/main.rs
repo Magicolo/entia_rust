@@ -1,4 +1,4 @@
-use entia::{message::keep, system::Barrier, *};
+use entia::{entities::Entities, message::keep, system::Barrier, *};
 use entia_main as entia;
 
 fn main() {
@@ -108,9 +108,10 @@ fn main() {
              _query: Query<Entity>| {
                 for family in &roots {
                     // 'Err' interrupts the descent.
-                    if let Err(_child) = family.descend(
-                        |descendant| children.get(descendant).map_or(Ok(()), Err),
-                        |_| Ok(()),
+                    if let Err(_child) = family.try_descend(
+                        (),
+                        |descendant, _| children.get(descendant).map_or(Ok(()), Err),
+                        |_, _| Ok(()),
                     ) {}
                 }
                 for _child in roots
@@ -135,6 +136,24 @@ fn main() {
                 }
             },
         )
+        .add(|entities: &Entities| {
+            for root in entities.roots() {
+                let root = entities.root(root);
+                if let Some(_) = entities.parent(root) {
+                    panic!("")
+                } else if entities.has(root) {
+                } else {
+                    panic!("")
+                }
+                let mut down = 0;
+                let mut up = 0;
+                entities.descend(
+                    root,
+                    |child| down += child.index(),
+                    |child| up += child.index(),
+                );
+            }
+        })
         .add(
             |receive: Receive<OnDeath, keep::First<10>>, mut destroy: Destroy| {
                 destroy.all(receive, true)

@@ -1,8 +1,8 @@
 use crate::{
     depend::{Depend, Dependency},
     error::Result,
-    inject::{self, Get},
-    meta::Meta,
+    inject::Get,
+    meta::{Describe, Meta},
     store::Store,
     world::World,
     Inject,
@@ -16,12 +16,8 @@ use std::{
 pub struct Write<T>(Arc<Store>, PhantomData<T>);
 pub struct Read<T>(Write<T>);
 
-pub trait Resource: Sized + Default + Send + Sync + 'static {
-    fn meta() -> Meta {
-        crate::meta!(Self)
-    }
-}
-impl<T: Default + Send + Sync + 'static> Resource for T {}
+pub trait Resource: Default + Describe {}
+impl<T: Default + Describe> Resource for T {}
 
 impl<T> Write<T> {
     #[inline]
@@ -39,8 +35,8 @@ impl<R: Resource> Inject for &mut R {
     type Input = <Write<R> as Inject>::Input;
     type State = <Write<R> as Inject>::State;
 
-    fn initialize(input: Self::Input, context: inject::Context) -> Result<Self::State> {
-        <Write<_> as Inject>::initialize(input, context)
+    fn initialize(input: Self::Input, identifier: usize, world: &mut World) -> Result<Self::State> {
+        <Write<_> as Inject>::initialize(input, identifier, world)
     }
 }
 
@@ -48,10 +44,9 @@ impl<R: Resource> Inject for Write<R> {
     type Input = Option<R>;
     type State = Self;
 
-    fn initialize(input: Self::Input, mut context: inject::Context) -> Result<Self::State> {
-        let store = context
-            .world()
-            .get_or_add_resource_store(R::meta, || input.unwrap_or_else(R::default));
+    fn initialize(input: Self::Input, _: usize, world: &mut World) -> Result<Self::State> {
+        let resources = world.resources();
+        let store = unsafe { resources.get_store::<R>(|| input.unwrap_or_else(R::default)) };
         Ok(Self(store, PhantomData))
     }
 }
@@ -60,14 +55,21 @@ impl<'a, R: Resource> Get<'a> for Write<R> {
     type Item = &'a mut R;
 
     #[inline]
-    unsafe fn get(&'a mut self, _: &World) -> Self::Item {
+    unsafe fn get(&'a mut self) -> Self::Item {
         &mut *self.store().data()
     }
 }
 
 unsafe impl<T: 'static> Depend for Write<T> {
-    fn depend(&self, _: &World) -> Vec<Dependency> {
+    fn depend(&self) -> Vec<Dependency> {
         vec![Dependency::write::<T>(self.store().identifier())]
+    }
+}
+
+impl<T> Into<Read<T>> for Write<T> {
+    #[inline]
+    fn into(self) -> Read<T> {
+        Read(self)
     }
 }
 
@@ -103,8 +105,8 @@ impl<R: Resource> Inject for &R {
     type Input = <Read<R> as Inject>::Input;
     type State = <Read<R> as Inject>::State;
 
-    fn initialize(input: Self::Input, context: inject::Context) -> Result<Self::State> {
-        <Read<_> as Inject>::initialize(input, context)
+    fn initialize(input: Self::Input, identifier: usize, world: &mut World) -> Result<Self::State> {
+        <Read<_> as Inject>::initialize(input, identifier, world)
     }
 }
 
@@ -112,8 +114,8 @@ impl<R: Resource> Inject for Read<R> {
     type Input = <Write<R> as Inject>::Input;
     type State = Self;
 
-    fn initialize(input: Self::Input, context: inject::Context) -> Result<Self::State> {
-        <Write<_> as Inject>::initialize(input, context).map(Read)
+    fn initialize(input: Self::Input, identifier: usize, world: &mut World) -> Result<Self::State> {
+        <Write<_> as Inject>::initialize(input, identifier, world).map(Read)
     }
 }
 
@@ -121,13 +123,13 @@ impl<'a, R: Resource> Get<'a> for Read<R> {
     type Item = &'a R;
 
     #[inline]
-    unsafe fn get(&'a mut self, _: &World) -> Self::Item {
+    unsafe fn get(&'a mut self) -> Self::Item {
         &*self.store().data()
     }
 }
 
 unsafe impl<T: 'static> Depend for Read<T> {
-    fn depend(&self, _: &World) -> Vec<Dependency> {
+    fn depend(&self) -> Vec<Dependency> {
         vec![Dependency::read::<T>(self.store().identifier())]
     }
 }

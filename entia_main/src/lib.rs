@@ -19,6 +19,7 @@ pub mod meta;
 pub mod output;
 pub mod query;
 pub mod resource;
+pub mod resources;
 pub mod run;
 pub mod schedule;
 pub mod segment;
@@ -28,6 +29,20 @@ pub mod template;
 pub mod world;
 
 /*
+- Use this structure when defining a dependency paths:
+    - The last item may be a read or write dependency.
+    - The rest of the path is a read dependency.
+    - Example: [
+        Dependency::read(world.identifier()),
+        Dependency::read(resources.identifier()), // Resources store.
+        Dependency::read(entities.identifier()), // Entities store
+        Dependency::read(TypeId::of::<Datum>()),
+        Dependency::write(Field::of::<Datum>("a")), // Probably better to use a type here.
+    ]
+    - A helper macro could be defined:
+        - depend::write!(entities::<Datum>::{ a, b })
+        - depend::read!(store.0::<Datum>::{ a, b })
+
 - With the chunks iterators, it could be possible to add chunk operations such as 'Destroy/Add/Remove/Adopt/Reject'.
 
 - When possible, decompose systems into smaller systems to allow more parallelism:
@@ -116,11 +131,7 @@ mod test;
 
 pub mod poulah {
     use super::*;
-    use crate::{
-        depend::Depend,
-        error::Result,
-        item::{Context, Item},
-    };
+    use crate::{depend::Depend, error::Result, item::Item, segment::Segment};
     use std::marker::PhantomData;
 
     pub struct Get<I, K: ?Sized>(PhantomData<(I, K)>);
@@ -139,8 +150,15 @@ pub mod poulah {
     {
         type State = State<I::State, K>;
 
-        fn initialize(context: Context) -> Result<Self::State> {
-            Ok(State(I::initialize(context)?, PhantomData))
+        fn initialize(
+            identifier: usize,
+            segment: &Segment,
+            world: &mut World,
+        ) -> Result<Self::State> {
+            Ok(State(
+                I::initialize(identifier, segment, world)?,
+                PhantomData,
+            ))
         }
     }
 
@@ -167,7 +185,7 @@ pub mod poulah {
     }
 
     unsafe impl<D: Depend, K> Depend for State<D, K> {
-        fn depend(&self, _: &World) -> Vec<depend::Dependency> {
+        fn depend(&self) -> Vec<depend::Dependency> {
             // TODO: Adapt the dependency model to support 'Get'.
             // TODO: Modify the inner dependencies such that they become more specific with 'K'.
             todo!()

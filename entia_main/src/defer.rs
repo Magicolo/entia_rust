@@ -1,7 +1,7 @@
 use crate::{
     depend::{Depend, Dependency},
     error::Result,
-    inject::{Context, Get, Inject},
+    inject::{Get, Inject},
     resource::Write,
     world::World,
 };
@@ -29,7 +29,7 @@ pub struct State<T> {
 
 struct Resolver {
     state: Box<dyn Any + Send + Sync>,
-    resolve: fn(usize, &mut dyn Any, &mut World) -> Result,
+    resolve: fn(usize, &mut dyn Any) -> Result,
 }
 
 struct Outer {
@@ -66,8 +66,7 @@ type Triple<R: Resolve> = (R, Vec<(usize, usize)>, VecDeque<R::Item>);
 
 pub trait Resolve {
     type Item;
-    fn resolve(&mut self, items: impl FullIterator<Item = Self::Item>, world: &mut World)
-        -> Result;
+    fn resolve(&mut self, items: impl FullIterator<Item = Self::Item>) -> Result;
 }
 
 impl Default for Outer {
@@ -81,8 +80,8 @@ impl Default for Outer {
 
 impl Resolver {
     #[inline]
-    pub fn resolve(&mut self, count: usize, world: &mut World) -> Result {
-        (self.resolve)(count, self.state.as_mut(), world)
+    pub fn resolve(&mut self, count: usize) -> Result {
+        (self.resolve)(count, self.state.as_mut())
     }
 
     #[inline]
@@ -121,9 +120,8 @@ where
     type Input = R;
     type State = State<R>;
 
-    fn initialize(input: Self::Input, context: Context) -> Result<Self::State> {
-        let identifier = context.identifier();
-        let mut outer = <Write<Outer> as Inject>::initialize(None, context)?;
+    fn initialize(input: Self::Input, identifier: usize, world: &mut World) -> Result<Self::State> {
+        let mut outer = <Write<Outer> as Inject>::initialize(None, identifier, world)?;
         let inner = {
             match outer.indices.get(&identifier) {
                 Some(&index) => index,
@@ -150,11 +148,11 @@ where
                     Vec::<(usize, usize)>::new(),
                     VecDeque::<R::Item>::new(),
                 )),
-                resolve: |count, state, world| {
+                resolve: |count, state| {
                     let (state, _, items) = state
                         .downcast_mut::<Triple<R>>()
                         .expect("Invalid resolve state.");
-                    state.resolve(items.drain(..count), world)
+                    state.resolve(items.drain(..count))
                 },
             });
             index
@@ -168,7 +166,7 @@ where
         })
     }
 
-    fn resolve(state: &mut Self::State, mut context: Context) -> Result {
+    fn resolve(state: &mut Self::State) -> Result {
         let inner = &mut state.outer.inners[state.inner];
         let mut resolve = 0;
         let reserved = inner.reserved.get_mut();
@@ -187,14 +185,14 @@ where
 
         if resolve > 0 {
             // Resolve the items of this 'Defer' instance if possible without the to go through the abstract 'Resolver'.
-            resolver.resolve(items.drain(..resolve), context.world())?;
+            resolver.resolve(items.drain(..resolve))?;
         }
 
         while let Some((resolver, count)) = inner.indices.get_mut(inner.resolved) {
             match inner.resolvers.get_mut(replace(resolver, usize::MAX)) {
                 Some(resolver) => {
                     inner.resolved += 1;
-                    resolver.resolve(*count, context.world())?;
+                    resolver.resolve(*count)?;
                 }
                 // Can't make further progress; other 'Defer' instances will need to complete the resolution.
                 None => return Ok(()),
@@ -213,7 +211,7 @@ impl<'a, R: Resolve + 'static> Get<'a> for State<R> {
     type Item = (Defer<'a, R>, &'a mut R);
 
     #[inline]
-    unsafe fn get(&'a mut self, _: &World) -> Self::Item {
+    unsafe fn get(&'a mut self) -> Self::Item {
         let inner = &mut self.outer.inners[self.inner];
         let resolver = &mut inner.resolvers[self.resolver];
         let (resolver, indices, items) = resolver.state_mut::<R>().unwrap();
@@ -229,8 +227,8 @@ impl<'a, R: Resolve + 'static> Get<'a> for State<R> {
 }
 
 unsafe impl<T> Depend for State<T> {
-    fn depend(&self, world: &World) -> Vec<Dependency> {
-        self.outer.depend(world)
+    fn depend(&self) -> Vec<Dependency> {
+        self.outer.depend()
     }
 }
 

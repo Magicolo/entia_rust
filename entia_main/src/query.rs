@@ -4,10 +4,10 @@ use crate::{
     entity::Entity,
     error::Result,
     filter::Filter,
-    inject::{self, Get, Inject},
-    item::{At, Context, Item},
+    inject::{Get, Inject},
+    item::{At, Item},
     resource::{Read, Write},
-    segment::Segment,
+    segment::{Segment, Segments},
     world::World,
 };
 use std::{
@@ -21,11 +21,13 @@ use std::{
 pub struct Query<'a, I: Item, F = ()> {
     pub(crate) inner: &'a Inner<I::State, F>,
     pub(crate) entities: &'a Entities,
-    pub(crate) world: &'a World,
+    pub(crate) segments: &'a Segments,
 }
 
 pub struct State<I: Item, F> {
+    pub(crate) identifier: usize,
     pub(crate) inner: Write<Inner<I::State, F>>,
+    pub(crate) segments: Read<Segments>,
     pub(crate) entities: Read<Entities>,
 }
 
@@ -62,22 +64,25 @@ where
     type Input = ();
     type State = State<I, F>;
 
-    fn initialize(_: Self::Input, mut context: inject::Context) -> Result<Self::State> {
-        let inner = <Write<_> as Inject>::initialize(None, context.owned())?;
-        let entities = <Read<_> as Inject>::initialize(None, context.owned())?;
-        Ok(State { inner, entities })
+    fn initialize(_: Self::Input, identifier: usize, world: &mut World) -> Result<Self::State> {
+        let inner = <Write<_> as Inject>::initialize(None, identifier, world)?;
+        let segments = <Read<_> as Inject>::initialize(None, identifier, world)?;
+        let entities = <Read<_> as Inject>::initialize(None, identifier, world)?;
+        Ok(State {
+            identifier,
+            inner,
+            segments,
+            entities,
+        })
     }
 
-    fn update(state: &mut Self::State, mut context: inject::Context) -> Result {
-        let identifier = context.identifier();
-        let world = context.world();
+    fn update(state: &mut Self::State, world: &mut World) -> Result {
         let inner = state.inner.deref_mut();
-        while let Some(segment) = world.segments().get(inner.segments.len()) {
-            if F::filter(segment, world) {
-                let segment = segment.index();
-                if let Ok(item) = I::initialize(Context::new(identifier, segment, world)) {
+        while let Some(segment) = state.segments[..].get(inner.segments.len()) {
+            if F::filter(segment) {
+                if let Ok(item) = I::initialize(state.identifier, segment, world) {
                     inner.segments.push(Some(inner.states.len()));
-                    inner.states.push((item, segment));
+                    inner.states.push((item, segment.index()));
                     continue;
                 }
             }
@@ -94,11 +99,11 @@ where
     type Item = Query<'a, I, F>;
 
     #[inline]
-    unsafe fn get(&'a mut self, world: &'a World) -> Self::Item {
+    unsafe fn get(&'a mut self) -> Self::Item {
         Query {
             inner: &self.inner,
             entities: &self.entities,
-            world,
+            segments: &self.segments,
         }
     }
 }
@@ -107,13 +112,13 @@ unsafe impl<I: Item, F: 'static> Depend for State<I, F>
 where
     I::State: Send + Sync + 'static,
 {
-    fn depend(&self, world: &World) -> Vec<Dependency> {
-        let mut dependencies = self.entities.depend(world);
+    fn depend(&self) -> Vec<Dependency> {
+        let mut dependencies = self.entities.depend();
         for (item, segment) in self.inner.states.iter() {
             dependencies.push(Dependency::read::<Segment>(
-                world.segments()[*segment].identifier(),
+                self.segments[*segment].identifier(),
             ));
-            dependencies.append(&mut item.depend(world));
+            dependencies.append(&mut item.depend());
         }
         dependencies
     }
@@ -131,19 +136,17 @@ macro_rules! iterator {
             where
                 I::State: for<'b> At<'b, RangeFull>
             {
-                let segments = self.world.segments();
                 self.inner.states.iter().filter_map(|(state, segment)| {
                     // SAFETY: The 'segment' index has already been checked to be in range and the 'world.segments' vector never shrinks.
-                    let $($mut)? state = state.get(unsafe { segments.get_unchecked(*segment) })?;
+                    let $($mut)? state = state.get(unsafe { self.segments.get_unchecked(*segment) })?;
                     Some(unsafe { I::State::$at(& $($mut)? state, ..) })
                 })
             }
 
             pub fn $each<E: FnMut(<I::State as At<'a>>::$item)>(& $($mut)? self, mut each: E) {
-                let segments = self.world.segments();
                 for (state, segment) in &self.inner.states {
                     // SAFETY: The 'segment' index has already been checked to be in range and the 'world.segments' vector never shrinks.
-                    let segment = unsafe { segments.get_unchecked(*segment) };
+                    let segment = unsafe { self.segments.get_unchecked(*segment) };
                     if let Some($($mut)? state) = state.get(segment) {
                         for i in 0..segment.count() {
                             // SAFETY: The safety requirements of 'at_unchecked/_mut' guarantee that is it safe to provide an index
@@ -159,7 +162,7 @@ macro_rules! iterator {
                 let index = self.inner.segments[datum.segment_index as usize]?;
                 let (state, segment) = &self.inner.states[index];
                 // SAFETY: The 'segment' index has already been checked to be in range and the 'world.segments' vector never shrinks.
-                let segment = unsafe { self.world.segments().get_unchecked(*segment) };
+                let segment = unsafe { self.segments.get_unchecked(*segment) };
                 let $($mut)? state = state.get(segment)?;
                 // SAFETY: 'entities.get_datum' validates that the 'store_index' is valid and is therefore safe to use.
                 Some(unsafe { I::State::$at(& $($mut)? state, datum.store_index as usize) })
@@ -205,9 +208,8 @@ macro_rules! iterator {
                         break Some(item);
                     } else {
                         let (state, segment) = self.query.inner.states.get(self.segment)?;
-                        let segments = self.query.world.segments();
                         // SAFETY: The 'segment' index has already been checked to be in range and the 'world.segments' vector never shrinks..
-                        let segment = unsafe { segments.get_unchecked(*segment) };
+                        let segment = unsafe { self.query.segments.get_unchecked(*segment) };
                         self.segment += 1;
                         // The segment may be skipped.
                         if let Some(state) = state.get(segment) {

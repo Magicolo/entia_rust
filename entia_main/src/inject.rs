@@ -17,11 +17,6 @@ pub struct Injector<I: Inject> {
     _marker: PhantomData<I>,
 }
 
-pub struct Context<'a> {
-    identifier: usize,
-    world: &'a mut World,
-}
-
 pub trait Inject {
     type Input;
     type State: for<'a> Get<'a> + Depend;
@@ -31,44 +26,22 @@ pub trait Inject {
         short_type_name::<Self>()
     }
 
-    fn initialize(input: Self::Input, context: Context) -> Result<Self::State>;
+    fn initialize(input: Self::Input, identifier: usize, world: &mut World) -> Result<Self::State>;
 
     #[inline]
-    fn update(_: &mut Self::State, _: Context) -> Result {
+    fn update(_: &mut Self::State, _: &mut World) -> Result {
         Ok(())
     }
 
     #[inline]
-    fn resolve(_: &mut Self::State, _: Context) -> Result {
+    fn resolve(_: &mut Self::State) -> Result {
         Ok(())
     }
 }
 
 pub trait Get<'a> {
     type Item;
-    unsafe fn get(&'a mut self, world: &'a World) -> Self::Item;
-}
-
-impl<'a> Context<'a> {
-    #[inline]
-    pub fn new(identifier: usize, world: &'a mut World) -> Self {
-        Self { identifier, world }
-    }
-
-    #[inline]
-    pub const fn identifier(&self) -> usize {
-        self.identifier
-    }
-
-    #[inline]
-    pub fn world(&mut self) -> &mut World {
-        self.world
-    }
-
-    #[inline]
-    pub fn owned(&mut self) -> Context {
-        Context::new(self.identifier, self.world)
-    }
+    unsafe fn get(&'a mut self) -> Self::Item;
 }
 
 impl World {
@@ -81,7 +54,8 @@ impl World {
 
     pub fn injector_with<I: Inject>(&mut self, input: I::Input) -> Result<Injector<I>> {
         let identifier = identify();
-        let state = I::initialize(input, Context::new(identifier, self))?;
+        let state = I::initialize(input, identifier, self)?;
+        self.modify();
         Ok(Injector {
             identifier,
             name: I::name(),
@@ -101,35 +75,44 @@ impl<I: Inject> Injector<I> {
     }
 
     #[inline]
+    pub fn identifier(&self) -> usize {
+        self.identifier
+    }
+
+    #[inline]
     pub fn version(&self) -> usize {
         self.version
     }
 
-    pub fn update(&mut self, world: &mut World) -> Result {
+    pub fn update(&mut self, world: &mut World) -> Result<bool> {
         if self.world != world.identifier() {
             return Err(Error::WrongWorld);
+        } else if self.version == world.version() {
+            return Ok(false);
         }
 
         let mut version = self.version;
-        while version.change(world.version()) {
-            I::update(&mut self.state, Context::new(self.identifier, world))?;
+        // 'I::update' may cause more changes of the 'world.version()'. Loop until the version has stabilized.
+        for _ in 0..1_000 {
+            if version.change(world.version()) {
+                I::update(&mut self.state, world)?;
+            } else {
+                break;
+            }
         }
-        // Commit the version only if the 'I::update' is a success such that it may continue to fail on the next call if it failed on this call.
-        self.version = version;
 
-        self.dependencies = self.state.depend(world);
-        let mut conflict = Conflict::default();
-        conflict
+        if version.change(world.version()) {
+            return Err(Error::UnstableWorldVersion);
+        }
+
+        self.dependencies = self.state.depend();
+        Conflict::default()
             .detect(Scope::Inner, &self.dependencies)
-            .map_err(Error::Depend)
-    }
+            .map_err(Error::Depend)?;
 
-    pub fn resolve(&mut self, world: &mut World) -> Result {
-        if self.world != world.identifier() {
-            Err(Error::WrongWorld)
-        } else {
-            I::resolve(&mut self.state, Context::new(self.identifier, world))
-        }
+        // Only commit the new version if all updates and dependency analysis succeed.
+        self.version = version;
+        Ok(true)
     }
 
     pub fn run<T, R: FnOnce(<I::State as Get<'_>>::Item) -> T>(
@@ -138,8 +121,8 @@ impl<I: Inject> Injector<I> {
         run: R,
     ) -> Result<T> {
         self.update(world)?;
-        let value = run(unsafe { self.state.get(world) });
-        self.resolve(world)?;
+        let value = run(unsafe { self.state.get() });
+        I::resolve(&mut self.state)?;
         Ok(value)
     }
 }
@@ -148,26 +131,26 @@ impl<I: Inject, const N: usize> Inject for [I; N] {
     type Input = [I::Input; N];
     type State = [I::State; N];
 
-    fn initialize(input: Self::Input, mut context: Context) -> Result<Self::State> {
+    fn initialize(input: Self::Input, identifier: usize, world: &mut World) -> Result<Self::State> {
         let mut items = [(); N].map(|_| None);
         for (i, input) in input.into_iter().enumerate() {
-            items[i] = Some(I::initialize(input, context.owned())?);
+            items[i] = Some(I::initialize(input, identifier, world)?);
         }
         Ok(items.map(Option::unwrap))
     }
 
     #[inline]
-    fn update(state: &mut Self::State, mut context: Context) -> Result {
+    fn update(state: &mut Self::State, world: &mut World) -> Result {
         for state in state {
-            I::update(state, context.owned())?;
+            I::update(state, world)?;
         }
         Ok(())
     }
 
     #[inline]
-    fn resolve(state: &mut Self::State, mut context: Context) -> Result {
+    fn resolve(state: &mut Self::State) -> Result {
         for state in state {
-            I::resolve(state, context.owned())?;
+            I::resolve(state)?;
         }
         Ok(())
     }
@@ -177,17 +160,17 @@ impl<'a, T: Get<'a>, const N: usize> Get<'a> for [T; N] {
     type Item = [T::Item; N];
 
     #[inline]
-    unsafe fn get(&'a mut self, world: &'a World) -> Self::Item {
+    unsafe fn get(&'a mut self) -> Self::Item {
         let mut iterator = self.iter_mut();
-        [(); N].map(|_| iterator.next().unwrap().get(world))
+        [(); N].map(|_| iterator.next().unwrap().get())
     }
 }
 
 unsafe impl<T: Depend, const N: usize> Depend for [T; N] {
-    fn depend(&self, world: &World) -> Vec<Dependency> {
+    fn depend(&self) -> Vec<Dependency> {
         let mut dependencies = Vec::new();
         for item in self {
-            dependencies.append(&mut item.depend(world));
+            dependencies.append(&mut item.depend());
         }
         dependencies
     }
@@ -196,14 +179,14 @@ unsafe impl<T: Depend, const N: usize> Depend for [T; N] {
 impl<T> Inject for PhantomData<T> {
     type Input = <() as Inject>::Input;
     type State = <() as Inject>::State;
-    fn initialize(input: Self::Input, context: Context) -> Result<Self::State> {
-        <()>::initialize(input, context)
+    fn initialize(input: Self::Input, identifier: usize, world: &mut World) -> Result<Self::State> {
+        <()>::initialize(input, identifier, world)
     }
-    fn update(state: &mut Self::State, context: Context) -> Result {
-        <()>::update(state, context)
+    fn update(state: &mut Self::State, world: &mut World) -> Result {
+        <()>::update(state, world)
     }
-    fn resolve(state: &mut Self::State, context: Context) -> Result {
-        <()>::resolve(state, context)
+    fn resolve(state: &mut Self::State) -> Result {
+        <()>::resolve(state)
     }
 }
 
@@ -213,18 +196,18 @@ macro_rules! inject {
             type Input = ($($t::Input,)*);
             type State = ($($t::State,)*);
 
-            fn initialize(($($p,)*): Self::Input, mut _context: Context) -> Result<Self::State> {
-                Ok(($($t::initialize($p, _context.owned())?,)*))
+            fn initialize(($($p,)*): Self::Input, _identifier: usize, _world: &mut World) -> Result<Self::State> {
+                Ok(($($t::initialize($p, _identifier, _world)?,)*))
             }
 
-            fn update(($($p,)*): &mut Self::State, mut _context: Context) -> Result {
-                $($t::update($p, _context.owned())?;)*
+            fn update(($($p,)*): &mut Self::State, _world: &mut World) -> Result {
+                $($t::update($p, _world)?;)*
                 Ok(())
             }
 
             #[inline]
-            fn resolve(($($p,)*): &mut Self::State, mut _context: Context) -> Result {
-                $($t::resolve($p, _context.owned())?;)*
+            fn resolve(($($p,)*): &mut Self::State) -> Result {
+                $($t::resolve($p)?;)*
                 Ok(())
             }
         }
@@ -233,9 +216,9 @@ macro_rules! inject {
             type Item = ($($t::Item,)*);
 
             #[inline]
-            unsafe fn get(&'a mut self, _world: &'a World) -> Self::Item {
+            unsafe fn get(&'a mut self) -> Self::Item {
                 let ($($p,)*) = self;
-                ($($p.get(_world),)*)
+                ($($p.get(),)*)
             }
         }
     };

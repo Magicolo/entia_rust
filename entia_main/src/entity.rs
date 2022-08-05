@@ -1,7 +1,7 @@
 use crate::{
     depend::{Depend, Dependency},
     error::Result,
-    item::{At, Context, Item},
+    item::{At, Item},
     segment::Segment,
     store::Store,
     world::World,
@@ -69,8 +69,7 @@ impl Default for Entity {
 impl Item for Entity {
     type State = State;
 
-    fn initialize(context: Context) -> Result<Self::State> {
-        let segment = context.segment();
+    fn initialize(_: usize, segment: &Segment, _: &mut World) -> Result<Self::State> {
         Ok(State {
             store: segment.entity_store(),
             segment: segment.index(),
@@ -131,7 +130,7 @@ at!(
 );
 
 unsafe impl Depend for State {
-    fn depend(&self, _: &World) -> Vec<Dependency> {
+    fn depend(&self) -> Vec<Dependency> {
         vec![Dependency::read::<Entity>(self.store.identifier()).at(self.segment)]
     }
 }

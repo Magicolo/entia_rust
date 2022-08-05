@@ -3,12 +3,12 @@ use crate::{
     identify,
     meta::Meta,
 };
-use std::{any::TypeId, cell::Cell, slice::from_raw_parts_mut, sync::Arc};
+use std::{any::TypeId, cell::Cell, ptr::NonNull, slice::from_raw_parts_mut, sync::Arc};
 
 pub struct Store {
     identifier: usize,
     meta: Arc<Meta>,
-    data: Cell<*mut ()>,
+    data: Cell<NonNull<()>>,
 }
 
 // SAFETY: 'Sync' and 'Send' can be implemented for 'Store' because this crate ensures its proper usage. Other users
@@ -19,11 +19,11 @@ unsafe impl Send for Store {}
 impl Store {
     /// SAFETY: Owner of the 'Store' is responsible to track its 'count' and 'capacity' and to call 'free' whenever it is dropped.
     pub(crate) unsafe fn new(meta: Arc<Meta>, capacity: usize) -> Self {
-        let pointer = (meta.allocate)(capacity);
+        let data = Cell::new((meta.allocate)(capacity));
         Self {
             identifier: identify(),
             meta,
-            data: pointer.into(),
+            data,
         }
     }
 
@@ -33,7 +33,7 @@ impl Store {
     }
 
     #[inline]
-    pub fn meta(&self) -> &Meta {
+    pub fn meta(&self) -> &Arc<Meta> {
         &self.meta
     }
 
@@ -41,7 +41,7 @@ impl Store {
     #[inline]
     pub fn data<T: Send + Sync + 'static>(&self) -> *mut T {
         debug_assert_eq!(TypeId::of::<T>(), self.meta().identifier());
-        self.data.get().cast()
+        self.data.get().as_ptr().cast()
     }
 
     #[inline]
@@ -135,6 +135,14 @@ impl Store {
         source.copy_to_nonoverlapping(target, items.len());
     }
 
+    #[inline]
+    pub unsafe fn replace<T: Send + Sync + 'static>(&self, index: usize, item: T) -> T {
+        let pointer = self.data::<T>().add(index);
+        let value = pointer.read();
+        pointer.write(item);
+        value
+    }
+
     /// SAFETY: Both the 'source' and 'target' indices must be within the bounds of the store.
     /// The ranges 'source_index..source_index + count' and 'target_index..target_index + count' must not overlap.
     #[inline]
@@ -153,6 +161,7 @@ impl Store {
     #[inline]
     pub unsafe fn free(&self, count: usize, capacity: usize) {
         (self.meta().free)(self.data.get(), count, capacity);
+        self.data.set(NonNull::dangling());
     }
 
     pub unsafe fn resize(&self, old_capacity: usize, new_capacity: usize) {

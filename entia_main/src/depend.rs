@@ -1,4 +1,4 @@
-use crate::{error, recurse, world::World};
+use crate::{error, recurse};
 use entia_core::utility::short_type_name;
 use std::{
     any::TypeId,
@@ -29,7 +29,7 @@ TODO: There should be a way to opt out of dependency checking.
 /// implementor must declare all necessary dependencies in order to properly inform a scheduler of what it
 /// it allowed to do.
 pub unsafe trait Depend {
-    fn depend(&self, world: &World) -> Vec<Dependency>;
+    fn depend(&self) -> Vec<Dependency>;
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -123,27 +123,27 @@ impl Dependency {
 }
 
 unsafe impl<D: Depend> Depend for Option<D> {
-    fn depend(&self, world: &World) -> Vec<Dependency> {
+    fn depend(&self) -> Vec<Dependency> {
         match self {
-            Some(depend) => depend.depend(world),
+            Some(depend) => depend.depend(),
             None => Vec::new(),
         }
     }
 }
 
 unsafe impl<T> Depend for PhantomData<T> {
-    fn depend(&self, world: &World) -> Vec<Dependency> {
-        ().depend(world)
+    fn depend(&self) -> Vec<Dependency> {
+        ().depend()
     }
 }
 
 macro_rules! depend {
     ($($p:ident, $t:ident),*) => {
         unsafe impl<'a, $($t: Depend,)*> Depend for ($($t,)*) {
-            fn depend(&self, _world: &World) -> Vec<Dependency> {
+            fn depend(&self) -> Vec<Dependency> {
                 let ($($p,)*) = self;
                 let mut _dependencies = Vec::new();
-                $(_dependencies.append(&mut $p.depend(_world));)*
+                $(_dependencies.append(&mut $p.depend());)*
                 _dependencies
             }
         }

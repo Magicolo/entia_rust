@@ -5,7 +5,7 @@ use crate::{
     entity::Entity,
     error::Result,
     family::Family,
-    inject::{Context, Get, Inject},
+    inject::{Get, Inject},
     resource::{Read, Write},
     world::World,
 };
@@ -36,8 +36,10 @@ impl Inject for Families<'_> {
     type Input = ();
     type State = State;
 
-    fn initialize(_: Self::Input, mut context: Context) -> Result<Self::State> {
-        Ok(State(Read::<Entities>::initialize(None, context.owned())?))
+    fn initialize(_: Self::Input, identifier: usize, world: &mut World) -> Result<Self::State> {
+        Ok(State(Read::<Entities>::initialize(
+            None, identifier, world,
+        )?))
     }
 }
 
@@ -45,14 +47,14 @@ impl<'a> Get<'a> for State {
     type Item = Families<'a>;
 
     #[inline]
-    unsafe fn get(&'a mut self, world: &'a World) -> Self::Item {
-        Families(self.0.get(world))
+    unsafe fn get(&'a mut self) -> Self::Item {
+        Families(self.0.get())
     }
 }
 
 unsafe impl Depend for State {
-    fn depend(&self, world: &World) -> Vec<Dependency> {
-        self.0.depend(world)
+    fn depend(&self) -> Vec<Dependency> {
+        self.0.depend()
     }
 }
 
@@ -101,11 +103,7 @@ pub mod adopt {
     impl Resolve for Inner {
         type Item = Defer;
 
-        fn resolve(
-            &mut self,
-            items: impl FullIterator<Item = Self::Item>,
-            _: &mut World,
-        ) -> Result {
+        fn resolve(&mut self, items: impl FullIterator<Item = Self::Item>) -> Result {
             for defer in items {
                 match defer {
                     Defer::At(parent, child, index) => {
@@ -133,14 +131,14 @@ pub mod adopt {
         type Item = Adopt<'a>;
 
         #[inline]
-        unsafe fn get(&'a mut self, world: &'a World) -> Self::Item {
-            Adopt(self.0.get(world).0)
+        unsafe fn get(&'a mut self) -> Self::Item {
+            Adopt(self.0.get().0)
         }
     }
 
     unsafe impl Depend for State {
-        fn depend(&self, world: &World) -> Vec<Dependency> {
-            let mut dependencies = self.0.depend(world);
+        fn depend(&self) -> Vec<Dependency> {
+            let mut dependencies = self.0.depend();
             dependencies.push(Dependency::defer::<Entity>());
             dependencies
         }
@@ -192,11 +190,7 @@ pub mod reject {
     impl Resolve for Inner {
         type Item = Defer;
 
-        fn resolve(
-            &mut self,
-            items: impl FullIterator<Item = Self::Item>,
-            _: &mut World,
-        ) -> Result {
+        fn resolve(&mut self, items: impl FullIterator<Item = Self::Item>) -> Result {
             for defer in items {
                 match defer {
                     Defer::One(child) => {
@@ -224,14 +218,14 @@ pub mod reject {
         type Item = Reject<'a>;
 
         #[inline]
-        unsafe fn get(&'a mut self, world: &'a World) -> Self::Item {
-            Reject(self.0.get(world).0)
+        unsafe fn get(&'a mut self) -> Self::Item {
+            Reject(self.0.get().0)
         }
     }
 
     unsafe impl Depend for State {
-        fn depend(&self, world: &World) -> Vec<Dependency> {
-            let mut dependencies = self.0.depend(world);
+        fn depend(&self) -> Vec<Dependency> {
+            let mut dependencies = self.0.depend();
             dependencies.push(Dependency::defer::<Entity>());
             dependencies
         }

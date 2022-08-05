@@ -4,8 +4,9 @@ use crate::{
     entities::Entities,
     entity::Entity,
     error::{Error, Result},
-    inject::{Context, Get, Inject},
+    inject::{Get, Inject},
     resource::Write,
+    segment::Segments,
     world::World,
 };
 use entia_core::FullIterator;
@@ -28,6 +29,7 @@ pub struct State<R>(defer::State<Inner>, PhantomData<R>);
 struct Inner {
     set: HashSet<Entity>,
     entities: Write<Entities>,
+    segments: Write<Segments>,
 }
 
 struct Defer {
@@ -64,37 +66,34 @@ where
     type Input = ();
     type State = State<R>;
 
-    fn initialize(_: Self::Input, mut context: Context) -> Result<Self::State> {
+    fn initialize(_: Self::Input, identifier: usize, world: &mut World) -> Result<Self::State> {
         let inner = Inner {
             set: HashSet::new(),
-            entities: Write::initialize(None, context.owned())?,
+            entities: Write::initialize(None, identifier, world)?,
+            segments: Write::initialize(None, identifier, world)?,
         };
         Ok(State(
-            defer::Defer::initialize(inner, context)?,
+            defer::Defer::initialize(inner, identifier, world)?,
             PhantomData,
         ))
     }
 
-    fn resolve(State(state, _): &mut Self::State, context: Context) -> Result {
-        defer::Defer::resolve(state, context)
+    fn resolve(State(state, _): &mut Self::State) -> Result {
+        defer::Defer::resolve(state)
     }
 }
 
 impl Resolve for Inner {
     type Item = Defer;
 
-    fn resolve(
-        &mut self,
-        items: impl FullIterator<Item = Self::Item>,
-        world: &mut World,
-    ) -> Result {
+    fn resolve(&mut self, items: impl FullIterator<Item = Self::Item>) -> Result {
         fn destroy(
             index: u32,
             root: bool,
             descendants: bool,
             set: &mut HashSet<Entity>,
             entities: &mut Entities,
-            world: &mut World,
+            segments: &mut Segments,
         ) -> Result<Option<u32>> {
             // Entity index must be validated by caller.
             let datum = match entities.get_datum_at(index) {
@@ -104,7 +103,8 @@ impl Resolve for Inner {
             if set.insert(datum.entity(index)) {
                 if descendants {
                     let mut child = datum.first_child;
-                    while let Some(next) = destroy(child, false, descendants, set, entities, world)?
+                    while let Some(next) =
+                        destroy(child, false, descendants, set, entities, segments)?
                     {
                         child = next;
                     }
@@ -125,7 +125,7 @@ impl Resolve for Inner {
                     }
                 }
 
-                let segment = &mut world.segments_mut()[datum.segment_index as usize];
+                let segment = &mut segments[datum.segment_index as usize];
                 // TODO: There may be a way to batch these removals.
                 if segment.remove_at(datum.store_index as usize) {
                     let entity = *unsafe {
@@ -162,7 +162,7 @@ impl Resolve for Inner {
                     descendants,
                     &mut self.set,
                     &mut self.entities,
-                    world,
+                    &mut self.segments,
                 )?;
             }
         }
@@ -179,14 +179,14 @@ impl<'a, R> Get<'a> for State<R> {
     type Item = Destroy<'a, R>;
 
     #[inline]
-    unsafe fn get(&'a mut self, world: &'a World) -> Self::Item {
-        Destroy(self.0.get(world).0, PhantomData)
+    unsafe fn get(&'a mut self) -> Self::Item {
+        Destroy(self.0.get().0, PhantomData)
     }
 }
 
 unsafe impl Depend for State<Early> {
-    fn depend(&self, world: &World) -> Vec<Dependency> {
-        let mut dependencies = self.0.depend(world);
+    fn depend(&self) -> Vec<Dependency> {
+        let mut dependencies = self.0.depend();
         dependencies.push(Dependency::defer::<Entities>());
         dependencies.push(Dependency::defer::<Entity>());
         dependencies
@@ -194,7 +194,7 @@ unsafe impl Depend for State<Early> {
 }
 
 unsafe impl Depend for State<Late> {
-    fn depend(&self, world: &World) -> Vec<Dependency> {
-        self.0.depend(world)
+    fn depend(&self) -> Vec<Dependency> {
+        self.0.depend()
     }
 }

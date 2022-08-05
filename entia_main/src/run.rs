@@ -44,6 +44,8 @@ impl Runner {
     pub fn update(&mut self, world: &mut World) -> Result<bool> {
         if self.identifier != world.identifier() {
             return Err(Error::WrongWorld);
+        } else if self.version == world.version() {
+            return Ok(false);
         }
 
         let mut version = self.version;
@@ -58,18 +60,14 @@ impl Runner {
             }
         }
 
-        if version != world.version() {
+        if version.change(world.version()) {
             return Err(Error::UnstableWorldVersion);
         }
 
-        if self.version == version {
-            Ok(false)
-        } else {
-            self.schedule(world)?;
-            // Only commit the new version if all updates and scheduling succeed.
-            self.version = version;
-            Ok(true)
-        }
+        self.schedule()?;
+        // Only commit the new version if all updates and scheduling succeed.
+        self.version = version;
+        Ok(true)
     }
 
     pub fn run(&mut self, world: &mut World) -> Result {
@@ -91,7 +89,7 @@ impl Runner {
                         // See 'Runner::schedule'.
                         let Systems(systems) = &systems;
                         let system = unsafe { &mut *systems.add(index) };
-                        if let Err(error) = system.run(world) {
+                        if let Err(error) = system.run() {
                             if let Ok(mut guard) = result.lock() {
                                 *guard = Err(error);
                             }
@@ -102,19 +100,19 @@ impl Runner {
                         .map_or(Err(Error::MutexPoison), |result| replace(result, Ok(())))?;
                 } else {
                     for &index in block.runs.iter() {
-                        self.systems[index].run(world)?;
+                        self.systems[index].run()?;
                     }
                 }
             } else {
                 for &index in block.runs.iter() {
                     let system = &mut self.systems[index];
                     system.update(world)?;
-                    system.run(world)?;
+                    system.run()?;
                 }
             }
 
             for &index in block.resolves.iter() {
-                self.systems[index].resolve(world)?;
+                self.systems[index].resolve()?;
             }
         }
 
@@ -124,7 +122,7 @@ impl Runner {
     /// Batches the systems in blocks that can be executed in parallel using the dependencies produced by each system
     /// to ensure safety. The indices stored in the blocks are guaranteed to be unique and ordered within each block.
     /// Note that systems may be reordered if their dependencies allow it.
-    fn schedule(&mut self, world: &mut World) -> Result {
+    fn schedule(&mut self) -> Result {
         fn next(blocks: &mut [Block], conflict: &mut Conflict) -> Result {
             if let Some((head, rest)) = blocks.split_first_mut() {
                 conflict
@@ -162,7 +160,7 @@ impl Runner {
             self.blocks.push(Block {
                 runs: vec![index],
                 resolves: vec![index],
-                dependencies: system.depend(world),
+                dependencies: system.depend(),
             });
         }
 
