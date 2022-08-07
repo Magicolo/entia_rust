@@ -53,6 +53,27 @@ pub trait Template {
     fn static_count(state: &Self::State, context: CountContext) -> Result<bool>;
     fn dynamic_count(&self, state: &Self::State, context: CountContext);
     fn apply(self, state: &Self::State, context: ApplyContext);
+
+    // fn add<C: Component>(self, component: C) -> (Self, Add<C>)
+    // where
+    //     Self: Sized,
+    // {
+    //     (self, Add::new(component))
+    // }
+
+    // fn spawn<T: Template>(self, child: T) -> (Self, Spawn<T>)
+    // where
+    //     Self: Sized,
+    // {
+    //     (self, Spawn::new(child))
+    // }
+
+    // fn with<T: StaticTemplate, F: FnOnce(Family) -> T>(self, with: F) -> (Self, With<T, F>)
+    // where
+    //     Self: Sized,
+    // {
+    //     (self, With::new(with))
+    // }
 }
 
 /// SAFETY: Implementors of this trait must guarantee that the 'Template::static_count' function always succeeds.
@@ -95,7 +116,7 @@ impl<'a> DeclareContext<'a> {
     }
 
     pub fn meta<C: Component>(&mut self) -> Arc<Meta> {
-        let meta = self.metas.get_or_add::<C, _>(C::describe);
+        let meta = self.metas.get_or_add::<C>();
         self.segment_metas[self.metas_index].push(meta.clone());
         meta
     }

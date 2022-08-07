@@ -116,7 +116,7 @@ the deferred operations should have a 'Defer(Entity)' dependency on all segments
 //     pub query: Query<'a, &'a Position>,
 // }
 
-#[derive(Message, Clone, Debug)]
+#[derive(Clone, Debug)]
 enum Input {
     Left(bool),
     Right(bool),
@@ -124,19 +124,19 @@ enum Input {
     Up(bool),
 }
 
-#[derive(Component, Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 struct Position(isize, isize);
 
-#[derive(Component, Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 struct Render {
     color: [f32; 4],
     visible: bool,
 }
 
-#[derive(Component, Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 struct Controller;
 
-#[derive(Resource, Default, Clone, Debug)]
+#[derive(Default, Clone, Debug)]
 struct Time {
     pub frames: usize,
     pub total: Duration,

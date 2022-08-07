@@ -61,6 +61,29 @@ fn main() {
         })
         .unwrap();
 
+    let _ = world
+        .scheduler()
+        // .add(|mut create: Create<_>| {
+        //     create.one(
+        //         ().add(Position(vec![]))
+        //             .add(Velocity(vec![]))
+        //             .spawn(
+        //                 ().add(Frozen)
+        //                     .add(Frozen)
+        //                     .add(Frozen)
+        //                     .add(Frozen)
+        //                     .spawn(())
+        //                     .add(Frozen),
+        //             )
+        //             .spawn(())
+        //             .spawn(())
+        //             .spawn(()),
+        //     );
+        // })
+        .add(|_query: Query<Entity>, mut _adopt: Adopt| {})
+        .add(|| {})
+        .schedule()
+        .unwrap();
     let mut runner = world
         .scheduler()
         .add(create())
@@ -154,6 +177,8 @@ fn main() {
                 );
             }
         })
+        // Strangely valid things...
+        .add(|_: Query<&usize>, _: &mut bool, _: Receive<()>, _: Emit<Entity>| {})
         .add(
             |receive: Receive<OnDeath, keep::First<10>>, mut destroy: Destroy| {
                 destroy.all(receive, true)

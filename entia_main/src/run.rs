@@ -9,7 +9,7 @@ use rayon::prelude::*;
 use std::{mem::replace, sync::Mutex};
 
 pub struct Runner {
-    identifier: usize,
+    world: usize,
     version: usize,
     systems: Vec<System>,
     blocks: Vec<Block>,
@@ -25,9 +25,9 @@ struct Block {
 }
 
 impl Runner {
-    pub fn new(identifier: usize, systems: impl IntoIterator<Item = System>) -> Self {
+    pub fn new(world: usize, systems: impl IntoIterator<Item = System>) -> Self {
         Self {
-            identifier,
+            world,
             version: 0,
             systems: systems.into_iter().collect(),
             blocks: Vec::new(),
@@ -37,13 +37,21 @@ impl Runner {
     }
 
     #[inline]
+    pub const fn version(&self) -> usize {
+        self.version
+    }
+
+    #[inline]
     pub fn systems(&self) -> &[System] {
         &self.systems
     }
 
     pub fn update(&mut self, world: &mut World) -> Result<bool> {
-        if self.identifier != world.identifier() {
-            return Err(Error::WrongWorld);
+        if self.world != world.identifier() {
+            return Err(Error::WrongWorld {
+                expected: self.world,
+                actual: world.identifier(),
+            });
         } else if self.version == world.version() {
             return Ok(false);
         }
@@ -126,11 +134,11 @@ impl Runner {
         fn next(blocks: &mut [Block], conflict: &mut Conflict) -> Result {
             if let Some((head, rest)) = blocks.split_first_mut() {
                 conflict
-                    .detect(Scope::Inner, &head.dependencies)
+                    .detect(Scope::Inner, &head.dependencies, true)
                     .map_err(Error::Depend)?;
 
                 for tail in rest.iter_mut() {
-                    match conflict.detect(Scope::Outer, &tail.dependencies) {
+                    match conflict.detect(Scope::Outer, &tail.dependencies, true) {
                         Ok(_) => {
                             head.runs.append(&mut tail.runs);
                             head.dependencies.append(&mut tail.dependencies);

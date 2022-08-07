@@ -1,9 +1,12 @@
 use crate::depend;
 use std::{any::TypeId, result};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Error {
-    WrongWorld,
+    WrongWorld {
+        expected: usize,
+        actual: usize,
+    },
     WrongSegment,
     WrongState,
     WrongInput,
@@ -41,6 +44,8 @@ pub enum Error {
         store: u32,
         segment: u32,
     },
+    FailedToSchedule,
+    FailedToRun,
     Depend(depend::Error),
     All(Vec<Error>),
     UnstableWorldVersion,

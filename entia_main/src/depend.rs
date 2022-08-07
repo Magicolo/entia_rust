@@ -57,7 +57,7 @@ pub struct Conflict {
     defers: HashMap<Identifier, Has>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Error {
     UnknownConflict(Scope),
     ReadWriteConflict(Scope, String, Option<usize>),
@@ -180,13 +180,18 @@ impl Default for Has {
 }
 
 impl Conflict {
-    pub fn detect(&mut self, scope: Scope, dependencies: &Vec<Dependency>) -> Result<(), Error> {
+    pub fn detect(
+        &mut self,
+        scope: Scope,
+        dependencies: &[Dependency],
+        fill: bool,
+    ) -> Result<(), Error> {
         if scope == Scope::Outer && self.unknown {
             return Err(Error::UnknownConflict(scope));
         }
 
         for dependency in dependencies {
-            self.conflict(scope, None, dependency)?;
+            self.conflict(scope, None, dependency, fill)?;
         }
 
         Ok(())
@@ -204,6 +209,7 @@ impl Conflict {
         scope: Scope,
         at: Option<usize>,
         dependency: &Dependency,
+        fill: bool,
     ) -> Result<(), Error> {
         use self::{Dependency::*, Error::*, Scope::*};
 
@@ -216,10 +222,10 @@ impl Conflict {
                     Ok(())
                 }
             }
-            (_, At(index, dependency)) => self.conflict(scope, Some(*index), dependency),
+            (_, At(index, dependency)) => self.conflict(scope, Some(*index), dependency, fill),
             (at, Ignore(inner, dependency)) => {
                 if scope == *inner || *inner == All {
-                    self.conflict(scope, at, dependency)
+                    self.conflict(scope, at, dependency, fill)
                 } else {
                     Ok(())
                 }
@@ -229,8 +235,10 @@ impl Conflict {
                     Err(ReadWriteConflict(scope, name(), Some(at)))
                 } else if scope == Outer && has(&self.defers, *identifier, at) {
                     Err(ReadDeferConflict(scope, name(), Some(at)))
-                } else {
+                } else if fill {
                     add(&mut self.reads, *identifier, at);
+                    Ok(())
+                } else {
                     Ok(())
                 }
             }
@@ -241,13 +249,17 @@ impl Conflict {
                     Err(WriteWriteConflict(scope, name(), Some(at)))
                 } else if scope == Outer && has(&self.defers, *identifier, at) {
                     Err(WriteDeferConflict(scope, name(), Some(at)))
-                } else {
+                } else if fill {
                     add(&mut self.writes, *identifier, at);
+                    Ok(())
+                } else {
                     Ok(())
                 }
             }
             (Some(at), Defer(identifier, _)) => {
-                add(&mut self.defers, *identifier, at);
+                if fill {
+                    add(&mut self.defers, *identifier, at);
+                }
                 Ok(())
             }
             (None, Read(identifier, name)) => {
@@ -255,8 +267,10 @@ impl Conflict {
                     Err(ReadWriteConflict(scope, name(), None))
                 } else if scope == Outer && has_any(&self.defers, *identifier) {
                     Err(ReadDeferConflict(scope, name(), None))
-                } else {
+                } else if fill {
                     add_all(&mut self.reads, *identifier);
+                    Ok(())
+                } else {
                     Ok(())
                 }
             }
@@ -267,13 +281,17 @@ impl Conflict {
                     Err(WriteWriteConflict(scope, name(), None))
                 } else if scope == Outer && has_any(&self.defers, *identifier) {
                     Err(WriteDeferConflict(scope, name(), None))
-                } else {
+                } else if fill {
                     add_all(&mut self.writes, *identifier);
+                    Ok(())
+                } else {
                     Ok(())
                 }
             }
             (None, Defer(identifier, _)) => {
-                add_all(&mut self.defers, *identifier);
+                if fill {
+                    add_all(&mut self.defers, *identifier);
+                }
                 Ok(())
             }
         }

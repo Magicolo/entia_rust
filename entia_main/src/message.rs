@@ -144,9 +144,8 @@ pub mod emit {
         type Input = ();
         type State = State<M>;
 
-        fn initialize(_: Self::Input, world: &mut World) -> Result<Self::State> {
-            // TODO: Context is wrongly built.
-            Ok(State(Write::initialize(None, 0, world)?))
+        fn initialize(_: Self::Input, identifier: usize, world: &mut World) -> Result<Self::State> {
+            Ok(State(Write::initialize(None, identifier, world)?))
         }
 
         fn depend(state: &Self::State) -> Vec<Dependency> {
@@ -249,9 +248,9 @@ pub mod receive {
         type Input = ();
         type State = State<M, K>;
 
-        fn initialize(_: Self::Input, world: &mut World) -> Result<Self::State> {
+        fn initialize(_: Self::Input, identifier: usize, world: &mut World) -> Result<Self::State> {
             // TODO: Context is wrongly built.
-            let mut inner = Write::<Inner<M>>::initialize(None, 0, world)?;
+            let mut inner = Write::<Inner<M>>::initialize(None, identifier, world)?;
             let queue = {
                 let index = inner.queues.len();
                 inner.queues.push(Queue {

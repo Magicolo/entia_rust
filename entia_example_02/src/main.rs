@@ -1,42 +1,46 @@
 // #![feature(custom_inner_attributes)]
 // #![feature(proc_macro_hygiene)]
 
-use entia::meta::{module::Member, Meta, Module, Structure};
+// use std::marker::PhantomData;
 
-#[entia::meta::meta]
-pub mod b {
-    pub struct A;
-    pub enum G {
-        A,
-        B(usize, char, ()),
-        C { a: isize, b: bool, c: A },
-    }
+// use entia::meta::{module::Member, Meta, Module, Structure};
 
-    pub const D: usize = 123;
-    // use super::*;
+// #[entia::meta::meta]
+// pub mod b {
+//     pub struct A;
+//     pub enum G {
+//         A,
+//         B(usize, char, ()),
+//         C { a: isize, b: bool, c: A },
+//     }
 
-    // pub struct C;
+//     pub const D: usize = 123;
+//     // use super::*;
 
-    fn e() {}
-    pub(crate) fn h(a: u8, b: &A, c: &mut G) {}
-    pub(crate) fn i<'a: 'b, 'b>(a: &'a A, b: &'b A) -> &'b A {
-        a
-    }
+//     // pub struct C;
 
-    // pub(crate) trait F {}
-}
+//     fn e() {}
+//     pub(crate) fn h(a: u8, b: &A, c: &mut G) {}
+//     pub(crate) fn i<'a: 'b, 'b>(a: &'a A, b: &'b A) -> &'b A {
+//         a
+//     }
 
-fn main() {
-    let a = <b::A as Meta>::meta();
-    let a = &b::META.members[0];
-    let a = match &b::META {
-        Module { members, .. } => match &members[..] {
-            [Member::Structure(structure), b, c] => match structure() {
-                Structure { name: "A", .. } => true,
-                _ => false,
-            },
-            _ => false,
-        },
-        _ => false,
-    };
-}
+//     // pub(crate) trait F {}
+// }
+
+// fn main() {
+//     let a = <b::A as Meta>::meta();
+//     let a = &b::META.members[0];
+//     let a = match &b::META {
+//         Module { members, .. } => match &members[..] {
+//             [Member::Structure(structure), b, c] => match structure() {
+//                 Structure { name: "A", .. } => true,
+//                 _ => false,
+//             },
+//             _ => false,
+//         },
+//         _ => false,
+//     };
+// }
+
+fn main() {}

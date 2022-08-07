@@ -86,7 +86,10 @@ impl<I: Inject> Injector<I> {
 
     pub fn update(&mut self, world: &mut World) -> Result<bool> {
         if self.world != world.identifier() {
-            return Err(Error::WrongWorld);
+            return Err(Error::WrongWorld {
+                expected: self.world,
+                actual: world.identifier(),
+            });
         } else if self.version == world.version() {
             return Ok(false);
         }
@@ -107,7 +110,7 @@ impl<I: Inject> Injector<I> {
 
         self.dependencies = self.state.depend();
         Conflict::default()
-            .detect(Scope::Inner, &self.dependencies)
+            .detect(Scope::Inner, &self.dependencies, true)
             .map_err(Error::Depend)?;
 
         // Only commit the new version if all updates and dependency analysis succeed.

@@ -294,14 +294,24 @@ where
 impl<T: Template> Resolve for Outer<T> {
     type Item = Defer<T>;
 
+    fn pre(&mut self) -> Result {
+        self.entities.resolve();
+        for segment_indices in self.inner.segment_indices.iter() {
+            self.segments[segment_indices.segment].resolve();
+        }
+        Ok(())
+    }
+
+    fn post(&mut self) -> Result {
+        for (index, datum) in self.inner.initialize.drain(..) {
+            self.entities.initialize(index, datum);
+        }
+        Ok(())
+    }
+
     fn resolve(&mut self, items: impl FullIterator<Item = Self::Item>) -> Result {
         let inner = &mut self.inner;
         let segments = &mut self.segments;
-        self.entities.resolve();
-
-        for segment_indices in inner.segment_indices.iter() {
-            segments[segment_indices.segment].resolve();
-        }
 
         for defer in items {
             let multiplier = defer.entity_instances.len() / defer.entity_indices.len();
@@ -331,11 +341,6 @@ impl<T: Template> Resolve for Outer<T> {
                 &mut inner.initialize,
             );
         }
-
-        for (index, datum) in inner.initialize.drain(..) {
-            self.entities.initialize(index, datum);
-        }
-
         Ok(())
     }
 }

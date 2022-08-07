@@ -100,6 +100,26 @@ pub mod adopt {
         }
     }
 
+    impl Inject for Adopt<'_> {
+        type Input = ();
+        type State = State;
+
+        fn initialize(_: Self::Input, identifier: usize, world: &mut World) -> Result<Self::State> {
+            let entities = Write::<Entities>::initialize(None, identifier, world)?;
+            let inner = Inner(entities);
+            let defer = defer::Defer::<Inner>::initialize(inner, identifier, world)?;
+            Ok(State(defer))
+        }
+
+        fn update(State(state): &mut Self::State, world: &mut World) -> Result {
+            defer::Defer::<Inner>::update(state, world)
+        }
+
+        fn resolve(State(state): &mut Self::State) -> Result {
+            defer::Defer::<Inner>::resolve(state)
+        }
+    }
+
     impl Resolve for Inner {
         type Item = Defer;
 
@@ -184,6 +204,26 @@ pub mod reject {
         #[inline]
         pub fn all(&mut self, parent: impl Into<Entity>) {
             self.0.one(Defer::All(parent.into()));
+        }
+    }
+
+    impl Inject for Reject<'_> {
+        type Input = ();
+        type State = State;
+
+        fn initialize(_: Self::Input, identifier: usize, world: &mut World) -> Result<Self::State> {
+            let entities = Write::<Entities>::initialize(None, identifier, world)?;
+            let inner = Inner(entities);
+            let defer = defer::Defer::<Inner>::initialize(inner, identifier, world)?;
+            Ok(State(defer))
+        }
+
+        fn update(State(state): &mut Self::State, world: &mut World) -> Result {
+            defer::Defer::<Inner>::update(state, world)
+        }
+
+        fn resolve(State(state): &mut Self::State) -> Result {
+            defer::Defer::<Inner>::resolve(state)
         }
     }
 

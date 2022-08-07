@@ -25,13 +25,13 @@ pub struct Metas {
 pub struct Meta {
     identifier: TypeId,
     name: &'static str,
-    pub(super) allocate: fn(usize) -> NonNull<()>,
-    pub(super) free: unsafe fn(NonNull<()>, usize, usize),
-    pub(super) copy: unsafe fn((NonNull<()>, usize), (NonNull<()>, usize), usize),
-    pub(super) drop: unsafe fn(NonNull<()>, usize, usize),
-    pub(super) defaulter: Option<Defaulter>,
-    pub(super) cloner: Option<Cloner>,
-    pub(super) formatter: Option<Formatter>,
+    pub(crate) allocate: fn(usize) -> NonNull<()>,
+    pub(crate) free: unsafe fn(NonNull<()>, usize, usize),
+    pub(crate) copy: unsafe fn((NonNull<()>, usize), (NonNull<()>, usize), usize),
+    pub(crate) drop: unsafe fn(NonNull<()>, usize, usize),
+    pub(crate) defaulter: Option<Defaulter>,
+    pub(crate) cloner: Option<Cloner>,
+    pub(crate) formatter: Option<Formatter>,
     modules: HashMap<TypeId, Box<Module>>,
 }
 
@@ -40,18 +40,18 @@ pub trait Describe: Send + Sync + 'static {
 }
 
 #[derive(Debug, Clone)]
-struct Defaulter {
+pub(crate) struct Defaulter {
     pub default: unsafe fn(target: (NonNull<()>, usize), count: usize),
 }
 
 #[derive(Debug, Clone)]
-struct Cloner {
+pub(crate) struct Cloner {
     pub clone: unsafe fn(source: (NonNull<()>, usize), target: (NonNull<()>, usize), count: usize),
     pub fill: unsafe fn(source: (NonNull<()>, usize), target: (NonNull<()>, usize), count: usize),
 }
 
 #[derive(Debug, Clone)]
-struct Formatter {
+pub(crate) struct Formatter {
     pub format: unsafe fn(source: NonNull<()>, index: usize) -> String,
 }
 
@@ -120,7 +120,7 @@ impl Deref for Metas {
 impl Meta {
     // To increase safe usage of 'Meta' and 'Store', type 'T' is required to be 'Send + Sync', therefore it is
     // impossible to hold an instance of 'Meta' that does not describe a 'Send + Sync' type.
-    pub fn new<T: 'static, I: IntoIterator<Item = Box<Module>>>(modules: I) -> Self {
+    pub fn new<T: Send + Sync + 'static, I: IntoIterator<Item = Box<Module>>>(modules: I) -> Self {
         let mut meta = Self {
             identifier: TypeId::of::<T>(),
             name: type_name::<T>(),
