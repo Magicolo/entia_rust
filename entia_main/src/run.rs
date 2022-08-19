@@ -63,7 +63,11 @@ impl Run {
 }
 
 impl Runner {
-    pub fn new<I: IntoIterator<Item = System>>(systems: I, world: &mut World) -> Result<Self> {
+    pub fn new<I: IntoIterator<Item = System>>(
+        parallelism: usize,
+        systems: I,
+        world: &mut World,
+    ) -> Result<Self> {
         Ok(Self {
             world: world.identifier(),
             version: 0,
@@ -74,6 +78,7 @@ impl Runner {
             runs: vec![],
             conflict: Conflict::default(),
             pool: ThreadPoolBuilder::new()
+                .num_threads(parallelism)
                 .build()
                 .map_err(|_| Error::FailedToSchedule)?,
         })
@@ -90,20 +95,20 @@ impl Runner {
     }
 
     pub fn update(&mut self, world: &mut World) -> Result<bool> {
-        let success = self.success.get_mut();
+        let success = *self.success.get_mut();
         if self.world != world.identifier() {
             return Err(Error::WrongWorld {
                 expected: self.world,
                 actual: world.identifier(),
             });
-        } else if *success && self.version == world.version() {
+        } else if success && self.version == world.version() {
             return Ok(false);
         }
 
-        let mut version = self.version;
+        let mut version = if success { self.version } else { 0 };
         // 'I::schedule' may cause more changes of the 'world.version()'. Loop until the version has stabilized.
         for _ in 0..1_000 {
-            if success.change(true) | version.change(world.version()) {
+            if version.change(world.version()) {
                 self.runs = self
                     .systems
                     .iter_mut()
@@ -132,8 +137,9 @@ impl Runner {
 
         self.schedule()?;
 
-        // Only commit the new version if scheduling and dependency analysis succeed.
+        // Only commit the new version and restore `success` if scheduling and dependency analysis succeed.
         self.version = version;
+        *self.success.get_mut() = true;
         Ok(true)
     }
 
@@ -180,10 +186,16 @@ impl Runner {
     /// - This mechanism can not produce a dead lock as long as the `blockers` are all indices `< index` (which they are by design).
     /// Since runs are executed in order, for any index that is reserved, all indices smaller than that index represent a run that
     /// is done or in progress (not idle) which is important to prevent a spin loop when waiting for `blockers` to finish.
+    /// - This mechanism has a lookahead that is equal to the degree of parallelism which is currently the number of logical CPUs by default.
     fn progress(index: &AtomicUsize, runs: &Vec<Mutex<(Run, State)>>, control: bool) -> bool {
         loop {
+            // `Ordering` doesn't matter here, only atomicity.
             let index = index.fetch_add(1, Ordering::Relaxed);
             let mut guard = match runs.get(index) {
+                // This `lock` may only contend if the run is a blocker of another run that took the lock before it. This is highly unlikely
+                // because this thread would've had to pause after the `fetch_add` and before the `lock` while another thread would've then
+                // gone through `fetch_add` itself up to its blocker `lock`. Even if this happened, the other thread detects this
+                // state and drops the lock immediately.
                 Some(run) => match run.lock() {
                     Ok(guard) => guard,
                     Err(_) => return false,
@@ -196,13 +208,24 @@ impl Runner {
                 // Sanity check. If this is not the case, this thread might spin loop and consume too much CPU.
                 debug_assert!(blocker < index);
 
+                // This `lock` may contend on 2 things:
+                // - Other threads are also trying to determine if this blocker is done. Since the lock is held for so little time, this
+                // should not be worth optimizing.
+                // - The blocker thread is executing. This contention exists by design to free up CPU resources while the execution completes.
                 match runs[blocker].lock() {
-                    Ok(guard) if guard.1.done == control => done += 1,
-                    Ok(guard) if guard.1.error.is_some() => return false,
+                    Ok(guard) if guard.1.done == control => {
+                        drop(guard);
+                        done += 1
+                    }
+                    Ok(guard) if guard.1.error.is_some() => {
+                        drop(guard);
+                        return false;
+                    }
                     Ok(guard) => {
                         // When the lock is taken, it is expected that `done == control` except if a blocker thread paused
-                        // after `index.fetch_add` and before `run.lock`. Since this should happen very rarely and is a very transient
-                        // state, `yield_now` is used to give the other thread the chance to acquire the lock.
+                        // after `index.fetch_add` and before `run.lock`. Even though this is a spin lock, since this should happen
+                        // very rarely and is a very transient state, it is considered to be ok.
+                        // - `yield_now` is used to give the running thread a chance to acquire the lock.
                         // - Drop the guard before yielding to allow the blocker thread to acquire the lock with fewer context switches.
                         drop(guard);
                         yield_now();
@@ -212,7 +235,7 @@ impl Runner {
             }
 
             let state = as_mut(&mut guard.1.state);
-            match (guard.0.run)(state) {
+            match guard.0.run(state) {
                 Ok(_) => guard.1.done = control,
                 Err(error) => {
                     guard.1.error = Some(error);

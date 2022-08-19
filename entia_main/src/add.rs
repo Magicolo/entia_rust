@@ -179,27 +179,6 @@ impl<'a, T: LeafTemplate + 'static, R: 'static> At<'a, usize> for State<T, R> {
     }
 }
 
-// impl<T: LeafTemplate, R> At<usize> for AddChunk<'_, T, R> {
-//     type Ref<'a> = Add<'a, T, R> where Self: 'a;
-//     type Mut<'a> = Self::Ref<'a> where Self: 'a;
-
-//     fn at<'a>(&'a self, index: usize) -> Option<Self::Ref<'a>> {
-//         todo!()
-//     }
-
-//     unsafe fn at_unchecked<'a>(&'a self, index: usize) -> Self::Ref<'a> {
-//         todo!()
-//     }
-
-//     fn at_mut<'a>(&'a mut self, index: usize) -> Option<Self::Mut<'a>> {
-//         todo!()
-//     }
-
-//     unsafe fn at_unchecked_mut<'a>(&'a mut self, index: usize) -> Self::Mut<'a> {
-//         todo!()
-//     }
-// }
-
 impl<T: Template> Resolve for Outer<T> {
     type Item = Defer<T>;
 

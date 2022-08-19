@@ -58,6 +58,10 @@ impl Scheduler<'_> {
     }
 
     pub fn schedule(self) -> Result<Runner> {
+        self.schedule_with(0)
+    }
+
+    pub fn schedule_with(self, parallelism: usize) -> Result<Runner> {
         let mut schedules = Vec::new();
         let mut errors = Vec::new();
 
@@ -70,7 +74,7 @@ impl Scheduler<'_> {
 
         match Error::All(errors).flatten(true) {
             Some(error) => Err(error),
-            None => Runner::new(schedules, self.world),
+            None => Runner::new(parallelism, schedules, self.world),
         }
     }
 

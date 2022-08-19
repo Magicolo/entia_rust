@@ -30,12 +30,12 @@ pub struct State<I: Item, F> {
 }
 
 pub struct Inner<S, F> {
-    pub(crate) segments: Vec<Option<usize>>,
+    pub(crate) segments: Vec<usize>,
     pub(crate) states: Vec<(S, usize)>,
     _marker: PhantomData<fn(F)>,
 }
 
-impl<S: Send + Sync + 'static, F: 'static> Default for Inner<S, F> {
+impl<S, F: 'static> Default for Inner<S, F> {
     fn default() -> Self {
         Self {
             segments: Vec::new(),
@@ -55,8 +55,7 @@ where
     }
 }
 
-unsafe impl<I: Item + 'static, F: Filter + 'static> Inject for Query<'_, I, F>
-{
+unsafe impl<I: Item + 'static, F: Filter + 'static> Inject for Query<'_, I, F> {
     type Input = ();
     type State = State<I, F>;
 
@@ -76,14 +75,14 @@ unsafe impl<I: Item + 'static, F: Filter + 'static> Inject for Query<'_, I, F>
                         segment,
                         schedule
                             .context()
-                            .map(move |state| &mut state.inner.deref_mut().states[index].0),
+                            .map(move |state| &mut state.inner.states[index].0),
                     ) {
-                        inner.segments.push(Some(index));
+                        inner.segments.push(index);
                         inner.states.push((item, segment.index()));
                         continue;
                     }
                 }
-                inner.segments.push(None);
+                inner.segments.push(usize::MAX);
             }
         });
         Ok(State {
@@ -105,8 +104,7 @@ unsafe impl<I: Item + 'static, F: Filter + 'static> Inject for Query<'_, I, F>
     }
 }
 
-impl<'a, I: Item, F: 'static> Get<'a> for State<I, F>
-{
+impl<'a, I: Item, F: 'static> Get<'a> for State<I, F> {
     type Item = Query<'a, I, F>;
 
     #[inline]
@@ -154,8 +152,8 @@ macro_rules! iterator {
 
             pub fn $get<E: Into<Entity>>(& $($mut)? self, entity: E) -> Option<<I::State as At<'_>>::$item> {
                 let datum = self.entities.get_datum(entity.into())?;
-                let index = self.inner.segments[datum.segment_index as usize]?;
-                let (state, segment) = &self.inner.states[index];
+                let index = self.inner.segments[datum.segment_index as usize];
+                let (state, segment) = &self.inner.states.get(index)?;
                 // SAFETY: The 'segment' index has already been checked to be in range and the 'world.segments' vector never shrinks.
                 let segment = unsafe { self.segments.get_unchecked(*segment) };
                 let $($mut)? state = state.get(segment)?;
