@@ -1,19 +1,18 @@
 use crate::{
     defer::{self, Resolve},
-    depend::{Depend, Dependency},
+    depend::Dependency,
     entities::{Datum, Entities},
     entity::Entity,
     error::Result,
     family::template::{EntityIndices, Families, Family, SegmentIndices},
-    inject::{Get, Inject},
+    inject::{Adapt, Context, Get, Inject},
     meta::Metas,
     resource::Write,
     segment::Segments,
     template::{ApplyContext, CountContext, DeclareContext, InitializeContext, Spawn, Template},
-    world::World,
 };
 use entia_core::FullIterator;
-use std::{collections::HashMap, iter::empty};
+use std::collections::HashMap;
 
 pub struct Create<'a, T: Template + 'a> {
     defer: defer::Defer<'a, Outer<T>>,
@@ -26,6 +25,7 @@ pub struct State<T: Template>(defer::State<Outer<T>>);
 struct Outer<T: Template> {
     inner: Inner<T>,
     entities: Write<Entities>,
+    metas: Write<Metas>,
     segments: Write<Segments>,
 }
 
@@ -206,17 +206,22 @@ impl<T: Template> Inner<T> {
     }
 }
 
-impl<T: Template + Send + Sync + 'static> Inject for Create<'_, T>
+unsafe impl<T: Template + Send + Sync + 'static> Inject for Create<'_, T>
 where
     T::State: Send + Sync,
 {
     type Input = ();
     type State = State<T>;
 
-    fn initialize(_: Self::Input, identifier: usize, world: &mut World) -> Result<Self::State> {
-        let entities = Write::initialize(None, identifier, world)?;
-        let mut metas = Write::<Metas>::initialize(None, identifier, world)?;
-        let mut segments = Write::<Segments>::initialize(None, identifier, world)?;
+    fn initialize<A: Adapt<Self::State>>(
+        _: Self::Input,
+        mut context: Context<Self::State, A>,
+    ) -> Result<Self::State> {
+        let entities =
+            Write::initialize(None, context.map(|state| &mut state.0.as_mut().entities))?;
+        let mut metas = Write::initialize(None, context.map(|state| &mut state.0.as_mut().metas))?;
+        let mut segments =
+            Write::initialize(None, context.map(|state| &mut state.0.as_mut().segments))?;
         let mut segment_metas = Vec::new();
         let initial = Spawn::<T>::declare(DeclareContext::new(0, &mut segment_metas, &mut metas));
         let mut segment_to_index = HashMap::new();
@@ -271,23 +276,18 @@ where
         };
         let outer = Outer {
             inner,
+            metas,
             entities,
             segments,
         };
-        Ok(State(defer::Defer::initialize(outer, identifier, world)?))
+        Ok(State(defer::Defer::initialize(
+            outer,
+            context.map(|state| &mut state.0),
+        )?))
     }
 
-    fn resolve(State(state): &mut Self::State) -> Result {
-        defer::Defer::resolve(state)?;
-
-        // If entities have successfully been reserved at run time, no item would've been deferred, so resolution is triggered manually.
-        let outer = state.as_mut();
-        if outer.inner.initialize.len() > 0 {
-            outer.resolve(empty())?;
-        }
-
-        debug_assert_eq!(outer.inner.initialize.len(), 0);
-        Ok(())
+    fn depend(State(state): &Self::State) -> Vec<Dependency> {
+        defer::Defer::depend(state)
     }
 }
 
@@ -343,6 +343,17 @@ impl<T: Template> Resolve for Outer<T> {
         }
         Ok(())
     }
+
+    fn depend(&self) -> Vec<Dependency> {
+        todo!()
+        // let mut dependencies = self.0.depend();
+        // let state = self.0.as_ref();
+        // dependencies.push(Dependency::defer::<Entities>());
+        // for indices in state.inner.segment_indices.iter() {
+        //     dependencies.push(Dependency::defer::<Entity>().at(indices.segment));
+        // }
+        // dependencies
+    }
 }
 
 fn apply<T: Template>(
@@ -380,17 +391,5 @@ impl<'a, T: Template + 'static> Get<'a> for State<T> {
             entities: &outer.entities,
             segments: &outer.segments,
         }
-    }
-}
-
-unsafe impl<T: Template + 'static> Depend for State<T> {
-    fn depend(&self) -> Vec<Dependency> {
-        let mut dependencies = self.0.depend();
-        let state = self.0.as_ref();
-        dependencies.push(Dependency::defer::<Entities>());
-        for indices in state.inner.segment_indices.iter() {
-            dependencies.push(Dependency::defer::<Entity>().at(indices.segment));
-        }
-        dependencies
     }
 }

@@ -1,4 +1,4 @@
-use crate::recurse;
+use crate::tuples;
 
 pub trait Append<T> {
     type Target: Chop<T, Rest = Self>;
@@ -35,4 +35,4 @@ macro_rules! append {
     };
 }
 
-recurse!(append);
+tuples!(append);

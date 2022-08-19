@@ -8,5 +8,6 @@ edition = "2021"
 
 [dependencies]
 entia = { path = "../" }
+entia_macro = { path = "../entia_macro" }
 piston = "*"
 piston_window = "*"

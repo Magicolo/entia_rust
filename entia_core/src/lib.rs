@@ -25,4 +25,4 @@ pub use crate::{
     slice::Slice,
     unzip::Unzip,
 };
-pub(crate) use entia_macro::recurse_16 as recurse;
+pub(crate) use entia_macro::tuples_16 as tuples;

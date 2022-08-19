@@ -1,4 +1,4 @@
-use crate::{recurse, serializer::*};
+use crate::{serializer::*, tuples};
 use std::{
     marker::PhantomData,
     ops::{Bound, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive},
@@ -202,4 +202,4 @@ macro_rules! tuple {
     };
 }
 
-recurse!(tuple);
+tuples!(tuple);

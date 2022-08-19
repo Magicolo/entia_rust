@@ -1,4 +1,4 @@
-use crate::{deserializer::*, recurse};
+use crate::{deserializer::*, tuples};
 use std::marker::PhantomData;
 
 pub trait Deserialize {
@@ -285,4 +285,4 @@ macro_rules! tuple {
     };
 }
 
-recurse!(tuple);
+tuples!(tuple);

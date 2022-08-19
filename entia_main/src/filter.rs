@@ -1,6 +1,6 @@
 use std::{any::TypeId, marker::PhantomData};
 
-use crate::{recurse, segment::Segment};
+use crate::{segment::Segment, tuples};
 
 pub trait Filter {
     fn filter(segment: &Segment) -> bool;
@@ -39,4 +39,4 @@ macro_rules! filter {
         };
     }
 
-recurse!(filter);
+tuples!(filter);

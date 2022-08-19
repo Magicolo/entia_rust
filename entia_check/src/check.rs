@@ -1,4 +1,4 @@
-use crate::{generate::State, recurse, shrink::Shrink, Generate};
+use crate::{generate::State, shrink::Shrink, tuples, Generate};
 use fastrand::Rng;
 
 pub trait Check<T> {
@@ -90,4 +90,4 @@ macro_rules! tuple {
     };
 }
 
-recurse!(tuple);
+tuples!(tuple);

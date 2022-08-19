@@ -5,9 +5,9 @@ use crate::{
     error::{Error, Result},
     family::template::{EntityIndices, Family, SegmentIndices},
     meta::{Meta, Metas},
-    recurse,
     segment::{Segment, Segments},
     store::Store,
+    tuples,
 };
 use entia_core::Marker;
 use std::{collections::HashMap, marker::PhantomData, sync::Arc};
@@ -671,4 +671,4 @@ macro_rules! template {
     };
 }
 
-recurse!(template);
+tuples!(template);

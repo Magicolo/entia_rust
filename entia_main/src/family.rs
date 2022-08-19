@@ -1,13 +1,12 @@
 use crate::{
-    depend::{Depend, Dependency},
+    depend::Dependency,
     entities::Entities,
     entity::{self, Entity},
     error,
-    inject::Inject,
+    inject::{Adapt, Context, Inject},
     item::{At, Item},
     resource,
     segment::Segment,
-    world::World,
 };
 use entia_core::FullIterator;
 use std::{
@@ -143,15 +142,31 @@ impl fmt::Debug for Family<'_> {
 impl Item for Family<'_> {
     type State = State;
 
-    fn initialize(
-        identifier: usize,
+    // fn initialize(
+    //     identifier: usize,
+    //     segment: &Segment,
+    //     world: &mut World,
+    // ) -> Result<Self::State, error::Error> {
+    //     Ok(State(
+    //         <Entity as Item>::initialize(identifier, segment, world)?,
+    //         resource::Read::<Entities>::initialize(None, identifier, world)?,
+    //     ))
+    // }
+
+    fn initialize<A: Adapt<Self::State>>(
         segment: &Segment,
-        world: &mut World,
-    ) -> Result<Self::State, error::Error> {
+        mut context: Context<Self::State, A>,
+    ) -> error::Result<Self::State> {
         Ok(State(
-            <Entity as Item>::initialize(identifier, segment, world)?,
-            resource::Read::<Entities>::initialize(None, identifier, world)?,
+            Entity::initialize(segment, context.map(|state| &mut state.0))?,
+            resource::Read::initialize(None, context.map(|state| &mut state.1))?,
         ))
+    }
+
+    fn depend(state: &Self::State) -> Vec<Dependency> {
+        let mut dependencies = <Entity as Item>::depend(&state.0);
+        dependencies.append(&mut resource::Read::<Entities>::depend(&state.1));
+        dependencies
     }
 }
 
@@ -212,14 +227,6 @@ at!(
     RangeTo<usize>,
     RangeToInclusive<usize>,
 );
-
-unsafe impl Depend for State {
-    fn depend(&self) -> Vec<Dependency> {
-        let mut dependencies = self.0.depend();
-        dependencies.append(&mut self.1.depend());
-        dependencies
-    }
-}
 
 pub mod template {
     use super::*;

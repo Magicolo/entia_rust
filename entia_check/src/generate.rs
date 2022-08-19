@@ -1,6 +1,6 @@
 use crate::{
     any::Any, array::Array, collect::Collect, filter::Filter, filter_map::FilterMap,
-    flatten::Flatten, keep::Keep, map::Map, primitive::Range, recurse, sample::Sample,
+    flatten::Flatten, keep::Keep, map::Map, primitive::Range, tuples, sample::Sample,
     shrink::Shrink, size::Size,
 };
 use fastrand::Rng;
@@ -279,4 +279,4 @@ macro_rules! tuple {
     };
 }
 
-recurse!(tuple);
+tuples!(tuple);

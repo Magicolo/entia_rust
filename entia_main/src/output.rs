@@ -1,6 +1,6 @@
 use crate::{
     error::{Error, Result},
-    recurse,
+    tuples,
 };
 
 pub trait IntoOutput {
@@ -41,4 +41,4 @@ macro_rules! output {
     };
 }
 
-recurse!(output);
+tuples!(output);

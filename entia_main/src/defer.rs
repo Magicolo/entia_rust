@@ -1,11 +1,9 @@
 use crate::{
-    depend::{Depend, Dependency},
+    depend::Dependency,
     error::{Error, Result},
     identify,
-    inject::{Get, Inject},
-    inject2::{Inject2, Run2},
+    inject::{Adapt, Context, Get, Inject},
     resource::Write,
-    world::World,
 };
 use entia_core::FullIterator;
 use std::{
@@ -13,7 +11,6 @@ use std::{
     collections::{HashMap, VecDeque},
     iter::once,
     marker::PhantomData,
-    mem::replace,
     sync::atomic::{AtomicUsize, Ordering},
 };
 
@@ -81,6 +78,9 @@ struct Inner {
 pub trait Resolve {
     type Item;
 
+    fn resolve(&mut self, items: impl FullIterator<Item = Self::Item>) -> Result;
+    fn depend(&self) -> Vec<Dependency>;
+
     #[inline]
     fn pre(&mut self) -> Result {
         Ok(())
@@ -89,12 +89,6 @@ pub trait Resolve {
     #[inline]
     fn post(&mut self) -> Result {
         Ok(())
-    }
-
-    fn resolve(&mut self, items: impl FullIterator<Item = Self::Item>) -> Result;
-
-    fn depend(&self) -> Vec<Dependency> {
-        todo!("Should be mandatory.");
     }
 }
 
@@ -187,15 +181,132 @@ impl<R: Resolve> Defer<'_, R> {
     }
 }
 
-unsafe impl<R: Resolve + Send + Sync + 'static> Inject2 for Defer<'_, R>
+unsafe impl<R: Resolve + Send + Sync + 'static> Inject for Defer<'_, R>
 where
     R::Item: Send + Sync + 'static,
 {
     type Input = R;
     type State = State<R>;
 
-    fn initialize(input: Self::Input, identifier: usize, world: &mut World) -> Result<Self::State> {
-        let mut outer = <Write<Outer> as Inject>::initialize(None, identifier, world)?;
+    // fn initialize(input: Self::Input, identifier: usize, world: &mut World) -> Result<Self::State> {
+    //     let mut outer = <Write<Outer> as Inject>::initialize(None, identifier, world)?;
+    //     let inner = {
+    //         match outer.indices.get(&identifier) {
+    //             Some(&index) => index,
+    //             None => {
+    //                 let index = outer.inners.len();
+    //                 outer.indices.insert(identifier, index);
+    //                 outer.inners.push(Inner {
+    //                     identifier: identify(),
+    //                     reserved: AtomicUsize::new(0),
+    //                     resolved: 0,
+    //                     indices: Vec::new(),
+    //                     resolvers: Vec::new(),
+    //                 });
+    //                 index
+    //             }
+    //         }
+    //     };
+
+    //     let resolver = {
+    //         let inner = &mut outer.inners[inner];
+    //         let index = inner.resolvers.len();
+    //         inner.resolvers.push(Resolver::new(input));
+    //         index
+    //     };
+
+    //     Ok(State {
+    //         outer,
+    //         inner,
+    //         resolver,
+    //         _marker: PhantomData,
+    //     })
+    // }
+
+    // fn schedule(state: &mut Self::State, _: &mut World) -> Vec<Run<Self::State>> {
+    //     let outer = &state.outer;
+    //     let inner = &outer.inners[state.inner];
+    //     // Accumulate the dependencies of previous resolvers (including self) because some of their items may be resolved by
+    //     // this run. This assumes that 'schedule' is called in the same order as 'initialize'.
+    //     let dependencies = inner.resolvers[..=state.resolver]
+    //         .iter()
+    //         .enumerate()
+    //         // TODO: Combine these in a way that remove inner conflicts between resolvers (keep the stricter dependencies).
+    //         .flat_map(|(index, resolver)| {
+    //             once(Dependency::write::<Inner>(inner.identifier).at(index))
+    //                 .chain(resolver.depend())
+    //         });
+    //     vec![Run::new(
+    //         |state: &mut Self::State| {
+    //             let inner = &mut state.outer.inners[state.inner];
+    //             let reserved = inner.reserved.get_mut();
+    //             let resolvers = inner.resolvers.len();
+    //             let (previous, current) = inner.resolvers.split_at_mut(state.resolver);
+    //             let (resolver, indices, items) = current[0].state_mut::<R>()?;
+
+    //             resolver.pre()?;
+    //             // This check is fine since the only way there could be pending items in `inner.indices` is if they were waiting on
+    //             // another item to be resolved, thus only a defer with `items.len() > 0` could be blocking and will be responsible
+    //             // for resolving the pending items. Having no `items` also means that `indices` is empty.
+    //             if items.len() == 0 {
+    //                 resolver.post()?;
+    //                 return Ok(());
+    //             } else if resolvers <= 1 {
+    //                 resolver.resolve(items.drain(..))?;
+    //                 resolver.post()?;
+    //                 return Ok(());
+    //             }
+
+    //             let mut resolve = 0;
+    //             inner.indices.resize(*reserved, (usize::MAX, 0));
+
+    //             for (index, count) in indices.drain(..) {
+    //                 if index == inner.resolved {
+    //                     inner.resolved += 1;
+    //                     resolve += count;
+    //                 } else {
+    //                     inner.indices[index] = (state.resolver, count);
+    //                 }
+    //             }
+
+    //             if resolve > 0 {
+    //                 // Resolve the items of this 'Defer' instance if possible without going through the abstract 'Resolver'.
+    //                 resolver.resolve(items.drain(..resolve))?;
+    //             }
+
+    //             while let Some((index, count)) = inner.indices.get_mut(inner.resolved) {
+    //                 match previous.get_mut(*index) {
+    //                     Some(resolver) => {
+    //                         *index = usize::MAX;
+    //                         inner.resolved += 1;
+    //                         resolver.resolve(*count)?;
+    //                     }
+    //                     // Can't make further progress; other 'Defer' instances will need to complete the resolution.
+    //                     None => return Ok(()),
+    //                 }
+    //             }
+
+    //             // The only way to get here is if all deferred items have been properly resolved.
+    //             debug_assert_eq!(*reserved, inner.resolved);
+    //             for resolver in previous {
+    //                 resolver.post()?;
+    //             }
+    //             resolver.post()?;
+
+    //             *reserved = 0;
+    //             inner.resolved = 0;
+    //             Ok(())
+    //         },
+    //         dependencies,
+    //     )]
+    // }
+
+    fn initialize<A: Adapt<Self::State>>(
+        input: Self::Input,
+        mut context: Context<Self::State, A>,
+    ) -> Result<Self::State> {
+        let mut outer = Write::<Outer>::initialize(None, context.map(|state| &mut state.outer))?;
+        let identifier = context.identifier();
         let inner = {
             match outer.indices.get(&identifier) {
                 Some(&index) => index,
@@ -221,179 +332,95 @@ where
             index
         };
 
+        context.schedule(|state, mut schedule| {
+            let outer = &state.outer;
+            let inner = &outer.inners[state.inner];
+            // Accumulate the dependencies of previous resolvers (including self) because some of their items may be resolved by
+            // this run. This assumes that 'schedule' is called in the same order as 'initialize'.
+            let dependencies = inner.resolvers[..=state.resolver]
+                .iter()
+                .enumerate()
+                // TODO: Combine these in a way that remove inner conflicts between resolvers (keep the stricter dependencies).
+                .flat_map(|(index, resolver)| {
+                    once(Dependency::write::<Inner>(inner.identifier).at(index))
+                        .chain(resolver.depend())
+                });
+            schedule.post(
+                |state| {
+                    let inner = &mut state.outer.inners[state.inner];
+                    let reserved = inner.reserved.get_mut();
+                    let resolvers = inner.resolvers.len();
+                    let (previous, current) = inner.resolvers.split_at_mut(state.resolver);
+                    let (resolver, indices, items) = current[0].state_mut::<R>()?;
+
+                    resolver.pre()?;
+                    // This check is fine since the only way there could be pending items in `inner.indices` is if they were waiting on
+                    // another item to be resolved, thus only a defer with `items.len() > 0` could be blocking and will be responsible
+                    // for resolving the pending items. Having no `items` also means that `indices` is empty.
+                    if items.len() == 0 {
+                        resolver.post()?;
+                        return Ok(());
+                    } else if resolvers <= 1 {
+                        resolver.resolve(items.drain(..))?;
+                        resolver.post()?;
+                        return Ok(());
+                    }
+
+                    let mut resolve = 0;
+                    inner.indices.resize(*reserved, (usize::MAX, 0));
+
+                    for (index, count) in indices.drain(..) {
+                        if index == inner.resolved {
+                            inner.resolved += 1;
+                            resolve += count;
+                        } else {
+                            inner.indices[index] = (state.resolver, count);
+                        }
+                    }
+
+                    if resolve > 0 {
+                        // Resolve the items of this 'Defer' instance if possible without going through the abstract 'Resolver'.
+                        resolver.resolve(items.drain(..resolve))?;
+                    }
+
+                    while let Some((index, count)) = inner.indices.get_mut(inner.resolved) {
+                        match previous.get_mut(*index) {
+                            Some(resolver) => {
+                                *index = usize::MAX;
+                                inner.resolved += 1;
+                                resolver.resolve(*count)?;
+                            }
+                            // Can't make further progress; other 'Defer' instances will need to complete the resolution.
+                            None => return Ok(()),
+                        }
+                    }
+
+                    // The only way to get here is if all deferred items have been properly resolved.
+                    debug_assert_eq!(*reserved, inner.resolved);
+                    for resolver in previous {
+                        resolver.post()?;
+                    }
+                    resolver.post()?;
+
+                    *reserved = 0;
+                    inner.resolved = 0;
+                    Ok(())
+                },
+                dependencies,
+            );
+        });
+
         Ok(State {
             outer,
             inner,
             resolver,
             _marker: PhantomData,
         })
-    }
-
-    fn schedule(state: &mut Self::State, _: &mut World) -> Vec<Run2<Self::State>> {
-        let outer = &state.outer;
-        let inner = &outer.inners[state.inner];
-        // Accumulate the dependencies of previous resolvers (including self) because some of their items may be resolved by
-        // this run. This assumes that 'schedule' is called in the same order as 'initialize'.
-        let dependencies = inner.resolvers[..=state.resolver]
-            .iter()
-            .enumerate()
-            // TODO: Combine these in a way that remove inner conflicts between resolvers (keep the stricter dependencies).
-            .flat_map(|(index, resolver)| {
-                once(Dependency::write::<Inner>(inner.identifier).at(index))
-                    .chain(resolver.depend())
-            })
-            .collect();
-        vec![Run2::new(
-            |state: &mut Self::State| {
-                let inner = &mut state.outer.inners[state.inner];
-                let reserved = inner.reserved.get_mut();
-                let resolvers = inner.resolvers.len();
-                let (previous, current) = inner.resolvers.split_at_mut(state.resolver);
-                let (resolver, indices, items) = current[0].state_mut::<R>()?;
-
-                resolver.pre()?;
-                // This check is fine since the only way there could be pending items in `inner.indices` is if they were waiting on
-                // another item to be resolved, thus only a defer with `items.len() > 0` could be blocking and will be responsible
-                // for resolving the pending items. Having no `items` also means that `indices` is empty.
-                if items.len() == 0 {
-                    resolver.post()?;
-                    return Ok(());
-                } else if resolvers <= 1 {
-                    resolver.resolve(items.drain(..))?;
-                    resolver.post()?;
-                    return Ok(());
-                }
-
-                let mut resolve = 0;
-                inner.indices.resize(*reserved, (usize::MAX, 0));
-
-                for (index, count) in indices.drain(..) {
-                    if index == inner.resolved {
-                        inner.resolved += 1;
-                        resolve += count;
-                    } else {
-                        inner.indices[index] = (state.resolver, count);
-                    }
-                }
-
-                if resolve > 0 {
-                    // Resolve the items of this 'Defer' instance if possible without going through the abstract 'Resolver'.
-                    resolver.resolve(items.drain(..resolve))?;
-                }
-
-                while let Some((index, count)) = inner.indices.get_mut(inner.resolved) {
-                    match previous.get_mut(*index) {
-                        Some(resolver) => {
-                            *index = usize::MAX;
-                            inner.resolved += 1;
-                            resolver.resolve(*count)?;
-                        }
-                        // Can't make further progress; other 'Defer' instances will need to complete the resolution.
-                        None => return Ok(()),
-                    }
-                }
-
-                // The only way to get here is if all deferred items have been properly resolved.
-                debug_assert_eq!(*reserved, inner.resolved);
-                for resolver in previous {
-                    resolver.post()?;
-                }
-                resolver.post()?;
-
-                *reserved = 0;
-                inner.resolved = 0;
-                Ok(())
-            },
-            dependencies,
-        )]
     }
 
     fn depend(state: &Self::State) -> Vec<Dependency> {
         let inner = &state.outer.inners[state.inner];
         vec![Dependency::write::<Inner>(inner.identifier).at(state.resolver)]
-    }
-}
-
-impl<R: Resolve + Send + Sync + 'static> Inject for Defer<'_, R>
-where
-    R::Item: Send + Sync + 'static,
-{
-    type Input = R;
-    type State = State<R>;
-
-    fn initialize(input: Self::Input, identifier: usize, world: &mut World) -> Result<Self::State> {
-        let mut outer = <Write<Outer> as Inject>::initialize(None, identifier, world)?;
-        let inner = {
-            match outer.indices.get(&identifier) {
-                Some(&index) => index,
-                None => {
-                    let index = outer.inners.len();
-                    outer.indices.insert(identifier, index);
-                    outer.inners.push(Inner {
-                        identifier: identify(),
-                        reserved: AtomicUsize::new(0),
-                        resolved: 0,
-                        indices: Vec::new(),
-                        resolvers: Vec::new(),
-                    });
-                    index
-                }
-            }
-        };
-
-        let resolver = {
-            let inner = &mut outer.inners[inner];
-            let index = inner.resolvers.len();
-            inner.resolvers.push(Resolver::new(input));
-            index
-        };
-
-        Ok(State {
-            outer,
-            inner,
-            resolver,
-            _marker: PhantomData,
-        })
-    }
-
-    fn resolve(state: &mut Self::State) -> Result {
-        let inner = &mut state.outer.inners[state.inner];
-        let mut resolve = 0;
-        let reserved = inner.reserved.get_mut();
-        let resolver = &mut inner.resolvers[state.resolver];
-        let (resolver, indices, items) = resolver.state_mut::<R>()?;
-        inner.indices.resize(*reserved, (usize::MAX, 0));
-
-        for (index, count) in indices.drain(..) {
-            if index == inner.resolved {
-                inner.resolved += 1;
-                resolve += count;
-            } else {
-                inner.indices[index] = (state.resolver, count);
-            }
-        }
-
-        if resolve > 0 {
-            // Resolve the items of this 'Defer' instance if possible without the to go through the abstract 'Resolver'.
-            resolver.resolve(items.drain(..resolve))?;
-        }
-
-        while let Some((resolver, count)) = inner.indices.get_mut(inner.resolved) {
-            match inner.resolvers.get_mut(replace(resolver, usize::MAX)) {
-                Some(resolver) => {
-                    inner.resolved += 1;
-                    resolver.resolve(*count)?;
-                }
-                // Can't make further progress; other 'Defer' instances will need to complete the resolution.
-                None => return Ok(()),
-            }
-        }
-
-        // The only way to get here is if all deferred items have been properly resolved.
-        debug_assert_eq!(*reserved, inner.resolved);
-        *reserved = 0;
-        inner.resolved = 0;
-        Ok(())
     }
 }
 
@@ -415,12 +442,6 @@ impl<'a, R: Resolve + 'static> Get<'a> for State<R> {
             },
             resolver,
         )
-    }
-}
-
-unsafe impl<T> Depend for State<T> {
-    fn depend(&self) -> Vec<Dependency> {
-        self.outer.depend()
     }
 }
 

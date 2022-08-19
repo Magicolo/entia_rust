@@ -1,14 +1,13 @@
 use crate::{
-    depend::{Depend, Dependency},
+    depend::Dependency,
     entities::Entities,
     entity::Entity,
     error::Result,
     filter::Filter,
-    inject::{Get, Inject},
+    inject::{Adapt, Context, Get, Inject},
     item::{At, Item},
     resource::{Read, Write},
     segment::{Segment, Segments},
-    world::World,
 };
 use std::{
     any::type_name,
@@ -25,7 +24,6 @@ pub struct Query<'a, I: Item, F = ()> {
 }
 
 pub struct State<I: Item, F> {
-    pub(crate) identifier: usize,
     pub(crate) inner: Write<Inner<I::State, F>>,
     pub(crate) segments: Read<Segments>,
     pub(crate) entities: Read<Entities>,
@@ -57,44 +55,57 @@ where
     }
 }
 
-impl<I: Item, F: Filter + 'static> Inject for Query<'_, I, F>
-where
-    I::State: Send + Sync + 'static,
+unsafe impl<I: Item + 'static, F: Filter + 'static> Inject for Query<'_, I, F>
 {
     type Input = ();
     type State = State<I, F>;
 
-    fn initialize(_: Self::Input, identifier: usize, world: &mut World) -> Result<Self::State> {
-        let inner = <Write<_> as Inject>::initialize(None, identifier, world)?;
-        let segments = <Read<_> as Inject>::initialize(None, identifier, world)?;
-        let entities = <Read<_> as Inject>::initialize(None, identifier, world)?;
+    fn initialize<A: Adapt<Self::State>>(
+        _: Self::Input,
+        mut context: Context<Self::State, A>,
+    ) -> Result<Self::State> {
+        let inner = Write::initialize(None, context.map(|state| &mut state.inner))?;
+        let segments = Read::initialize(None, context.map(|state| &mut state.segments))?;
+        let entities = Read::initialize(None, context.map(|state| &mut state.entities))?;
+        context.schedule(|state, mut schedule| {
+            let inner = state.inner.deref_mut();
+            while let Some(segment) = state.segments[..].get(inner.segments.len()) {
+                if F::filter(segment) {
+                    let index = inner.states.len();
+                    if let Ok(item) = I::initialize(
+                        segment,
+                        schedule
+                            .context()
+                            .map(move |state| &mut state.inner.deref_mut().states[index].0),
+                    ) {
+                        inner.segments.push(Some(index));
+                        inner.states.push((item, segment.index()));
+                        continue;
+                    }
+                }
+                inner.segments.push(None);
+            }
+        });
         Ok(State {
-            identifier,
             inner,
             segments,
             entities,
         })
     }
 
-    fn update(state: &mut Self::State, world: &mut World) -> Result {
-        let inner = state.inner.deref_mut();
-        while let Some(segment) = state.segments[..].get(inner.segments.len()) {
-            if F::filter(segment) {
-                if let Ok(item) = I::initialize(state.identifier, segment, world) {
-                    inner.segments.push(Some(inner.states.len()));
-                    inner.states.push((item, segment.index()));
-                    continue;
-                }
-            }
-            inner.segments.push(None);
+    fn depend(state: &Self::State) -> Vec<Dependency> {
+        let mut dependencies = Read::<Entities>::depend(&state.entities);
+        for (item, segment) in state.inner.states.iter() {
+            dependencies.push(Dependency::read::<Segment>(
+                state.segments[*segment].identifier(),
+            ));
+            dependencies.append(&mut I::depend(item));
         }
-        Ok(())
+        dependencies
     }
 }
 
 impl<'a, I: Item, F: 'static> Get<'a> for State<I, F>
-where
-    I::State: Send + Sync + 'static,
 {
     type Item = Query<'a, I, F>;
 
@@ -105,22 +116,6 @@ where
             entities: &self.entities,
             segments: &self.segments,
         }
-    }
-}
-
-unsafe impl<I: Item, F: 'static> Depend for State<I, F>
-where
-    I::State: Send + Sync + 'static,
-{
-    fn depend(&self) -> Vec<Dependency> {
-        let mut dependencies = self.entities.depend();
-        for (item, segment) in self.inner.states.iter() {
-            dependencies.push(Dependency::read::<Segment>(
-                self.segments[*segment].identifier(),
-            ));
-            dependencies.append(&mut item.depend());
-        }
-        dependencies
     }
 }
 

@@ -1,9 +1,10 @@
 use crate::{
-    depend::{Depend, Dependency},
+    depend::Dependency,
     error::{Error, Result},
     identify,
-    inject::{Get, Inject},
+    inject::{Adapt, Cast, Context, Get, Inject},
     output::IntoOutput,
+    run::{as_mut, Run},
     world::World,
 };
 use entia_core::{utility::short_type_name, Call};
@@ -11,16 +12,14 @@ use std::{
     any::Any,
     fmt::{self},
     result,
+    sync::Arc,
 };
 
 pub struct System {
     identifier: usize,
     pub(crate) name: String,
-    state: Box<dyn Any + Send>,
-    run: Box<dyn Fn(&mut (dyn Any + Send)) -> Result + Send + Sync>,
-    update: Box<dyn Fn(&mut dyn Any, &mut World) -> Result>,
-    resolve: Box<dyn Fn(&mut dyn Any) -> Result>,
-    depend: Box<dyn Fn(&dyn Any) -> Vec<Dependency>>,
+    pub(crate) state: Arc<dyn Any + Send + Sync>,
+    schedule: Box<dyn FnMut(&mut dyn Any, &mut World) -> Vec<Run>>,
 }
 
 pub trait IntoSystem<M = ()> {
@@ -29,35 +28,6 @@ pub trait IntoSystem<M = ()> {
 }
 
 impl System {
-    pub fn new<'a, T: Send + Sync + 'static>(
-        name: String,
-        initialize: impl FnOnce(usize) -> Result<T>,
-        run: impl Fn(&'a mut T) -> Result + Send + Sync + 'static,
-        update: impl Fn(&mut T, &mut World) -> Result + 'static,
-        resolve: impl Fn(&mut T) -> Result + 'static,
-        depend: impl Fn(&T) -> Vec<Dependency> + 'static,
-    ) -> Result<Self> {
-        let identifier = identify();
-        Ok(Self {
-            name,
-            identifier,
-            state: Box::new(initialize(identifier)?),
-            run: Box::new(move |state| {
-                // let state = unsafe { state.downcast_mut::<T>().unwrap_unchecked() };
-                unsafe { run(&mut *(state as *mut _ as *mut T)) }
-            }),
-            update: Box::new(move |state, world| {
-                update(unsafe { state.downcast_mut().unwrap_unchecked() }, world)
-            }),
-            resolve: Box::new(move |state| {
-                resolve(unsafe { state.downcast_mut().unwrap_unchecked() })
-            }),
-            depend: Box::new(move |state| {
-                depend(unsafe { state.downcast_ref().unwrap_unchecked() })
-            }),
-        })
-    }
-
     #[inline]
     pub const fn identifier(&self) -> usize {
         self.identifier
@@ -68,24 +38,9 @@ impl System {
         &self.name
     }
 
-    #[inline]
-    pub fn run(&mut self) -> Result {
-        (self.run)(&mut self.state)
-    }
-
-    #[inline]
-    pub fn update(&mut self, world: &mut World) -> Result {
-        (self.update)(&mut self.state, world)
-    }
-
-    #[inline]
-    pub fn resolve(&mut self) -> Result {
-        (self.resolve)(&mut self.state)
-    }
-
-    #[inline]
-    pub fn depend(&mut self) -> Vec<Dependency> {
-        (self.depend)(&self.state)
+    pub fn schedule(&mut self, world: &mut World) -> Vec<Run> {
+        let state = as_mut(&mut self.state);
+        (self.schedule)(state, world)
     }
 }
 
@@ -133,23 +88,74 @@ impl<M, S: IntoSystem<M>, E: Into<Error>> IntoSystem<(M, S)> for result::Result<
 impl<'a, I: Inject, O: IntoOutput, C: Call<I, O> + Send + Sync + 'static> IntoSystem<(I, O, C)>
     for C
 where
-    I::State: Get<'a, Item = I> + Send + Sync + 'static,
+    I::State: Get<'a, Item = I>,
 {
     type Input = I::Input;
 
     fn system(self, input: I::Input, world: &mut World) -> Result<System> {
-        System::new(
-            I::name(),
-            |identifier| {
-                let state = I::initialize(input, identifier, world)?;
-                world.modify();
-                Ok((self, state))
-            },
-            |(run, state)| run.call(unsafe { state.get() }).output(),
-            |(_, state), world| I::update(state, world),
-            |(_, state)| I::resolve(state),
-            |(_, state)| state.depend(),
-        )
+        let mut schedules = Vec::new();
+        let cast = Cast::<(I::State, C)>::new();
+        let map = cast.clone().map(|(state, _)| state);
+        let context = Context::new(map.clone(), &mut schedules, world);
+        let identifier = context.identifier();
+        let state = I::initialize(input, context)?;
+        world.modify();
+
+        Ok(System {
+            identifier,
+            name: short_type_name::<I>(),
+            state: Arc::new((state, self)),
+            schedule: Box::new(move |state, world| match map.adapt(state) {
+                Some(state) => {
+                    let mut pre = Vec::new();
+                    let mut post = Vec::new();
+
+                    for schedule in schedules.iter_mut() {
+                        let runs = schedule(state, world);
+                        pre.extend(runs.0);
+                        post.extend(runs.1);
+                    }
+
+                    let cast = cast.clone();
+                    pre.push(Run::new(move |state| match cast.adapt(state) {
+                            Some((state, run)) => {
+                                let state = unsafe { &mut *(state as *mut I::State) };
+                                run.call(unsafe { state.get() }).output()
+                            }
+                            None => Ok(()),
+                        }, I::depend(state)));
+                    pre.extend(post);
+                    pre
+                }
+                None => vec![],
+            }),
+        })
+
+        // let identifier = identify();
+        // match I::initialize(input, identifier, world) {
+        //     Ok(state) => {
+        //         let state = Arc::new(state);
+        //         let run = Arc::new(self);
+        //         Ok(System::new(identifier, I::name(), move |world| {
+        //             let outer = cast(&state);
+        //             once(Run::new(
+        //                 {
+        //                     let state = state.clone();
+        //                     let run = run.clone();
+        //                     move |_| {
+        //                         let state = cast(&state);
+        //                         let run = cast(&run);
+        //                         run.call(unsafe { state.get() }).output()
+        //                     }
+        //                 },
+        //                 I::depend(outer),
+        //             ))
+        //             .chain(schedule::<I>(&state, world))
+        //             .collect()
+        //         }))
+        //     }
+        //     Err(error) => Err(error),
+        // }
     }
 }
 
@@ -159,13 +165,11 @@ impl IntoSystem for Barrier {
     type Input = ();
 
     fn system(self, _: Self::Input, _: &mut World) -> Result<System> {
-        System::new(
-            "barrier".into(),
-            |_| Ok(()),
-            |_| Ok(()),
-            |_, _| Ok(()),
-            |_| Ok(()),
-            |_| vec![Dependency::Unknown],
-        )
+        Ok(System {
+            identifier: identify(),
+            name: "barrier".into(),
+            state: Arc::new(()),
+            schedule: Box::new(|_, _| vec![Run::new(|_| Ok(()), [Dependency::Unknown])]),
+        })
     }
 }

@@ -22,7 +22,7 @@ pub use crate::{
     generate::{FullGenerate, Generate, IntoGenerate},
     shrink::Shrink,
 };
-pub(crate) use entia_macro::recurse_16 as recurse;
+pub(crate) use entia_macro::{tuples_16 as tuples, tuples_with_16 as tuples_with};
 use primitive::Range;
 use size::Size;
 use std::{

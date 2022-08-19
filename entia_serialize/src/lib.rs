@@ -6,7 +6,7 @@ pub mod node;
 pub mod serialize;
 pub mod serializer;
 
-pub(crate) use entia_macro::recurse_16 as recurse;
+pub(crate) use entia_macro::tuples_16 as tuples;
 
 pub struct Boba {
     a: bool,

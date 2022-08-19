@@ -2,13 +2,13 @@ use entia_core::FullIterator;
 
 use crate::{
     defer::{self, Resolve},
-    depend::{Depend, Dependency},
+    depend::Dependency,
     destroy::{Early, Late},
     entities::{Datum, Entities},
     entity::Entity,
     error::{Error, Result},
     family::template::{EntityIndices, SegmentIndices},
-    inject::Inject,
+    inject::{Adapt, Context, Inject},
     item::{At, Item},
     meta::Metas,
     resource,
@@ -40,7 +40,7 @@ pub struct Add<'a, T: LeafTemplate + 'a, R = Early> {
     world: &'a World,
     _marker: PhantomData<R>,
 }
-pub struct State<T: Template, R>(defer::State<Outer<T>>, PhantomData<R>);
+pub struct State<T: Template, R>(defer::State<Outer<T>>, PhantomData<fn(R)>);
 
 struct Outer<T: Template> {
     inner: Inner<T>,
@@ -70,84 +70,93 @@ impl<T: LeafTemplate> Add<'_, T, Early> {
 
 impl<T: LeafTemplate> Add<'_, T, Late> {
     pub fn one(&mut self, template: T) {
+        // TODO: Defer to end of frame by using a special 'OnEnd' message.
         // self.defer.one();
     }
 }
 
-impl<T: LeafTemplate + Send + Sync + 'static, R: 'static> Item for Add<'_, T, R>
-where
-    State<T, R>: Depend,
-{
+impl<T: LeafTemplate + Send + Sync + 'static, R: 'static> Item for Add<'_, T, R> {
     type State = State<T, R>;
 
-    fn initialize(identifier: usize, segment: &Segment, world: &mut World) -> Result<Self::State> {
-        let entities = resource::Write::<Entities>::initialize(None, identifier, world)?;
-        let mut segments = resource::Write::<Segments>::initialize(None, identifier, world)?;
-        let mut metas = resource::Write::<Metas>::initialize(None, identifier, world)?;
-        let mut segment_metas = vec![vec![]];
-        let initial = T::declare(DeclareContext::new(0, &mut segment_metas, &mut metas));
-        let entity_meta = metas.entity();
-        let metas = segment
-            .component_stores()
-            .map(|store| Arc::clone(store.meta()))
-            .chain(segment_metas[0].drain(..));
-        // let types = segment_metas[0]
-        //     .iter()
-        //     .map(|meta| meta.identifier())
-        //     .chain(segment.component_types().iter().copied())
-        //     .collect::<Vec<_>>();
-        // let segment_add = segments.get_or_add_with(types).index();
-        let segment_add = segments.get_or_add(entity_meta, metas).index();
-        let metas_to_segment = [(0, 0)].into_iter().collect::<HashMap<_, _>>();
-        let mut segment_indices = vec![SegmentIndices {
-            segment: segment_add,
-            count: 0,
-            index: 0,
-            store: 0,
-        }];
-        let state = T::initialize(
-            initial,
-            InitializeContext::new(0, &segment_indices, &metas_to_segment, &segments),
-        );
+    // fn initialize(identifier: usize, segment: &Segment, world: &mut World) -> Result<Self::State> {
+    //     let entities = resource::Write::<Entities>::initialize(None, identifier, world)?;
+    //     let mut segments = resource::Write::<Segments>::initialize(None, identifier, world)?;
+    //     let mut metas = resource::Write::<Metas>::initialize(None, identifier, world)?;
+    //     let mut segment_metas = vec![vec![]];
+    //     let initial = T::declare(DeclareContext::new(0, &mut segment_metas, &mut metas));
+    //     let entity_meta = metas.entity();
+    //     let metas = segment
+    //         .component_stores()
+    //         .map(|store| Arc::clone(store.meta()))
+    //         .chain(segment_metas[0].drain(..));
+    //     // let types = segment_metas[0]
+    //     //     .iter()
+    //     //     .map(|meta| meta.identifier())
+    //     //     .chain(segment.component_types().iter().copied())
+    //     //     .collect::<Vec<_>>();
+    //     // let segment_add = segments.get_or_add_with(types).index();
+    //     let segment_add = segments.get_or_add(entity_meta, metas).index();
+    //     let metas_to_segment = [(0, 0)].into_iter().collect::<HashMap<_, _>>();
+    //     let mut segment_indices = vec![SegmentIndices {
+    //         segment: segment_add,
+    //         count: 0,
+    //         index: 0,
+    //         store: 0,
+    //     }];
+    //     let state = T::initialize(
+    //         initial,
+    //         InitializeContext::new(0, &segment_indices, &metas_to_segment, &segments),
+    //     );
 
-        let mut entity_indices = Vec::new();
-        if T::static_count(
-            &state,
-            CountContext::new(&mut segment_indices, &mut None, &mut entity_indices),
-        )? {
-        } else {
-            return Err(Error::StaticCountMustBeTrue);
-        }
+    //     let mut entity_indices = Vec::new();
+    //     if T::static_count(
+    //         &state,
+    //         CountContext::new(&mut segment_indices, &mut None, &mut entity_indices),
+    //     )? {
+    //     } else {
+    //         return Err(Error::StaticCountMustBeTrue);
+    //     }
 
-        ApplyContext::new(
-            (0, 0),
-            &[],
-            &[EntityIndices {
-                segment: segment_add,
-                offset: 0,
-                parent: None,
-                next_sibling: None,
-                previous_sibling: None,
-            }],
-            &segment_indices,
-            &mut vec![],
-        );
-        let inner = Inner {
-            segments: (segment.index(), segment_add),
-            segment_indices: segment_indices
-                .into_iter()
-                .next()
-                .expect("Expected segment indices."),
-            entity_indices: entity_indices
-                .into_iter()
-                .next()
-                .expect("Expected entity indices."),
-            initial_state: state,
-            initialize: Vec::new(),
-        };
-        let outer = Outer { inner, entities };
-        let defer = defer::Defer::<Outer<T>>::initialize(outer, identifier, world)?;
-        Ok(State(defer, PhantomData))
+    //     ApplyContext::new(
+    //         (0, 0),
+    //         &[],
+    //         &[EntityIndices {
+    //             segment: segment_add,
+    //             offset: 0,
+    //             parent: None,
+    //             next_sibling: None,
+    //             previous_sibling: None,
+    //         }],
+    //         &segment_indices,
+    //         &mut vec![],
+    //     );
+    //     let inner = Inner {
+    //         segments: (segment.index(), segment_add),
+    //         segment_indices: segment_indices
+    //             .into_iter()
+    //             .next()
+    //             .expect("Expected segment indices."),
+    //         entity_indices: entity_indices
+    //             .into_iter()
+    //             .next()
+    //             .expect("Expected entity indices."),
+    //         initial_state: state,
+    //         initialize: Vec::new(),
+    //     };
+    //     let outer = Outer { inner, entities };
+    //     let defer = defer::Defer::<Outer<T>>::initialize(outer, identifier, world)?;
+    //     Ok(State(defer, PhantomData))
+    // }
+
+    fn initialize<A: Adapt<Self::State>>(
+        segment: &Segment,
+        context: Context<Self::State, A>,
+    ) -> Result<Self::State> {
+        todo!()
+    }
+
+    fn depend(state: &Self::State) -> Vec<Dependency> {
+        todo!()
     }
 }
 
@@ -195,21 +204,10 @@ impl<T: Template> Resolve for Outer<T> {
     type Item = Defer<T>;
 
     fn resolve(&mut self, items: impl FullIterator<Item = Self::Item>) -> Result {
-        // let entities = self.entities.as_mut();
         todo!()
     }
-}
 
-unsafe impl<T: Template> Depend for State<T, Early> {
     fn depend(&self) -> Vec<Dependency> {
-        let mut dependencies = self.0.depend();
-        // TODO: Depend on segments
-        dependencies
-    }
-}
-
-unsafe impl<T: Template> Depend for State<T, Late> {
-    fn depend(&self) -> Vec<Dependency> {
-        self.0.depend()
+        todo!()
     }
 }

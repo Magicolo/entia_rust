@@ -1,13 +1,12 @@
 use crate::{
     defer::{self, Resolve},
-    depend::{Depend, Dependency},
+    depend::Dependency,
     entities::Entities,
     entity::Entity,
     error::{Error, Result},
-    inject::{Get, Inject},
+    inject::{Adapt, Context, Get, Inject},
     resource::Write,
     segment::Segments,
-    world::World,
 };
 use entia_core::FullIterator;
 use std::{collections::HashSet, marker::PhantomData};
@@ -23,8 +22,8 @@ pub struct Early;
 /// Can be used as the resolution parameter of the 'Destroy' type.
 pub struct Late;
 
-pub struct Destroy<'a, R = Early>(defer::Defer<'a, Inner>, PhantomData<R>);
-pub struct State<R>(defer::State<Inner>, PhantomData<R>);
+pub struct Destroy<'a, R = Early>(defer::Defer<'a, Inner>, PhantomData<fn(R)>);
+pub struct State<R>(defer::State<Inner>, PhantomData<fn(R)>);
 
 struct Inner {
     set: HashSet<Entity>,
@@ -59,27 +58,27 @@ impl<R> Destroy<'_, R> {
     }
 }
 
-impl<R> Inject for Destroy<'_, R>
-where
-    State<R>: Depend,
-{
+unsafe impl<R: 'static> Inject for Destroy<'_, R> {
     type Input = ();
     type State = State<R>;
 
-    fn initialize(_: Self::Input, identifier: usize, world: &mut World) -> Result<Self::State> {
+    fn initialize<A: Adapt<Self::State>>(
+        _: Self::Input,
+        mut context: Context<Self::State, A>,
+    ) -> Result<Self::State> {
         let inner = Inner {
             set: HashSet::new(),
-            entities: Write::initialize(None, identifier, world)?,
-            segments: Write::initialize(None, identifier, world)?,
+            entities: Write::initialize(None, context.map(|state| &mut state.0.as_mut().entities))?,
+            segments: Write::initialize(None, context.map(|state| &mut state.0.as_mut().segments))?,
         };
         Ok(State(
-            defer::Defer::initialize(inner, identifier, world)?,
+            defer::Defer::initialize(inner, context.map(|state| &mut state.0))?,
             PhantomData,
         ))
     }
 
-    fn resolve(State(state, _): &mut Self::State) -> Result {
-        defer::Defer::resolve(state)
+    fn depend(State(state, ..): &Self::State) -> Vec<Dependency> {
+        defer::Defer::<Inner>::depend(state)
     }
 }
 
@@ -173,6 +172,14 @@ impl Resolve for Inner {
 
         Ok(())
     }
+
+    fn depend(&self) -> Vec<Dependency> {
+        todo!()
+        // let mut dependencies = self.0.depend();
+        // dependencies.push(Dependency::defer::<Entities>());
+        // dependencies.push(Dependency::defer::<Entity>());
+        // dependencies
+    }
 }
 
 impl<'a, R> Get<'a> for State<R> {
@@ -181,20 +188,5 @@ impl<'a, R> Get<'a> for State<R> {
     #[inline]
     unsafe fn get(&'a mut self) -> Self::Item {
         Destroy(self.0.get().0, PhantomData)
-    }
-}
-
-unsafe impl Depend for State<Early> {
-    fn depend(&self) -> Vec<Dependency> {
-        let mut dependencies = self.0.depend();
-        dependencies.push(Dependency::defer::<Entities>());
-        dependencies.push(Dependency::defer::<Entity>());
-        dependencies
-    }
-}
-
-unsafe impl Depend for State<Late> {
-    fn depend(&self) -> Vec<Dependency> {
-        self.0.depend()
     }
 }

@@ -1,13 +1,12 @@
 use crate::{
     defer::{self, Resolve},
-    depend::{Depend, Dependency},
+    depend::Dependency,
     entities::Entities,
     entity::Entity,
     error::Result,
     family::Family,
-    inject::{Get, Inject},
+    inject::{Adapt, Context, Get, Inject},
     resource::{Read, Write},
-    world::World,
 };
 use entia_core::FullIterator;
 
@@ -32,14 +31,22 @@ impl<'a> Families<'a> {
     }
 }
 
-impl Inject for Families<'_> {
+unsafe impl Inject for Families<'_> {
     type Input = ();
     type State = State;
 
-    fn initialize(_: Self::Input, identifier: usize, world: &mut World) -> Result<Self::State> {
-        Ok(State(Read::<Entities>::initialize(
-            None, identifier, world,
+    fn initialize<A: Adapt<Self::State>>(
+        _: Self::Input,
+        mut context: Context<Self::State, A>,
+    ) -> Result<Self::State> {
+        Ok(State(Read::initialize(
+            None,
+            context.map(|State(state)| state),
         )?))
+    }
+
+    fn depend(State(state): &Self::State) -> Vec<Dependency> {
+        Read::<Entities>::depend(state)
     }
 }
 
@@ -49,12 +56,6 @@ impl<'a> Get<'a> for State {
     #[inline]
     unsafe fn get(&'a mut self) -> Self::Item {
         Families(self.0.get())
-    }
-}
-
-unsafe impl Depend for State {
-    fn depend(&self) -> Vec<Dependency> {
-        self.0.depend()
     }
 }
 
@@ -100,23 +101,22 @@ pub mod adopt {
         }
     }
 
-    impl Inject for Adopt<'_> {
+    unsafe impl Inject for Adopt<'_> {
         type Input = ();
         type State = State;
 
-        fn initialize(_: Self::Input, identifier: usize, world: &mut World) -> Result<Self::State> {
-            let entities = Write::<Entities>::initialize(None, identifier, world)?;
+        fn initialize<A: Adapt<Self::State>>(
+            _: Self::Input,
+            mut context: Context<Self::State, A>,
+        ) -> Result<Self::State> {
+            let entities = Write::initialize(None, context.map(|state| &mut state.0.as_mut().0))?;
             let inner = Inner(entities);
-            let defer = defer::Defer::<Inner>::initialize(inner, identifier, world)?;
+            let defer = defer::Defer::initialize(inner, context.map(|state| &mut state.0))?;
             Ok(State(defer))
         }
 
-        fn update(State(state): &mut Self::State, world: &mut World) -> Result {
-            defer::Defer::<Inner>::update(state, world)
-        }
-
-        fn resolve(State(state): &mut Self::State) -> Result {
-            defer::Defer::<Inner>::resolve(state)
+        fn depend(State(state): &Self::State) -> Vec<Dependency> {
+            defer::Defer::depend(state)
         }
     }
 
@@ -145,6 +145,13 @@ pub mod adopt {
             }
             Ok(())
         }
+
+        fn depend(&self) -> Vec<Dependency> {
+            todo!()
+            // let mut dependencies = self.0.depend();
+            // dependencies.push(Dependency::defer::<Entity>());
+            // dependencies
+        }
     }
 
     impl<'a> Get<'a> for State {
@@ -153,14 +160,6 @@ pub mod adopt {
         #[inline]
         unsafe fn get(&'a mut self) -> Self::Item {
             Adopt(self.0.get().0)
-        }
-    }
-
-    unsafe impl Depend for State {
-        fn depend(&self) -> Vec<Dependency> {
-            let mut dependencies = self.0.depend();
-            dependencies.push(Dependency::defer::<Entity>());
-            dependencies
         }
     }
 }
@@ -207,23 +206,22 @@ pub mod reject {
         }
     }
 
-    impl Inject for Reject<'_> {
+    unsafe impl Inject for Reject<'_> {
         type Input = ();
         type State = State;
 
-        fn initialize(_: Self::Input, identifier: usize, world: &mut World) -> Result<Self::State> {
-            let entities = Write::<Entities>::initialize(None, identifier, world)?;
+        fn initialize<A: Adapt<Self::State>>(
+            _: Self::Input,
+            mut context: Context<Self::State, A>,
+        ) -> Result<Self::State> {
+            let entities = Write::initialize(None, context.map(|state| &mut state.0.as_mut().0))?;
             let inner = Inner(entities);
-            let defer = defer::Defer::<Inner>::initialize(inner, identifier, world)?;
+            let defer = defer::Defer::initialize(inner, context.map(|state| &mut state.0))?;
             Ok(State(defer))
         }
 
-        fn update(State(state): &mut Self::State, world: &mut World) -> Result {
-            defer::Defer::<Inner>::update(state, world)
-        }
-
-        fn resolve(State(state): &mut Self::State) -> Result {
-            defer::Defer::<Inner>::resolve(state)
+        fn depend(State(state): &Self::State) -> Vec<Dependency> {
+            defer::Defer::<Inner>::depend(state)
         }
     }
 
@@ -252,6 +250,13 @@ pub mod reject {
             }
             Ok(())
         }
+
+        fn depend(&self) -> Vec<Dependency> {
+            todo!()
+            // let mut dependencies = self.0.depend();
+            // dependencies.push(Dependency::defer::<Entity>());
+            // dependencies
+        }
     }
 
     impl<'a> Get<'a> for State {
@@ -260,14 +265,6 @@ pub mod reject {
         #[inline]
         unsafe fn get(&'a mut self) -> Self::Item {
             Reject(self.0.get().0)
-        }
-    }
-
-    unsafe impl Depend for State {
-        fn depend(&self) -> Vec<Dependency> {
-            let mut dependencies = self.0.depend();
-            dependencies.push(Dependency::defer::<Entity>());
-            dependencies
         }
     }
 }

@@ -1,4 +1,4 @@
-use crate::recurse;
+use crate::tuples;
 
 pub trait Call<I, O = ()> {
     fn call(&mut self, input: I) -> O;
@@ -15,4 +15,4 @@ macro_rules! call {
     };
 }
 
-recurse!(call);
+tuples!(call);

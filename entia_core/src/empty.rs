@@ -1,4 +1,4 @@
-use crate::recurse;
+use crate::tuples;
 
 pub trait Empty: Sized {
     const EMPTY: Self;
@@ -32,4 +32,4 @@ macro_rules! unit {
     };
 }
 
-recurse!(unit);
+tuples!(unit);

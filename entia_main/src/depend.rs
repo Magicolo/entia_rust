@@ -1,9 +1,8 @@
-use crate::{error, recurse};
+use crate::error;
 use entia_core::utility::short_type_name;
 use std::{
     any::TypeId,
     collections::{HashMap, HashSet},
-    marker::PhantomData,
 };
 
 /*
@@ -28,9 +27,9 @@ TODO: There should be a way to opt out of dependency checking.
 /// SAFETY: This trait is unsafe since a wrong implementation may lead to undefined behavior. Every
 /// implementor must declare all necessary dependencies in order to properly inform a scheduler of what it
 /// it allowed to do.
-pub unsafe trait Depend {
-    fn depend(&self) -> Vec<Dependency>;
-}
+// pub unsafe trait Depend {
+//     fn depend(&self) -> Vec<Dependency>;
+// }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Scope {
@@ -122,35 +121,35 @@ impl Dependency {
     }
 }
 
-unsafe impl<D: Depend> Depend for Option<D> {
-    fn depend(&self) -> Vec<Dependency> {
-        match self {
-            Some(depend) => depend.depend(),
-            None => Vec::new(),
-        }
-    }
-}
+// unsafe impl<D: Depend> Depend for Option<D> {
+//     fn depend(&self) -> Vec<Dependency> {
+//         match self {
+//             Some(depend) => depend.depend(),
+//             None => Vec::new(),
+//         }
+//     }
+// }
 
-unsafe impl<T> Depend for PhantomData<T> {
-    fn depend(&self) -> Vec<Dependency> {
-        ().depend()
-    }
-}
+// unsafe impl<T> Depend for PhantomData<T> {
+//     fn depend(&self) -> Vec<Dependency> {
+//         ().depend()
+//     }
+// }
 
-macro_rules! depend {
-    ($($p:ident, $t:ident),*) => {
-        unsafe impl<'a, $($t: Depend,)*> Depend for ($($t,)*) {
-            fn depend(&self) -> Vec<Dependency> {
-                let ($($p,)*) = self;
-                let mut _dependencies = Vec::new();
-                $(_dependencies.append(&mut $p.depend());)*
-                _dependencies
-            }
-        }
-    };
-}
+// macro_rules! depend {
+//     ($($p:ident, $t:ident),*) => {
+//         unsafe impl<'a, $($t: Depend,)*> Depend for ($($t,)*) {
+//             fn depend(&self) -> Vec<Dependency> {
+//                 let ($($p,)*) = self;
+//                 let mut _dependencies = Vec::new();
+//                 $(_dependencies.append(&mut $p.depend());)*
+//                 _dependencies
+//             }
+//         }
+//     };
+// }
 
-recurse!(depend);
+// tuples!(depend);
 
 impl Has {
     pub fn add(&mut self, index: usize) -> bool {

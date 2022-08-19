@@ -1,4 +1,4 @@
-use crate::recurse;
+use crate::tuples;
 use std::{
     marker::PhantomData,
     mem::size_of,
@@ -478,4 +478,4 @@ macro_rules! tuple {
     };
 }
 
-recurse!(tuple);
+tuples!(tuple);

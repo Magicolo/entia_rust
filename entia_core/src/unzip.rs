@@ -1,4 +1,4 @@
-use crate::recurse;
+use crate::tuples;
 use std::mem::MaybeUninit;
 
 pub trait Unzip {
@@ -26,4 +26,4 @@ macro_rules! tuple {
     };
 }
 
-recurse!(tuple);
+tuples!(tuple);

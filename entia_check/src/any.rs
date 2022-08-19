@@ -1,7 +1,7 @@
 use crate::{
     generate::{FullGenerate, Generate, IntoGenerate, State},
-    recurse,
     shrink::Shrink,
+    tuples_with,
 };
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -91,9 +91,9 @@ collection!(Vec<T>, indexed, []);
 collection!(Vec<Weight<T>>, weighted, []);
 
 macro_rules! tuple {
-    () => {};
-    ($p:ident, $t:ident $(,$ps:ident, $ts:ident)*) => {
-        pub(crate) mod $p {
+    ($n:ident) => {};
+    ($n:ident, $p:ident, $t:ident, $i:tt $(, $ps:ident, $ts:ident, $is:tt)*) => {
+        pub(crate) mod $n {
             use super::*;
 
             #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -139,10 +139,11 @@ macro_rules! tuple {
                 fn generate(&self, state: &mut State) -> (Self::Item, Self::Shrink) {
                     let ($p, $($ps,)*) = &self.0;
                     let count = entia_macro::count!($p $(,$ps)*);
-                    let mut _index = state.random.u8(..count);
-                    if _index == 0 { let (item, shrink) = $p.generate(state); return (item, One::$t(shrink)); }
-                    $(_index -= 1; if _index == 0 { let (item, shrink) = $ps.generate(state); return (item, One::$ts(shrink)); })*
-                    unreachable!();
+                    match state.random.u8(..count) {
+                        $i => { let (item, shrink) = $p.generate(state); (item, One::$t(shrink)) }
+                        $($is => { let (item, shrink) = $ps.generate(state); (item, One::$ts(shrink)) })*
+                        _ => unreachable!(),
+                    }
                 }
             }
 
@@ -180,4 +181,4 @@ macro_rules! tuple {
     };
 }
 
-recurse!(tuple);
+tuples_with!(tuple);

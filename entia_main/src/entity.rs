@@ -1,10 +1,10 @@
 use crate::{
-    depend::{Depend, Dependency},
+    depend::Dependency,
     error::Result,
+    inject::{Adapt, Context},
     item::{At, Item},
     segment::Segment,
     store::Store,
-    world::World,
 };
 use std::{
     fmt,
@@ -69,11 +69,18 @@ impl Default for Entity {
 impl Item for Entity {
     type State = State;
 
-    fn initialize(_: usize, segment: &Segment, _: &mut World) -> Result<Self::State> {
+    fn initialize<A: Adapt<Self::State>>(
+        segment: &Segment,
+        _: Context<Self::State, A>,
+    ) -> Result<Self::State> {
         Ok(State {
             store: segment.entity_store(),
             segment: segment.index(),
         })
+    }
+
+    fn depend(state: &Self::State) -> Vec<Dependency> {
+        vec![Dependency::read::<Entity>(state.store.identifier()).at(state.segment)]
     }
 }
 
@@ -128,9 +135,3 @@ at!(
     RangeTo<usize>,
     RangeToInclusive<usize>,
 );
-
-unsafe impl Depend for State {
-    fn depend(&self) -> Vec<Dependency> {
-        vec![Dependency::read::<Entity>(self.store.identifier()).at(self.segment)]
-    }
-}

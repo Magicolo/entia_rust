@@ -10,9 +10,7 @@ pub mod error;
 pub mod families;
 pub mod family;
 pub mod filter;
-pub mod ignore;
 pub mod inject;
-pub mod inject2;
 pub mod item;
 pub mod message;
 pub mod meta;
@@ -107,7 +105,6 @@ pub use crate::{
     families::{adopt::Adopt, reject::Reject, Families},
     family::Family,
     filter::{Filter, Has, Not},
-    ignore::Ignore,
     inject::{Inject, Injector},
     message::{emit::Emit, receive::Receive, Message},
     query::Query,
@@ -118,7 +115,7 @@ pub use crate::{
     template::{Add, LeafTemplate, Spawn, SpawnTemplate, StaticTemplate, Template, With},
     world::World,
 };
-pub(crate) use entia_macro::recurse_16 as recurse;
+pub(crate) use entia_macro::{tuples_16 as tuples, tuples_with_16 as tuples_with};
 pub use entia_main_derive::{Component, Depend, Filter, Message, Resource, Template};
 
 pub fn identify() -> usize {
@@ -131,7 +128,7 @@ mod test;
 
 pub mod poulah {
     use super::*;
-    use crate::{depend::Depend, error::Result, item::Item, segment::Segment};
+    use crate::{error::Result, item::Item, segment::Segment};
     use std::marker::PhantomData;
 
     pub struct Get<I, K: ?Sized>(PhantomData<(I, K)>);
@@ -143,24 +140,28 @@ pub mod poulah {
         fn get(self) -> Self::Value;
     }
 
-    impl<K, I: Item> Item for Get<I, K>
-    where
-        for<'a> <I::State as item::At<'a>>::Ref: Key<'a, K>,
-        for<'a> <I::State as item::At<'a>>::Mut: Key<'a, K>,
-    {
-        type State = State<I::State, K>;
+    // impl<K, I: Item> Item for Get<I, K>
+    // where
+    //     for<'a> <I::State as item::At<'a>>::Ref: Key<'a, K>,
+    //     for<'a> <I::State as item::At<'a>>::Mut: Key<'a, K>,
+    // {
+    //     type State = State<I::State, K>;
 
-        fn initialize(
-            identifier: usize,
-            segment: &Segment,
-            world: &mut World,
-        ) -> Result<Self::State> {
-            Ok(State(
-                I::initialize(identifier, segment, world)?,
-                PhantomData,
-            ))
-        }
-    }
+    //     fn initialize(
+    //         identifier: usize,
+    //         segment: &Segment,
+    //         world: &mut World,
+    //     ) -> Result<Self::State> {
+    //         Ok(State(
+    //             I::initialize(identifier, segment, world)?,
+    //             PhantomData,
+    //         ))
+    //     }
+
+    //     fn depend(state: &Self::State) -> Vec<depend::Dependency> {
+    //         todo!()
+    //     }
+    // }
 
     impl<'a, I, K, A: item::At<'a, I>> item::At<'a, I> for State<A, K>
     where
@@ -184,13 +185,13 @@ pub mod poulah {
         }
     }
 
-    unsafe impl<D: Depend, K> Depend for State<D, K> {
-        fn depend(&self) -> Vec<depend::Dependency> {
-            // TODO: Adapt the dependency model to support 'Get'.
-            // TODO: Modify the inner dependencies such that they become more specific with 'K'.
-            todo!()
-        }
-    }
+    // unsafe impl<D: Depend, K> Depend for State<D, K> {
+    //     fn depend(&self) -> Vec<depend::Dependency> {
+    //         // TODO: Adapt the dependency model to support 'Get'.
+    //         // TODO: Modify the inner dependencies such that they become more specific with 'K'.
+    //         todo!()
+    //     }
+    // }
 
     pub mod position2 {
         #![allow(non_camel_case_types)]
@@ -296,11 +297,11 @@ pub mod poulah {
     }
 
     // TODO: Prevent from mutably aliasing of the same field (ex: (position2::X_Mut, position2::X_Mut)).
-    pub fn boba(mut query: Query<(position2::X_Mut, position2::Y_Ref, position2::At_Ref<1>)>) {
-        for (_x, _y, _at) in query.iter() {}
-        for (x, y, at) in query.iter_mut() {
-            *x += *y;
-            *x += *at;
-        }
-    }
+    // pub fn boba(mut query: Query<(position2::X_Mut, position2::Y_Ref, position2::At_Ref<1>)>) {
+    //     for (_x, _y, _at) in query.iter() {}
+    //     for (x, y, at) in query.iter_mut() {
+    //         *x += *y;
+    //         *x += *at;
+    //     }
+    // }
 }

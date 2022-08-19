@@ -1,4 +1,4 @@
-use crate::recurse;
+use crate::tuples;
 
 pub trait EachRef<'a> {
     type Target;
@@ -35,4 +35,4 @@ macro_rules! tuple {
     };
 }
 
-recurse!(tuple);
+tuples!(tuple);

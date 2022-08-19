@@ -1,9 +1,19 @@
-use crate::{depend::Depend, error::Result, recurse, segment::Segment, world::World};
+use crate::{
+    depend::Dependency,
+    error::Result,
+    inject::{Adapt, Context},
+    segment::Segment,
+    tuples_with,
+};
 use std::marker::PhantomData;
 
 pub trait Item {
-    type State: for<'a> At<'a> + Depend;
-    fn initialize(identifier: usize, segment: &Segment, world: &mut World) -> Result<Self::State>;
+    type State: for<'a> At<'a> + Send + Sync + 'static;
+    fn initialize<A: Adapt<Self::State>>(
+        segment: &Segment,
+        context: Context<Self::State, A>,
+    ) -> Result<Self::State>;
+    fn depend(state: &Self::State) -> Vec<Dependency>;
 }
 
 pub trait At<'a, I = usize> {
@@ -19,8 +29,18 @@ pub trait At<'a, I = usize> {
 impl<I: Item> Item for Option<I> {
     type State = Option<I::State>;
 
-    fn initialize(identifier: usize, segment: &Segment, world: &mut World) -> Result<Self::State> {
-        Ok(I::initialize(identifier, segment, world).ok())
+    fn initialize<A: Adapt<Self::State>>(
+        segment: &Segment,
+        mut context: Context<Self::State, A>,
+    ) -> Result<Self::State> {
+        Ok(I::initialize(segment, context.flat_map( |state| state.as_mut())).ok())
+    }
+
+    fn depend(state: &Self::State) -> Vec<Dependency> {
+        match state {
+            Some(state) => I::depend(state),
+            None => vec![],
+        }
     }
 }
 
@@ -56,18 +76,35 @@ impl<'a, I, A: At<'a, I>> At<'a, I> for Option<A> {
 
 impl<T> Item for PhantomData<T> {
     type State = <() as Item>::State;
-    fn initialize(identifier: usize, segment: &Segment, world: &mut World) -> Result<Self::State> {
-        <() as Item>::initialize(identifier, segment, world)
+
+    fn initialize<A: Adapt<Self::State>>(
+        segment: &Segment,
+        context: Context<Self::State, A>,
+    ) -> Result<Self::State> {
+        <() as Item>::initialize(segment, context)
+    }
+
+    fn depend(state: &Self::State) -> Vec<Dependency> {
+        <() as Item>::depend(state)
     }
 }
 
 macro_rules! item {
-    ($($p:ident, $t:ident),*) => {
+    ($n:ident $(,$p:ident, $t:ident, $i:tt)*) => {
         impl<$($t: Item,)*> Item for ($($t,)*) {
             type State = ($($t::State,)*);
 
-            fn initialize(_identifier: usize,_segment: &Segment, _world: &mut World) -> Result<Self::State> {
-                Ok(($($t::initialize(_identifier, _segment, _world)?,)*))
+            fn initialize<A: Adapt<Self::State>>(
+                _segment: &Segment,
+                mut _context: Context<Self::State, A>,
+            ) -> Result<Self::State> {
+                Ok(($($t::initialize(_segment, _context.map(|state| &mut state.$i))?,)*))
+            }
+
+            fn depend(($($p,)*): &Self::State) -> Vec<Dependency> {
+                let mut _dependencies = Vec::new();
+                $(_dependencies.append(&mut $t::depend($p));)*
+                _dependencies
             }
         }
 
@@ -95,4 +132,4 @@ macro_rules! item {
     };
 }
 
-recurse!(item);
+tuples_with!(item);

@@ -39,11 +39,14 @@ impl Scheduler<'_> {
         self.with_prefix::<F, _>(schedule)
     }
 
-    pub fn add<I: Default, M, S: IntoSystem<M, Input = I>>(self, system: S) -> Self {
-        self.add_with(I::default(), system)
+    pub fn add<M, S: IntoSystem<M>>(self, system: S) -> Self
+    where
+        S::Input: Default,
+    {
+        self.add_with(S::Input::default(), system)
     }
 
-    pub fn add_with<I, M, S: IntoSystem<M, Input = I>>(self, input: I, system: S) -> Self {
+    pub fn add_with<M, S: IntoSystem<M>>(self, input: S::Input, system: S) -> Self {
         self.with_prefix::<S, _>(|mut scheduler| {
             let system = system.system(input, scheduler.world).map(|mut system| {
                 system.name.insert_str(0, &scheduler.prefix);
@@ -55,19 +58,20 @@ impl Scheduler<'_> {
     }
 
     pub fn schedule(self) -> Result<Runner> {
-        let mut systems = Vec::new();
+        let mut schedules = Vec::new();
         let mut errors = Vec::new();
 
-        for system in self.systems {
-            match system {
-                Ok(system) => systems.push(system),
+        for schedule in self.systems {
+            match schedule {
+                Ok(system) => schedules.push(system),
                 Err(error) => errors.push(error),
             }
         }
 
-        Error::All(errors)
-            .flatten(true)
-            .map_or(Ok(Runner::new(self.world.identifier(), systems)), Err)
+        match Error::All(errors).flatten(true) {
+            Some(error) => Err(error),
+            None => Runner::new(schedules, self.world),
+        }
     }
 
     fn with_prefix<T, F: FnOnce(Self) -> Self>(mut self, with: F) -> Self {
