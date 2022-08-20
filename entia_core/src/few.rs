@@ -1,5 +1,6 @@
 use std::{
     array, iter,
+    mem::replace,
     ops::{Deref, DerefMut},
     vec,
 };
@@ -10,7 +11,7 @@ pub enum Few<T> {
     Two([T; 2]),
     Three([T; 3]),
     Four([T; 4]),
-    More(Box<[T]>),
+    More(Vec<T>),
 }
 
 pub enum Iterator<T> {
@@ -20,6 +21,57 @@ pub enum Iterator<T> {
     Three(array::IntoIter<T, 3>),
     Four(array::IntoIter<T, 4>),
     More(vec::IntoIter<T>),
+}
+
+impl<T> Few<T> {
+    pub fn len(&self) -> usize {
+        match self {
+            Few::Zero => 0,
+            Few::One(_) => 1,
+            Few::Two(_) => 2,
+            Few::Three(_) => 3,
+            Few::Four(_) => 4,
+            Few::More(values) => values.len(),
+        }
+    }
+
+    pub fn push(&mut self, value: T) {
+        *self = match replace(self, Few::Zero) {
+            Few::Zero => Few::One([value]),
+            Few::One([_1]) => Few::Two([_1, value]),
+            Few::Two([_1, _2]) => Few::Three([_1, _2, value]),
+            Few::Three([_1, _2, _3]) => Few::Four([_1, _2, _3, value]),
+            Few::Four([_1, _2, _3, _4]) => Few::More(vec![_1, _2, _3, _4, value]),
+            Few::More(mut values) => {
+                values.push(value);
+                Few::More(values)
+            }
+        };
+    }
+
+    pub fn pop(&mut self) -> Option<T> {
+        match replace(self, Few::Zero) {
+            Few::Zero => None,
+            Few::One([_1]) => Some(_1),
+            Few::Two([_1, _2]) => {
+                *self = Few::One([_1]);
+                Some(_2)
+            }
+            Few::Three([_1, _2, _3]) => {
+                *self = Few::Two([_1, _2]);
+                Some(_3)
+            }
+            Few::Four([_1, _2, _3, _4]) => {
+                *self = Few::Three([_1, _2, _3]);
+                Some(_4)
+            }
+            Few::More(mut values) => {
+                let value = values.pop();
+                *self = Few::More(values);
+                value
+            }
+        }
+    }
 }
 
 impl<T> Deref for Few<T> {
@@ -64,7 +116,7 @@ impl<T> IntoIterator for Few<T> {
             Few::Two(values) => Iterator::Two(values.into_iter()),
             Few::Three(values) => Iterator::Three(values.into_iter()),
             Few::Four(values) => Iterator::Four(values.into_iter()),
-            Few::More(values) => Iterator::More(values.into_vec().into_iter()),
+            Few::More(values) => Iterator::More(values.into_iter()),
         }
     }
 }
@@ -111,6 +163,6 @@ impl<T> FromIterator<T> for Few<T> {
         };
         let mut values = vec![_1, _2, _3, _4, _5];
         values.extend(iterator);
-        Self::More(values.into_boxed_slice())
+        Self::More(values)
     }
 }

@@ -93,9 +93,9 @@ where
     type Input = I::Input;
 
     fn system(self, input: I::Input, world: &mut World) -> Result<System> {
-        let mut schedules = Vec::new();
         let cast = Cast::<(I::State, C)>::new();
         let map = cast.clone().map(|(state, _)| state);
+        let mut schedules = Vec::new();
         let context = Context::new(map.clone(), &mut schedules, world);
         let identifier = context.identifier();
         let state = I::initialize(input, context)?;
@@ -117,45 +117,22 @@ where
                     }
 
                     let cast = cast.clone();
-                    pre.push(Run::new(move |state| match cast.adapt(state) {
+                    pre.push(Run::new(
+                        move |state| match cast.adapt(state) {
                             Some((state, run)) => {
                                 let state = unsafe { &mut *(state as *mut I::State) };
                                 run.call(unsafe { state.get() }).output()
                             }
                             None => Ok(()),
-                        }, I::depend(state)));
+                        },
+                        I::depend(state),
+                    ));
                     pre.extend(post);
                     pre
                 }
                 None => vec![],
             }),
         })
-
-        // let identifier = identify();
-        // match I::initialize(input, identifier, world) {
-        //     Ok(state) => {
-        //         let state = Arc::new(state);
-        //         let run = Arc::new(self);
-        //         Ok(System::new(identifier, I::name(), move |world| {
-        //             let outer = cast(&state);
-        //             once(Run::new(
-        //                 {
-        //                     let state = state.clone();
-        //                     let run = run.clone();
-        //                     move |_| {
-        //                         let state = cast(&state);
-        //                         let run = cast(&run);
-        //                         run.call(unsafe { state.get() }).output()
-        //                     }
-        //                 },
-        //                 I::depend(outer),
-        //             ))
-        //             .chain(schedule::<I>(&state, world))
-        //             .collect()
-        //         }))
-        //     }
-        //     Err(error) => Err(error),
-        // }
     }
 }
 

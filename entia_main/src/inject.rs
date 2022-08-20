@@ -456,7 +456,7 @@ unsafe impl<T> Inject for PhantomData<T> {
 }
 
 macro_rules! inject {
-    ($n:ident $(, $p:ident, $t:ident, $i:tt)*) => {
+    ($n:ident, $c:tt $(, $p:ident, $t:ident, $i:tt)*) => {
         unsafe impl<$($t: Inject,)*> Inject for ($($t,)*) {
             type Input = ($($t::Input,)*);
             type State = ($($t::State,)*);

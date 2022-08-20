@@ -91,8 +91,8 @@ collection!(Vec<T>, indexed, []);
 collection!(Vec<Weight<T>>, weighted, []);
 
 macro_rules! tuple {
-    ($n:ident) => {};
-    ($n:ident, $p:ident, $t:ident, $i:tt $(, $ps:ident, $ts:ident, $is:tt)*) => {
+    ($n:ident, $c:tt) => {};
+    ($n:ident, $c:tt, $p:ident, $t:ident, $i:tt $(, $ps:ident, $ts:ident, $is:tt)*) => {
         pub(crate) mod $n {
             use super::*;
 

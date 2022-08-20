@@ -33,7 +33,7 @@ impl<I: Item> Item for Option<I> {
         segment: &Segment,
         mut context: Context<Self::State, A>,
     ) -> Result<Self::State> {
-        Ok(I::initialize(segment, context.flat_map( |state| state.as_mut())).ok())
+        Ok(I::initialize(segment, context.flat_map(|state| state.as_mut())).ok())
     }
 
     fn depend(state: &Self::State) -> Vec<Dependency> {
@@ -90,7 +90,7 @@ impl<T> Item for PhantomData<T> {
 }
 
 macro_rules! item {
-    ($n:ident $(,$p:ident, $t:ident, $i:tt)*) => {
+    ($n:ident, $c:tt $(, $p:ident, $t:ident, $i:tt)*) => {
         impl<$($t: Item,)*> Item for ($($t,)*) {
             type State = ($($t::State,)*);
 
