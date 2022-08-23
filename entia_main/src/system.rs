@@ -93,9 +93,9 @@ where
     type Input = I::Input;
 
     fn system(self, input: I::Input, world: &mut World) -> Result<System> {
+        let mut schedules = Vec::new();
         let cast = Cast::<(I::State, C)>::new();
         let map = cast.clone().map(|(state, _)| state);
-        let mut schedules = Vec::new();
         let context = Context::new(map.clone(), &mut schedules, world);
         let identifier = context.identifier();
         let state = I::initialize(input, context)?;
@@ -105,32 +105,34 @@ where
             identifier,
             name: short_type_name::<I>(),
             state: Arc::new((state, self)),
-            schedule: Box::new(move |state, world| match map.adapt(state) {
-                Some(state) => {
-                    let mut pre = Vec::new();
-                    let mut post = Vec::new();
+            schedule: Box::new(move |state, world| {
+                let mut pre = Vec::new();
+                let mut post = Vec::new();
 
-                    for schedule in schedules.iter_mut() {
-                        let runs = schedule(state, world);
-                        pre.extend(runs.0);
-                        post.extend(runs.1);
-                    }
-
-                    let cast = cast.clone();
-                    pre.push(Run::new(
-                        move |state| match cast.adapt(state) {
-                            Some((state, run)) => {
-                                let state = unsafe { &mut *(state as *mut I::State) };
-                                run.call(unsafe { state.get() }).output()
-                            }
-                            None => Ok(()),
-                        },
-                        I::depend(state),
-                    ));
-                    pre.extend(post);
-                    pre
+                for schedule in schedules.iter_mut() {
+                    let runs = schedule(state, world);
+                    pre.extend(runs.0);
+                    post.extend(runs.1);
                 }
-                None => vec![],
+
+                match map.adapt(state) {
+                    Some(state) => {
+                        let cast = cast.clone();
+                        pre.push(Run::new(
+                            move |state| match cast.adapt(state) {
+                                Some((state, run)) => {
+                                    let state = unsafe { &mut *(state as *mut I::State) };
+                                    run.call(unsafe { state.get() }).output()
+                                }
+                                None => Ok(()),
+                            },
+                            I::depend(state),
+                        ));
+                        pre.extend(post);
+                        pre
+                    }
+                    None => vec![],
+                }
             }),
         })
     }

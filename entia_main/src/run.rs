@@ -3,6 +3,7 @@ use crate::{
     error::{Error, Result},
     system::System,
     world::World,
+    IntoSystem,
 };
 use entia_core::Change;
 use rayon::{ThreadPool, ThreadPoolBuilder};
@@ -39,6 +40,45 @@ struct State {
     done: bool,
     error: Option<Error>,
     blockers: Vec<(usize, Error)>,
+}
+
+impl World {
+    pub fn run<I: Default, M, S: IntoSystem<M, Input = I>>(&mut self, system: S) -> Result {
+        self.run_with(I::default(), system)
+    }
+
+    pub fn run_with<I, M, S: IntoSystem<M, Input = I>>(&mut self, input: I, system: S) -> Result {
+        let mut system = system.system(input, self)?;
+        let mut version = 0;
+        let mut runs = Vec::new();
+
+        for _ in 0..1_000 {
+            if version.change(self.version()) {
+                runs = system.schedule(self);
+            } else {
+                break;
+            }
+        }
+        if version.change(self.version()) {
+            return Err(Error::UnstableWorldVersion);
+        }
+
+        let mut conflict = Conflict::default();
+        Error::all(runs.iter().flat_map(|run| {
+            conflict.clear();
+            conflict
+                .detect(Scope::Inner, run.dependencies(), true)
+                .err()
+        }))
+        .flatten(true)
+        .map_or(Ok(()), Err)?;
+
+        for run in runs.iter_mut() {
+            run.run(&mut system.state)?;
+        }
+
+        Ok(())
+    }
 }
 
 impl Run {

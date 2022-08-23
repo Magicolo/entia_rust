@@ -21,17 +21,6 @@ impl World {
             world: self,
         }
     }
-
-    pub fn run<I: Default, M, S: IntoSystem<M, Input = I>>(&mut self, system: S) -> Result {
-        self.scheduler().add(system).schedule()?.run(self)
-    }
-
-    pub fn run_with<I, M, S: IntoSystem<M, Input = I>>(&mut self, input: I, system: S) -> Result {
-        self.scheduler()
-            .add_with(input, system)
-            .schedule()?
-            .run(self)
-    }
 }
 
 impl Scheduler<'_> {

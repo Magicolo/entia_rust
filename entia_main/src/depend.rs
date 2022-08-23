@@ -1,8 +1,5 @@
 use crate::error;
-use std::{
-    any::TypeId,
-    collections::{HashMap, HashSet},
-};
+use std::{any::TypeId, collections::HashSet};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Scope {
@@ -16,39 +13,26 @@ pub enum Dependency {
     Unknown,
     Read(Identifier),
     Write(Identifier),
-    Defer(Identifier),
-    At(usize, Box<Dependency>),
-    Ignore(Scope, Box<Dependency>),
 }
 
 #[derive(Debug, Default)]
 pub struct Conflict {
     unknown: bool,
-    reads: HashMap<Identifier, Has>,
-    writes: HashMap<Identifier, Has>,
-    defers: HashMap<Identifier, Has>,
+    reads: HashSet<Identifier>,
+    writes: HashSet<Identifier>,
 }
 
 #[derive(Debug, Clone)]
 pub enum Error {
     UnknownConflict(Scope),
-    ReadWriteConflict(Scope, Option<usize>),
-    WriteWriteConflict(Scope, Option<usize>),
-    ReadDeferConflict(Scope, Option<usize>),
-    WriteDeferConflict(Scope, Option<usize>),
+    ReadWriteConflict(Scope),
+    WriteWriteConflict(Scope),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Identifier {
     At(usize),
     Type(TypeId),
-}
-
-#[derive(Debug)]
-enum Has {
-    All,
-    None,
-    Indices(HashSet<usize>),
 }
 
 error::error!(Error, error::Error::Depend);
@@ -75,33 +59,6 @@ impl Dependency {
     }
 }
 
-impl Has {
-    pub fn add(&mut self, index: usize) -> bool {
-        match self {
-            Self::All => false,
-            Self::None => {
-                *self = Has::Indices(HashSet::new());
-                self.add(index)
-            }
-            Self::Indices(indices) => indices.insert(index),
-        }
-    }
-
-    pub fn has(&self, index: usize) -> bool {
-        match self {
-            Self::All => true,
-            Self::None => false,
-            Self::Indices(indices) => indices.contains(&index),
-        }
-    }
-}
-
-impl Default for Has {
-    fn default() -> Self {
-        Self::None
-    }
-}
-
 impl Conflict {
     pub fn detect(
         &mut self,
@@ -114,7 +71,7 @@ impl Conflict {
         }
 
         for dependency in dependencies {
-            self.conflict(scope, None, dependency, fill)?;
+            self.conflict(scope, dependency, fill)?;
         }
 
         Ok(())
@@ -124,115 +81,29 @@ impl Conflict {
         self.unknown = false;
         self.reads.clear();
         self.writes.clear();
-        self.defers.clear();
     }
 
-    fn conflict(
-        &mut self,
-        scope: Scope,
-        at: Option<usize>,
-        dependency: &Dependency,
-        fill: bool,
-    ) -> Result<(), Error> {
+    fn conflict(&mut self, scope: Scope, dependency: &Dependency, fill: bool) -> Result<(), Error> {
         use self::{Dependency::*, Error::*, Scope::*};
 
-        match (at, dependency) {
-            (_, Unknown) => {
-                self.unknown = true;
+        match dependency {
+            Unknown => {
+                if fill {
+                    self.unknown = true;
+                }
                 if scope == Outer {
                     Err(UnknownConflict(scope))
                 } else {
                     Ok(())
                 }
             }
-            (_, At(index, dependency)) => self.conflict(scope, Some(*index), dependency, fill),
-            (at, Ignore(inner, dependency)) => {
-                if scope == *inner || *inner == All {
-                    self.conflict(scope, at, dependency, fill)
-                } else {
-                    Ok(())
-                }
-            }
-            (Some(at), Read(identifier)) => {
-                if has(&self.writes, *identifier, at) {
-                    Err(ReadWriteConflict(scope, Some(at)))
-                } else if scope == Outer && has(&self.defers, *identifier, at) {
-                    Err(ReadDeferConflict(scope, Some(at)))
-                } else if fill {
-                    add(&mut self.reads, *identifier, at);
-                    Ok(())
-                } else {
-                    Ok(())
-                }
-            }
-            (Some(at), Write(identifier)) => {
-                if has(&self.reads, *identifier, at) {
-                    Err(ReadWriteConflict(scope, Some(at)))
-                } else if has(&self.writes, *identifier, at) {
-                    Err(WriteWriteConflict(scope, Some(at)))
-                } else if scope == Outer && has(&self.defers, *identifier, at) {
-                    Err(WriteDeferConflict(scope, Some(at)))
-                } else if fill {
-                    add(&mut self.writes, *identifier, at);
-                    Ok(())
-                } else {
-                    Ok(())
-                }
-            }
-            (Some(at), Defer(identifier)) => {
-                if fill {
-                    add(&mut self.defers, *identifier, at);
-                }
-                Ok(())
-            }
-            (None, Read(identifier)) => {
-                if has_any(&self.writes, *identifier) {
-                    Err(ReadWriteConflict(scope, None))
-                } else if scope == Outer && has_any(&self.defers, *identifier) {
-                    Err(ReadDeferConflict(scope, None))
-                } else if fill {
-                    add_all(&mut self.reads, *identifier);
-                    Ok(())
-                } else {
-                    Ok(())
-                }
-            }
-            (None, Write(identifier)) => {
-                if has_any(&self.reads, *identifier) {
-                    Err(ReadWriteConflict(scope, None))
-                } else if has_any(&self.writes, *identifier) {
-                    Err(WriteWriteConflict(scope, None))
-                } else if scope == Outer && has_any(&self.defers, *identifier) {
-                    Err(WriteDeferConflict(scope, None))
-                } else if fill {
-                    add_all(&mut self.writes, *identifier);
-                    Ok(())
-                } else {
-                    Ok(())
-                }
-            }
-            (None, Defer(identifier)) => {
-                if fill {
-                    add_all(&mut self.defers, *identifier);
-                }
-                Ok(())
-            }
+            Read(identifier) if self.writes.contains(identifier) => Err(ReadWriteConflict(scope)),
+            Read(identifier) if fill && self.reads.insert(*identifier) => Ok(()),
+            Read(_) => Ok(()),
+            Write(identifier) if self.reads.contains(identifier) => Err(ReadWriteConflict(scope)),
+            Write(identifier) if fill && self.writes.insert(*identifier) => Ok(()),
+            Write(identifier) if self.writes.contains(identifier) => Err(WriteWriteConflict(scope)),
+            Write(_) => Ok(()),
         }
     }
-}
-
-fn add(map: &mut HashMap<Identifier, Has>, identifier: Identifier, index: usize) -> bool {
-    map.entry(identifier).or_default().add(index)
-}
-
-fn add_all(map: &mut HashMap<Identifier, Has>, identifier: Identifier) {
-    *map.entry(identifier).or_default() = Has::All;
-}
-
-fn has(map: &HashMap<Identifier, Has>, identifier: Identifier, index: usize) -> bool {
-    map.get(&identifier).map_or(false, |has| has.has(index))
-}
-
-fn has_any(map: &HashMap<Identifier, Has>, identifier: Identifier) -> bool {
-    has(map, identifier, usize::MAX)
 }

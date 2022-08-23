@@ -25,7 +25,7 @@ pub enum Flag {
 }
 
 #[derive(Default)]
-pub(crate) struct Segments {
+pub struct Segments {
     // SAFETY: This vector may only 'push', never 'pop'; otherwise some unsafe index access may become invalid.
     segments: Vec<Segment>,
 }

@@ -3,12 +3,12 @@ use entia_core::FullIterator;
 use crate::entity::Entity;
 use std::{
     mem::replace,
-    sync::atomic::{AtomicIsize, AtomicUsize, Ordering},
+    sync::atomic::{AtomicI64, AtomicU32, Ordering},
 };
 
 pub struct Entities {
-    free: (Vec<Entity>, AtomicIsize),
-    data: (Vec<Datum>, AtomicUsize),
+    free: (Vec<u32>, AtomicI64),
+    data: (Vec<Datum>, AtomicU32),
 }
 
 impl Default for Entities {
@@ -103,17 +103,17 @@ impl Entities {
             return 0;
         }
 
-        let count = entities.len() as isize;
+        let count = entities.len() as i64;
         let last = self.free.1.fetch_sub(count, Ordering::Relaxed);
         let count = count.min(last).max(0) as usize;
         for i in 0..count {
             let index = last as usize - i - 1;
-            let entity = self.free.0[index];
+            let free = self.free.0[index];
             // TODO: What to do if there is an overflow?
             // Overflow could be ignored since it is highly unlikely that entities of early generations are still stored somewhere,
             // but this fact could be exploited...
-            let datum = &self.data.0[entity.index() as usize];
-            entities[i] = Entity::new(entity.index(), datum.generation + 1);
+            let datum = &self.data.0[free as usize];
+            entities[i] = Entity::new(free, datum.generation + 1);
         }
 
         let remaining = entities.len() - count;
@@ -123,28 +123,30 @@ impl Entities {
 
         // TODO: What to do if 'index + remaining >= u32::MAX'?
         // Note that 'u32::MAX' is used as a sentinel so it must be an invalid entity index.
-        let index = self.data.1.fetch_add(remaining, Ordering::Relaxed);
+        let index = self.data.1.fetch_add(remaining as u32, Ordering::Relaxed);
         for i in 0..remaining {
-            entities[count + i] = Entity::new((index + i) as u32, 0);
+            entities[count + i] = Entity::new(index + i as u32, 0);
         }
         count
     }
 
     pub(crate) fn resolve(&mut self) {
-        self.data.0.resize(*self.data.1.get_mut(), Datum::DEFAULT);
+        let reserved = *self.data.1.get_mut() as usize;
+        self.data.0.resize(reserved, Datum::DEFAULT);
         let free = self.free.1.get_mut();
         let count = (*free).max(0) as usize;
         self.free.0.truncate(count);
-        *free = self.free.0.len() as isize;
+        *free = self.free.0.len() as i64;
     }
 
     pub(crate) fn release(&mut self, entities: impl IntoIterator<Item = Entity>) {
         let index = self.free.0.len();
-        self.free.0.extend(entities);
-        for &entity in &self.free.0[index..] {
-            self.data.0[entity.index() as usize].update(u32::MAX, u32::MAX);
+        let indices = entities.into_iter().map(|entity| entity.index());
+        self.free.0.extend(indices);
+        for &free in &self.free.0[index..] {
+            self.data.0[free as usize].update(u32::MAX, u32::MAX);
         }
-        *self.free.1.get_mut() = self.free.0.len() as isize;
+        *self.free.1.get_mut() = self.free.0.len() as i64;
     }
 
     #[inline]

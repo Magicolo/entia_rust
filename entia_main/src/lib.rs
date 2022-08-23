@@ -114,6 +114,119 @@ pub fn identify() -> usize {
 #[cfg(test)]
 mod test;
 
+pub mod pouahl {
+    use super::*;
+    use crate::store::Store;
+    use std::{
+        any::TypeId,
+        collections::HashSet,
+        sync::{
+            atomic::{AtomicI64, AtomicU32},
+            Arc,
+        },
+    };
+
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    pub struct Entity(u32, u32);
+
+    impl Entity {
+        pub const NULL: Entity = Entity(u32::MAX, u32::MAX);
+
+        #[inline]
+        pub const fn generation(&self) -> u32 {
+            self.0
+        }
+
+        #[inline]
+        pub const fn index(&self) -> u32 {
+            self.1
+        }
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    pub struct Datum {
+        generation: u32,
+        segment: u32,
+        store: u32,
+    }
+
+    pub struct Family {
+        parent: u32,
+        first_child: u32,
+        next_sibling: u32,
+        // children: u32,
+        // previous_sibling: u32,
+        // last_child: u32,
+    }
+
+    pub struct Segment {
+        identifier: usize,
+        count: usize,
+        capacity: usize,
+        reserved: AtomicU32,
+        disable_store: Arc<Store>,
+        family_store: Arc<Store>,
+        component_stores: Box<[Arc<Store>]>,
+        component_types: HashSet<TypeId>,
+    }
+
+    pub struct Segments {
+        segments: Vec<Segment>,
+        data: (Vec<Datum>, AtomicU32),
+        free: (Vec<u32>, AtomicI64),
+    }
+
+    /*
+    Disabling components:
+    - Add a `dynamic: usize` count to segments.
+    - The first `0..dynamic` slots in a segment must do dynamic validation with the `disable_store` of the entities.
+    - The next `dynamic..count` slots can be iterated unconditionally.
+    - This allows any entity to become dynamic.
+    - May require swaping entities on `Enable/Disable` so it depends on (Write<Entities>, Write<Segment>).
+
+    OR
+
+    - Add a `dynamic: bool` (or a flag) to segments.
+    - Some segments can be created dynamic.
+    - They are always iterated with dynamic validation.
+    - This requires to declare an entity as dynamic at creation-time.
+        - `Enable/Disable<C>` could require that `C` implements the `Disable` unsafe tag trait.
+        - The `Component` trait would then have a `fn dynamic() -> bool` function that would be required to agree with
+        its `Disable` implementation.
+        - Then, the dynamic nature of the component would be stored in its `Meta`.
+    - `Query` (or `&C`?) will depend on `Read(disable_store)`.
+    - `Enable/Disable::resolve` will only depend on `Write(disable_store)`.
+    */
+
+    /*
+    - BAD: Entity creation could be heavily biased to always increment the generations of the last chunk of the segment.
+    - BAD: How will entities be destroyed if they can't be moved? `Destroy` needs to swap entities.
+
+    - Creating an entity: best case.
+        let entity_index = segments.free.1.fetch_sub(1, Ordering::Relaxed); // entity_index >= 0; // (since it is the best case)
+        let store_index = segment.reserved.fetch_add(1, Ordering::Relaxed); // store_index < capacity; // (since it is the best case)
+        let generation = generation_store.get(store_index).increment();
+        // Initialize family, if required.
+        // Initialize components, if any.
+        Entity(generation, entity_index)
+
+    - Creating an entity: worst case.
+        let entity_index = segments.free.1.fetch_sub(1, Ordering::Relaxed); // entity_index < 0; // (since it is the best case)
+        let store_index = segment.reserved.fetch_add(1, Ordering::Relaxed); // store_index < capacity; // (since it is the best case)
+        let generation = generation_store.get(store_index).increment();
+        // Initialize family, if required.
+        // Initialize components, if any.
+        Entity(generation, entity_index)
+
+    - Get parent.
+        let child_datum = segments.indices.get(child.index())?;
+        let child_segment = segments.segments.get(child_datum.segment)?;
+        let child_family = child_segment.family_store.get(child_datum.store);
+        let parent_datum = segments.indices.get(child_family.parent)?;
+        Entity(parent_datum.generation, child_family.parent)
+    */
+}
+
 pub mod poulah {
     use super::*;
     use crate::{error::Result, item::Item, segment::Segment};
