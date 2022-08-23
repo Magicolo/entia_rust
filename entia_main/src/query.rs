@@ -7,7 +7,7 @@ use crate::{
     inject::{Adapt, Context, Get, Inject},
     item::{At, Item},
     resource::{Read, Write},
-    segment::{Segment, Segments},
+    segment::Segments,
 };
 use std::{
     any::type_name,
@@ -93,12 +93,12 @@ unsafe impl<I: Item + 'static, F: Filter + 'static> Inject for Query<'_, I, F> {
     }
 
     fn depend(state: &Self::State) -> Vec<Dependency> {
-        let mut dependencies = Read::<Entities>::depend(&state.entities);
+        let mut dependencies = Read::depend(&state.inner.read());
+        dependencies.extend(Read::depend(&state.entities));
+        dependencies.extend(Read::depend(&state.segments));
         for (item, segment) in state.inner.states.iter() {
-            dependencies.push(Dependency::read::<Segment>(
-                state.segments[*segment].identifier(),
-            ));
-            dependencies.append(&mut I::depend(item));
+            dependencies.push(Dependency::read_at(state.segments[*segment].identifier()));
+            dependencies.extend(I::depend(item));
         }
         dependencies
     }

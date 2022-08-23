@@ -7,7 +7,7 @@ use crate::{
     family::template::{EntityIndices, Families, Family, SegmentIndices},
     inject::{Adapt, Context, Get, Inject},
     meta::Metas,
-    resource::Write,
+    resource::{Read, Write},
     segment::Segments,
     template::{ApplyContext, CountContext, DeclareContext, InitializeContext, Spawn, Template},
 };
@@ -48,6 +48,12 @@ struct Defer<T: Template> {
     entity_indices: Vec<EntityIndices>,
     segment_indices: Box<[SegmentIndices]>,
 }
+
+/*
+TODO: Add a resolve parameter to `Create<'a, T, R = Early>` to allow resolving creation of entities at the end.
+- `Create<'a, T, Late>` would have its own versions of creation functions (`all`, `one`, etc.) that does not give out entities.
+    - This would prevent other systems from observing the uninitialized entity.
+*/
 
 impl<T: Template> Create<'_, T> {
     pub fn all(&mut self, templates: impl IntoIterator<Item = T>) -> Families {
@@ -287,17 +293,29 @@ where
     }
 
     fn depend(State(state): &Self::State) -> Vec<Dependency> {
-        defer::Defer::depend(state)
+        let Outer {
+            entities,
+            segments,
+            inner,
+            ..
+        } = state.as_ref();
+        let mut dependencies = defer::Defer::depend(state);
+        dependencies.extend(Read::depend(&entities.read()));
+        dependencies.extend(Read::depend(&segments.read()));
+        for &SegmentIndices { segment, .. } in inner.segment_indices.iter() {
+            dependencies.push(Dependency::read_at(segments[segment].identifier()));
+        }
+        dependencies
     }
 }
 
-impl<T: Template> Resolve for Outer<T> {
+unsafe impl<T: Template> Resolve for Outer<T> {
     type Item = Defer<T>;
 
     fn pre(&mut self) -> Result {
         self.entities.resolve();
-        for segment_indices in self.inner.segment_indices.iter() {
-            self.segments[segment_indices.segment].resolve();
+        for &SegmentIndices { segment, .. } in self.inner.segment_indices.iter() {
+            self.segments[segment].resolve();
         }
         Ok(())
     }
@@ -345,14 +363,18 @@ impl<T: Template> Resolve for Outer<T> {
     }
 
     fn depend(&self) -> Vec<Dependency> {
-        todo!()
-        // let mut dependencies = self.0.depend();
-        // let state = self.0.as_ref();
-        // dependencies.push(Dependency::defer::<Entities>());
-        // for indices in state.inner.segment_indices.iter() {
-        //     dependencies.push(Dependency::defer::<Entity>().at(indices.segment));
-        // }
-        // dependencies
+        let Outer {
+            inner,
+            entities,
+            segments,
+            ..
+        } = self;
+        let mut dependencies = Write::depend(entities);
+        dependencies.extend(Read::depend(&segments.read()));
+        for &SegmentIndices { segment, .. } in inner.segment_indices.iter() {
+            dependencies.push(Dependency::write_at(segments[segment].identifier()));
+        }
+        dependencies
     }
 }
 

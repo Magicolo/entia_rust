@@ -82,7 +82,7 @@ unsafe impl<R: 'static> Inject for Destroy<'_, R> {
     }
 }
 
-impl Resolve for Inner {
+unsafe impl Resolve for Inner {
     type Item = Defer;
 
     fn resolve(&mut self, items: impl FullIterator<Item = Self::Item>) -> Result {
@@ -174,11 +174,9 @@ impl Resolve for Inner {
     }
 
     fn depend(&self) -> Vec<Dependency> {
-        todo!()
-        // let mut dependencies = self.0.depend();
-        // dependencies.push(Dependency::defer::<Entities>());
-        // dependencies.push(Dependency::defer::<Entity>());
-        // dependencies
+        let mut dependencies = Write::depend(&self.entities);
+        dependencies.extend(Write::depend(&self.segments));
+        dependencies
     }
 }
 

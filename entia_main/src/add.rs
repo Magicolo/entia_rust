@@ -179,7 +179,7 @@ impl<'a, T: LeafTemplate + 'static, R: 'static> At<'a, usize> for State<T, R> {
     }
 }
 
-impl<T: Template> Resolve for Outer<T> {
+unsafe impl<T: Template> Resolve for Outer<T> {
     type Item = Defer<T>;
 
     fn resolve(&mut self, items: impl FullIterator<Item = Self::Item>) -> Result {

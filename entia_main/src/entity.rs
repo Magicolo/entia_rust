@@ -3,7 +3,7 @@ use crate::{
     error::Result,
     inject::{Adapt, Context},
     item::{At, Item},
-    segment::Segment,
+    segment::{Segment, Segments},
     store::Store,
 };
 use std::{
@@ -75,12 +75,17 @@ impl Item for Entity {
     ) -> Result<Self::State> {
         Ok(State {
             store: segment.entity_store(),
-            segment: segment.index(),
+            segment: segment.identifier(),
         })
     }
 
     fn depend(state: &Self::State) -> Vec<Dependency> {
-        vec![Dependency::read::<Entity>(state.store.identifier()).at(state.segment)]
+        vec![
+            Dependency::read::<Segments>(),
+            Dependency::read_at(state.segment),
+            Dependency::read::<Entity>(),
+            Dependency::write_at(state.store.identifier()),
+        ]
     }
 }
 
@@ -90,7 +95,7 @@ impl<'a> At<'a> for State {
     type Mut = Self::Ref;
 
     fn get(&'a self, segment: &Segment) -> Option<Self::State> {
-        debug_assert_eq!(self.segment, segment.index());
+        debug_assert_eq!(self.segment, segment.identifier());
         Some((self.store.data(), segment.count()))
     }
 
@@ -111,7 +116,7 @@ macro_rules! at {
             type Mut = Self::Ref;
 
             fn get(&'a self, segment: &Segment) -> Option<Self::State> {
-                debug_assert_eq!(self.segment, segment.index());
+                debug_assert_eq!(self.segment, segment.identifier());
                 Some((self.store.data(), segment.count()))
             }
 

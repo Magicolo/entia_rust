@@ -16,7 +16,7 @@ use std::{
 type Module = dyn Any + Send + Sync;
 
 #[derive(Debug, Default)]
-pub struct Metas {
+pub(crate) struct Metas {
     metas: Vec<Arc<Meta>>,
     indices: HashMap<TypeId, usize>,
 }

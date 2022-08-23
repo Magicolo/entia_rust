@@ -3,12 +3,12 @@ use crate::{
     error::{Error, Result},
     identify,
     inject::{Adapt, Context, Get, Inject},
-    resource::Write,
+    resource::{Read, Write},
 };
 use entia_core::FullIterator;
 use std::{
     any::Any,
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     iter::once,
     marker::PhantomData,
     sync::atomic::{AtomicUsize, Ordering},
@@ -28,6 +28,7 @@ pub struct State<T> {
 }
 
 struct Resolver {
+    identifier: usize,
     state: Box<dyn Any + Send + Sync>,
     post: fn(&mut dyn Any) -> Result,
     resolve: fn(&mut dyn Any, usize) -> Result,
@@ -47,7 +48,7 @@ struct Inner {
     resolvers: Vec<Resolver>,
 }
 
-pub trait Resolve {
+pub unsafe trait Resolve {
     type Item;
 
     fn resolve(&mut self, items: impl FullIterator<Item = Self::Item>) -> Result;
@@ -82,6 +83,7 @@ impl Resolver {
         R::Item: Send + Sync,
     {
         Self {
+            identifier: identify(),
             state: Box::new((
                 state,
                 Vec::<(usize, usize)>::new(),
@@ -164,7 +166,7 @@ where
         input: Self::Input,
         mut context: Context<Self::State, A>,
     ) -> Result<Self::State> {
-        let mut outer = Write::<Outer>::initialize(None, context.map(|state| &mut state.outer))?;
+        let mut outer = Write::initialize(None, context.map(|state| &mut state.outer))?;
         let identifier = context.identifier();
         let inner = {
             match outer.indices.get(&identifier) {
@@ -194,16 +196,17 @@ where
         context.schedule(|state, mut schedule| {
             let outer = &state.outer;
             let inner = &outer.inners[state.inner];
-            // Accumulate the dependencies of previous resolvers (including self) because some of their items may be resolved by
-            // this run. This assumes that 'schedule' is called in the same order as 'initialize'.
-            let dependencies = inner.resolvers[..=state.resolver]
-                .iter()
-                .enumerate()
-                // TODO: Combine these in a way that remove inner conflicts between resolvers (keep the stricter dependencies).
-                .flat_map(|(index, resolver)| {
-                    once(Dependency::write::<Inner>(inner.identifier).at(index))
-                        .chain(resolver.depend())
-                });
+
+            // Accumulate the dependencies of previous resolvers (including self) because some of their items may be resolved by this run.
+            let mut dependencies = Read::depend(&outer.read());
+            dependencies.push(Dependency::write_at(inner.identifier));
+            merge(
+                &mut dependencies,
+                inner.resolvers[..=state.resolver].iter().map(|resolver| {
+                    once(Dependency::write_at(resolver.identifier)).chain(resolver.depend())
+                }),
+            );
+
             schedule.post(
                 |state| {
                     let inner = &mut state.outer.inners[state.inner];
@@ -279,7 +282,11 @@ where
 
     fn depend(state: &Self::State) -> Vec<Dependency> {
         let inner = &state.outer.inners[state.inner];
-        vec![Dependency::write::<Inner>(inner.identifier).at(state.resolver)]
+        let resolver = &inner.resolvers[state.resolver];
+        let mut dependencies = Read::depend(&state.outer.read());
+        dependencies.push(Dependency::read_at(inner.identifier));
+        dependencies.push(Dependency::write_at(resolver.identifier));
+        dependencies
     }
 }
 
@@ -316,4 +323,34 @@ impl<R: Resolve + 'static> AsMut<R> for State<R> {
         let resolver = &mut self.outer.inners[self.inner].resolvers[self.resolver];
         &mut resolver.state_mut::<R>().unwrap().0
     }
+}
+
+/// Combines dependencies in a way that removes inner conflicts between resolvers (keep the stricter dependencies).
+fn merge<D: IntoIterator<Item = Dependency>, I: IntoIterator<Item = D>>(
+    dependencies: &mut Vec<Dependency>,
+    inputs: I,
+) {
+    let mut reads = HashSet::new();
+    let mut writes = HashSet::new();
+    let mut current = HashSet::new();
+    for input in inputs {
+        current.clear();
+        for dependency in input {
+            match dependency {
+                Dependency::Read(identifier) if current.insert(identifier) => {
+                    if writes.contains(&identifier) {
+                        reads.remove(&identifier);
+                    } else {
+                        reads.insert(identifier);
+                    }
+                }
+                Dependency::Write(identifier) if current.insert(identifier) => {
+                    writes.insert(identifier);
+                }
+                dependency => dependencies.push(dependency),
+            }
+        }
+    }
+    dependencies.extend(reads.into_iter().map(Dependency::Read));
+    dependencies.extend(writes.into_iter().map(Dependency::Write));
 }

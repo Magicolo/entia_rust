@@ -421,11 +421,7 @@ unsafe impl<I: Inject, const N: usize> Inject for [I; N] {
     }
 
     fn depend(state: &Self::State) -> Vec<Dependency> {
-        let mut dependencies = Vec::new();
-        for item in state {
-            dependencies.append(&mut I::depend(&item));
-        }
-        dependencies
+        state.iter().flat_map(I::depend).collect()
     }
 }
 
@@ -470,7 +466,7 @@ macro_rules! inject {
 
             fn depend(($($p,)*): &Self::State) -> Vec<Dependency> {
                 let mut _dependencies = Vec::new();
-                $(_dependencies.append(&mut $t::depend($p));)*
+                $(_dependencies.extend($t::depend($p));)*
                 _dependencies
             }
         }

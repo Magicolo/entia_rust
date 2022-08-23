@@ -2,9 +2,10 @@ use self::keep::{IntoKeep, Keep};
 use crate::{
     depend::Dependency,
     error::Result,
-    inject::{Get, Inject, Adapt, Context},
+    identify,
+    inject::{Adapt, Context, Get, Inject},
     meta::Describe,
-    resource::Write,
+    resource::{Read, Write},
 };
 use std::{collections::VecDeque, iter::FusedIterator, marker::PhantomData};
 
@@ -12,6 +13,7 @@ pub trait Message: Clone + Describe {}
 impl<T: Clone + Describe> Message for T {}
 
 struct Queue<T> {
+    identifier: usize,
     keep: Keep,
     items: VecDeque<T>,
 }
@@ -146,7 +148,10 @@ pub mod emit {
             _: Self::Input,
             mut context: Context<Self::State, A>,
         ) -> Result<Self::State> {
-            Ok(State(Write::initialize(None, context.map(|State(state)| state))?))
+            Ok(State(Write::initialize(
+                None,
+                context.map(|State(state)| state),
+            )?))
         }
 
         fn depend(State(state): &Self::State) -> Vec<Dependency> {
@@ -234,6 +239,7 @@ pub mod receive {
             let queue = {
                 let index = inner.queues.len();
                 inner.queues.push(Queue {
+                    identifier: identify(),
                     keep: K::keep(),
                     items: VecDeque::new(),
                 });
@@ -246,8 +252,10 @@ pub mod receive {
             })
         }
 
-        fn depend(state: &Self::State) -> Vec<Dependency> {
-            Dependency::map_at(Write::depend(&state.inner), state.queue).collect()
+        fn depend(State { inner, queue, .. }: &Self::State) -> Vec<Dependency> {
+            let mut dependencies = Read::depend(&inner.read());
+            dependencies.push(Dependency::write_at(inner.queues[*queue].identifier));
+            dependencies
         }
     }
 

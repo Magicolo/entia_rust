@@ -120,7 +120,7 @@ pub mod adopt {
         }
     }
 
-    impl Resolve for Inner {
+    unsafe impl Resolve for Inner {
         type Item = Defer;
 
         fn resolve(&mut self, items: impl FullIterator<Item = Self::Item>) -> Result {
@@ -147,10 +147,7 @@ pub mod adopt {
         }
 
         fn depend(&self) -> Vec<Dependency> {
-            todo!()
-            // let mut dependencies = self.0.depend();
-            // dependencies.push(Dependency::defer::<Entity>());
-            // dependencies
+            Write::depend(&self.0)
         }
     }
 
@@ -225,7 +222,7 @@ pub mod reject {
         }
     }
 
-    impl Resolve for Inner {
+    unsafe impl Resolve for Inner {
         type Item = Defer;
 
         fn resolve(&mut self, items: impl FullIterator<Item = Self::Item>) -> Result {
@@ -252,10 +249,7 @@ pub mod reject {
         }
 
         fn depend(&self) -> Vec<Dependency> {
-            todo!()
-            // let mut dependencies = self.0.depend();
-            // dependencies.push(Dependency::defer::<Entity>());
-            // dependencies
+            Write::depend(&self.0)
         }
     }
 

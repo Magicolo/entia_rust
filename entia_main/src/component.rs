@@ -4,7 +4,7 @@ use crate::{
     inject::{Adapt, Context},
     item::{At, Item},
     meta::{Describe, Meta},
-    segment::Segment,
+    segment::{Segment, Segments},
     store::Store,
 };
 use std::{
@@ -26,11 +26,6 @@ impl<T: Describe> Component for T {}
 
 impl<T> Write<T> {
     #[inline]
-    pub const fn segment(&self) -> usize {
-        self.segment
-    }
-
-    #[inline]
     pub fn store(&self) -> &Store {
         &self.store
     }
@@ -38,6 +33,15 @@ impl<T> Write<T> {
     #[inline]
     pub fn meta(&self) -> &Meta {
         self.store().meta()
+    }
+
+    #[inline]
+    pub fn read(&self) -> Read<T> {
+        Read(Self {
+            store: self.store.clone(),
+            segment: self.segment,
+            _marker: PhantomData,
+        })
     }
 }
 
@@ -50,13 +54,18 @@ impl<C: Component> Item for Write<C> {
     ) -> Result<Self::State> {
         Ok(Self {
             store: segment.component_store(TypeId::of::<C>())?,
-            segment: segment.index(),
+            segment: segment.identifier(),
             _marker: PhantomData,
         })
     }
 
     fn depend(state: &Self::State) -> Vec<Dependency> {
-        vec![Dependency::write::<C>(state.store().identifier()).at(state.segment())]
+        vec![
+            Dependency::read::<Segments>(),
+            Dependency::read_at(state.segment),
+            Dependency::read::<C>(),
+            Dependency::write_at(state.store.identifier()),
+        ]
     }
 }
 
@@ -85,7 +94,7 @@ where
 
     #[inline]
     fn get(&'a self, segment: &Segment) -> Option<Self::State> {
-        debug_assert_eq!(self.segment(), segment.index());
+        debug_assert_eq!(self.segment, segment.identifier());
         Some((self.store().data(), segment.count()))
     }
 
@@ -101,11 +110,6 @@ where
 }
 
 impl<T> Read<T> {
-    #[inline]
-    pub const fn segment(&self) -> usize {
-        self.0.segment()
-    }
-
     #[inline]
     pub fn store(&self) -> &Store {
         self.0.store()
@@ -127,8 +131,13 @@ impl<C: Component> Item for Read<C> {
         Write::initialize(segment, context.map(|Self(state)| state)).map(Self)
     }
 
-    fn depend(state: &Self::State) -> Vec<Dependency> {
-        vec![Dependency::read::<C>(state.store().identifier()).at(state.segment())]
+    fn depend(Self(state): &Self::State) -> Vec<Dependency> {
+        vec![
+            Dependency::read::<Segments>(),
+            Dependency::read_at(state.segment),
+            Dependency::read::<C>(),
+            Dependency::read_at(state.store.identifier()),
+        ]
     }
 }
 

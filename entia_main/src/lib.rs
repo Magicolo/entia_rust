@@ -27,19 +27,19 @@ pub mod template;
 pub mod world;
 
 /*
-- Use this structure when defining a dependency paths:
-    - The last item may be a read or write dependency.
-    - The rest of the path is a read dependency.
-    - Example: [
-        Dependency::read(world.identifier()),
-        Dependency::read(resources.identifier()), // Resources store.
-        Dependency::read(entities.identifier()), // Entities store
-        Dependency::read(TypeId::of::<Datum>()),
-        Dependency::write(Field::of::<Datum>("a")), // Probably better to use a type here.
-    ]
-    - A helper macro could be defined:
-        - depend::write!(entities::<Datum>::{ a, b })
-        - depend::read!(store.0::<Datum>::{ a, b })
+- Remove `Entities` and store `Datum` in `Segments`.
+    - `Entity` would become `{ generation: u32, segment: u32, store: u32 }`
+    - `Datum` would become `{
+        generation: u32,
+        children: u32,
+        parent: { segment: u32, store: u32 },
+        first_child: { segment: u32, store: u32 },
+        last_child: { segment: u32, store: u32 },
+        previous_sibling: { segment: u32, store: u32 },
+        next_sibling: { segment: u32, store: u32 },
+    }` // 48 bytes
+    - Would allow to remove the conflict betweem `Create::resolve` (`Write::<Entities>`) and `Query` (`Read::<Entities>`) in most cases.
+    - Would allow to remove some conflicts between `Adopt`, `Reject`, `Destroy` as `Item` and `Create` as `Inject`.
 
 - With the chunks iterators, it could be possible to add chunk operations such as 'Destroy/Add/Remove/Adopt/Reject'.
 
@@ -47,18 +47,6 @@ pub mod world;
     - 'Query systems' may be divided in 'Chunk systems'.
         - Maybe 'Segment systems' would be a good enough approximation to split a system.
         - These systems must have no other purpose other than iterating a query, therefore their item dependencies do not overlap.
-
-- A smarter scheduler that overlaps more systems and anticipates blockers.
-    - Execution of systems should not be broken into 'Blocks' and should be more fluid to allow more overlap.
-    - When possible, move source blocking systems as far as possible from their target blocking systems.
-        - A compromise may have to be made when competing moves occur. How to resolve?
-    - A thread pool with a system queue will most likely be more appropriate than the current 'rayon' implementation.
-    - 1. Begin by running all parallel-safe systems.
-    - 2. Look for the next blocking system and increase the execution priority of systems with incompatible dependencies.
-    - 3. As soon as the next blocking system has become non-blocking, begin its execution.
-        - Use a channel to check the block status when a relevant system finishes.
-    - 4. Systems with compatible dependencies may continue to execute at the same time as the previously blocking system.
-    - 5. Repeat steps [2..].
 
 - Add a 'Plan<I: Inject, O: IntoOutput, F: FnMut(I) -> O, N = 1> { queues: &mut [Queue<Plan<I>>], last: usize }' injectable.
     - Allows to schedule runs dynamically based on the static dependencies of 'I'.
@@ -116,7 +104,7 @@ pub use crate::{
     world::World,
 };
 pub(crate) use entia_macro::{tuples_16 as tuples, tuples_with_16 as tuples_with};
-pub use entia_main_derive::{Component, Depend, Filter, Message, Resource, Template};
+pub use entia_main_derive::{Filter, Template};
 
 pub fn identify() -> usize {
     static COUNTER: AtomicUsize = AtomicUsize::new(1);
@@ -184,14 +172,6 @@ pub mod poulah {
             A::at_mut(state, index).get()
         }
     }
-
-    // unsafe impl<D: Depend, K> Depend for State<D, K> {
-    //     fn depend(&self) -> Vec<depend::Dependency> {
-    //         // TODO: Adapt the dependency model to support 'Get'.
-    //         // TODO: Modify the inner dependencies such that they become more specific with 'K'.
-    //         todo!()
-    //     }
-    // }
 
     pub mod position2 {
         #![allow(non_camel_case_types)]

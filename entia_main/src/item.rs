@@ -33,14 +33,11 @@ impl<I: Item> Item for Option<I> {
         segment: &Segment,
         mut context: Context<Self::State, A>,
     ) -> Result<Self::State> {
-        Ok(I::initialize(segment, context.flat_map(|state| state.as_mut())).ok())
+        Ok(I::initialize(segment, context.flat_map(Option::as_mut)).ok())
     }
 
     fn depend(state: &Self::State) -> Vec<Dependency> {
-        match state {
-            Some(state) => I::depend(state),
-            None => vec![],
-        }
+        state.iter().flat_map(I::depend).collect()
     }
 }
 
@@ -103,7 +100,7 @@ macro_rules! item {
 
             fn depend(($($p,)*): &Self::State) -> Vec<Dependency> {
                 let mut _dependencies = Vec::new();
-                $(_dependencies.append(&mut $t::depend($p));)*
+                $(_dependencies.extend($t::depend($p));)*
                 _dependencies
             }
         }

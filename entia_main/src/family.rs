@@ -17,15 +17,13 @@ use std::{
 
 // Do not replace '&'a Entities' by 'Read<Entities>' to remove the lifetime. This would allow users store a module that has
 // dependencies which would effectively hide those dependencies and potentially cause non-deterministic behaviours.
-// - Ex: a system adopts could be scheduled in parallel with a system that reads the children of a family instead
-// of being scheduled in sequence because of the 'defer-read' dependency conflict that couldn't be seen.
 #[derive(Clone, Copy)]
 pub struct Family<'a>(Entity, &'a Entities);
 pub struct State(entity::State, resource::Read<Entities>);
 
 impl<'a> Family<'a> {
     #[inline]
-    pub(crate) const fn new(entity: Entity, entities: &'a Entities) -> Self {
+    pub const fn new(entity: Entity, entities: &'a Entities) -> Self {
         Self(entity, entities)
     }
 
@@ -142,17 +140,6 @@ impl fmt::Debug for Family<'_> {
 impl Item for Family<'_> {
     type State = State;
 
-    // fn initialize(
-    //     identifier: usize,
-    //     segment: &Segment,
-    //     world: &mut World,
-    // ) -> Result<Self::State, error::Error> {
-    //     Ok(State(
-    //         <Entity as Item>::initialize(identifier, segment, world)?,
-    //         resource::Read::<Entities>::initialize(None, identifier, world)?,
-    //     ))
-    // }
-
     fn initialize<A: Adapt<Self::State>>(
         segment: &Segment,
         mut context: Context<Self::State, A>,
@@ -164,8 +151,8 @@ impl Item for Family<'_> {
     }
 
     fn depend(state: &Self::State) -> Vec<Dependency> {
-        let mut dependencies = <Entity as Item>::depend(&state.0);
-        dependencies.append(&mut resource::Read::<Entities>::depend(&state.1));
+        let mut dependencies = Entity::depend(&state.0);
+        dependencies.extend(resource::Read::depend(&state.1));
         dependencies
     }
 }

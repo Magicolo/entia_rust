@@ -28,6 +28,11 @@ impl<T> Write<T> {
     pub fn meta(&self) -> &Meta {
         self.store().meta()
     }
+
+    #[inline]
+    pub fn read(&self) -> Read<T> {
+        Read(Self(self.0.clone(), PhantomData))
+    }
 }
 
 unsafe impl<R: Resource> Inject for &mut R {
@@ -60,7 +65,10 @@ unsafe impl<R: Resource> Inject for Write<R> {
     }
 
     fn depend(state: &Self::State) -> Vec<Dependency> {
-        vec![Dependency::write::<R>(state.store().identifier())]
+        vec![
+            Dependency::write::<R>(),
+            Dependency::write_at(state.store().identifier()),
+        ]
     }
 }
 
@@ -136,7 +144,10 @@ unsafe impl<R: Resource> Inject for Read<R> {
     }
 
     fn depend(state: &Self::State) -> Vec<Dependency> {
-        vec![Dependency::read::<R>(state.store().identifier())]
+        vec![
+            Dependency::read::<R>(),
+            Dependency::read_at(state.store().identifier()),
+        ]
     }
 }
 
