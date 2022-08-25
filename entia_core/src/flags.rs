@@ -91,10 +91,10 @@ impl<T, F: Clone> Clone for Flags<T, F> {
     }
 }
 
-impl<T: Default + Into<F>, F> Default for Flags<T, F> {
+impl<T, F: Default> Default for Flags<T, F> {
     #[inline]
     fn default() -> Self {
-        Self::from(T::default())
+        Self::new(F::default())
     }
 }
 

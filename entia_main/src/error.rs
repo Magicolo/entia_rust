@@ -10,7 +10,6 @@ pub enum Error {
     WrongSegment,
     WrongState,
     WrongInput,
-    MutexPoison,
     MissingSystem,
     MissingStore {
         identifier: TypeId,

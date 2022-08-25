@@ -6,6 +6,7 @@ use crate::{
     IntoSystem,
 };
 use entia_core::Change;
+use parking_lot::Mutex;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::{
     any::Any,
@@ -13,7 +14,7 @@ use std::{
     ops::Not,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc, Mutex,
+        Arc,
     },
     thread::yield_now,
 };
@@ -210,10 +211,10 @@ impl Runner {
         if *success.get_mut() {
             Ok(())
         } else {
-            Error::all(runs.iter_mut().filter_map(|run| match run.get_mut() {
-                Ok((_, state)) => state.error.take(),
-                Err(_) => Some(Error::MutexPoison),
-            }))
+            Error::all(
+                runs.iter_mut()
+                    .filter_map(|run| run.get_mut().1.error.take()),
+            )
             .flatten(true)
             .map_or(Err(Error::FailedToRun), Err)
         }
@@ -236,10 +237,7 @@ impl Runner {
                 // because this thread would've had to pause after the `fetch_add` and before the `lock` while another thread would've then
                 // gone through `fetch_add` itself up to its blocker `lock`. Even if this happened, the other thread detects this
                 // state and drops the lock immediately.
-                Some(run) => match run.lock() {
-                    Ok(guard) => guard,
-                    Err(_) => return false,
-                },
+                Some(run) => run.lock(),
                 None => return true,
             };
 
@@ -252,25 +250,21 @@ impl Runner {
                 // - Other threads are also trying to determine if this blocker is done. Since the lock is held for so little time, this
                 // should not be worth optimizing.
                 // - The blocker thread is executing. This contention exists by design to free up CPU resources while the execution completes.
-                match runs[blocker].lock() {
-                    Ok(guard) if guard.1.done == control => {
-                        drop(guard);
-                        done += 1
-                    }
-                    Ok(guard) if guard.1.error.is_some() => {
-                        drop(guard);
-                        return false;
-                    }
-                    Ok(guard) => {
-                        // When the lock is taken, it is expected that `done == control` except if a blocker thread paused
-                        // after `index.fetch_add` and before `run.lock`. Even though this is a spin lock, since this should happen
-                        // very rarely and is a very transient state, it is considered to be ok.
-                        // - `yield_now` is used to give the running thread a chance to acquire the lock.
-                        // - Drop the guard before yielding to allow the blocker thread to acquire the lock with fewer context switches.
-                        drop(guard);
-                        yield_now();
-                    }
-                    Err(_) => return false,
+                let guard = runs[blocker].lock();
+                if guard.1.done == control {
+                    drop(guard);
+                    done += 1
+                } else if guard.1.error.is_some() {
+                    drop(guard);
+                    return false;
+                } else {
+                    // When the lock is taken, it is expected that `done == control` except if a blocker thread paused
+                    // after `index.fetch_add` and before `run.lock`. Even though this is a spin lock, since this should happen
+                    // very rarely and is a very transient state, it is considered to be ok.
+                    // - `yield_now` is used to give the running thread a chance to acquire the lock.
+                    // - Drop the guard before yielding to allow the blocker thread to acquire the lock with fewer context switches.
+                    drop(guard);
+                    yield_now();
                 }
             }
 
@@ -290,13 +284,13 @@ impl Runner {
         // as shown by the second part. Make this better.
         let mut runs = &mut self.runs[..];
         while let Some((tail, rest)) = runs.split_last_mut() {
-            let (run, state) = tail.get_mut().map_err(|_| Error::MutexPoison)?;
+            let (run, state) = tail.get_mut();
             self.conflict
                 .detect(Scope::Inner, &run.dependencies, true)
                 .map_err(Error::Depend)?;
 
             for (i, rest) in rest.iter_mut().enumerate() {
-                let (previous, _) = rest.get_mut().map_err(|_| Error::MutexPoison)?;
+                let (previous, _) = rest.get_mut();
                 if let Err(error) =
                     self.conflict
                         .detect(Scope::Outer, &previous.dependencies, false)
@@ -313,10 +307,10 @@ impl Runner {
         let mut runs = &mut self.runs[..];
         let mut set = HashSet::new();
         while let Some((tail, rest)) = runs.split_last_mut() {
-            let (_, state) = tail.get_mut().map_err(|_| Error::MutexPoison)?;
+            let (_, state) = tail.get_mut();
             for &(blocker, _) in state.blockers.iter() {
                 // `rest[blocker]` ensures that `blocker < rest.len()` which is important when running.
-                let (_, previous) = rest[blocker].get_mut().map_err(|_| Error::MutexPoison)?;
+                let (_, previous) = rest[blocker].get_mut();
                 set.extend(previous.blockers.iter().map(|&(blocker, _)| blocker));
             }
             state.blockers.retain(|(blocker, _)| !set.contains(blocker));

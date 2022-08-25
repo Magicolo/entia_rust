@@ -74,7 +74,7 @@ impl Item for Entity {
         _: Context<Self::State, A>,
     ) -> Result<Self::State> {
         Ok(State {
-            store: segment.entity_store(),
+            store: segment.entity_store().clone(),
             segment: segment.identifier(),
         })
     }

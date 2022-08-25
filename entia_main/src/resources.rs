@@ -25,21 +25,21 @@ impl Resources {
         match self.0.get(&TypeId::of::<R>()) {
             Some(store) => Some(unsafe { store.replace(0, resource) }),
             None => {
-                let meta = self.with_metas(|metas| metas.get_or_add::<R>());
+                let meta = self.with_metas(|metas| metas.get_or_add::<R>(R::meta));
                 self.add_store(resource, meta);
                 None
             }
         }
     }
 
-    pub(crate) unsafe fn get_store<R: Resource>(
+    pub(crate) unsafe fn get_store<R: Resource, F: FnOnce() -> R>(
         &mut self,
-        initialize: impl FnOnce() -> R,
+        initialize: F,
     ) -> Arc<Store> {
         match self.0.get(&TypeId::of::<R>()) {
             Some(store) => store.clone(),
             None => {
-                let meta = self.with_metas(|metas| metas.get_or_add::<R>());
+                let meta = self.with_metas(|metas| metas.get_or_add::<R>(R::meta));
                 self.add_store(initialize(), meta)
             }
         }
@@ -50,7 +50,7 @@ impl Resources {
             Some(store) => map(unsafe { store.get(0) }),
             None => {
                 let mut metas = Metas::default();
-                let meta = metas.get_or_add::<Metas>();
+                let meta = metas.get_or_add::<Metas>(Metas::meta);
                 let store = self.add_store(metas, meta);
                 map(unsafe { store.get(0) })
             }
@@ -58,7 +58,7 @@ impl Resources {
     }
 
     fn add_store<T: Send + Sync + 'static>(&mut self, value: T, meta: Arc<Meta>) -> Arc<Store> {
-        assert_eq!(meta.identifier(), TypeId::of::<T>());
+        assert!(meta.is::<T>());
         let store = Arc::new(unsafe { Store::new(meta, 1) });
         unsafe { store.set(0, value) };
         self.0.insert(TypeId::of::<T>(), store.clone());

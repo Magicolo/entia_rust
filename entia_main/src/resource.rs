@@ -2,7 +2,7 @@ use crate::{
     depend::Dependency,
     error::Result,
     inject::{Adapt, Context, Get},
-    meta::{Describe, Meta},
+    meta::Meta,
     store::Store,
     Inject,
 };
@@ -15,8 +15,11 @@ use std::{
 pub struct Write<T>(Arc<Store>, PhantomData<T>);
 pub struct Read<T>(Write<T>);
 
-pub trait Resource: Default + Describe {}
-impl<T: Default + Describe> Resource for T {}
+pub trait Resource: Default + Send + Sync + 'static {
+    fn meta() -> Meta {
+        crate::meta!(Self)
+    }
+}
 
 impl<T> Write<T> {
     #[inline]
@@ -60,7 +63,7 @@ unsafe impl<R: Resource> Inject for Write<R> {
         mut context: Context<Self::State, A>,
     ) -> Result<Self::State> {
         let resources = context.world().resources();
-        let store = unsafe { resources.get_store::<R>(|| input.unwrap_or_else(R::default)) };
+        let store = unsafe { resources.get_store::<R, _>(|| input.unwrap_or_else(R::default)) };
         Ok(Self(store, PhantomData))
     }
 

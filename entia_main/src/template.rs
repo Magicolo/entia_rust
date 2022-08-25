@@ -116,7 +116,7 @@ impl<'a> DeclareContext<'a> {
     }
 
     pub fn meta<C: Component>(&mut self) -> Arc<Meta> {
-        let meta = self.metas.get_or_add::<C>();
+        let meta = self.metas.get_or_add::<C>(C::meta);
         self.segment_metas[self.metas_index].push(meta.clone());
         meta
     }
@@ -320,6 +320,7 @@ impl<'a> ApplyContext<'a> {
 
         let parent = entity_indices.parent.map_or(u32::MAX, |parent| {
             let parent = &mut initialize[parent - entity_offset];
+            parent.1.children += 1;
             if entity_indices.previous_sibling.is_none() {
                 parent.1.first_child = entity_instance.index();
             }
@@ -333,9 +334,10 @@ impl<'a> ApplyContext<'a> {
             entity_instance.index(),
             Datum {
                 generation: entity_instance.generation(),
-                store_index: store_index as u32,
-                segment_index: segment_index as u32,
+                store: store_index as u32,
+                segment: segment_index as u32,
                 parent,
+                children: 0,
                 first_child: u32::MAX,
                 last_child: u32::MAX,
                 previous_sibling,
@@ -460,16 +462,16 @@ pub struct Add<T>(T);
 unsafe impl<C: Component> StaticTemplate for Add<C> {}
 unsafe impl<C: Component> LeafTemplate for Add<C> {}
 
-impl<T> Add<T> {
+impl<C: Component> Add<C> {
     #[inline]
-    pub const fn new(component: T) -> Self {
+    pub const fn new(component: C) -> Self {
         Self(component)
     }
 }
 
-impl<T> From<T> for Add<T> {
+impl<C: Component> From<C> for Add<C> {
     #[inline]
-    fn from(component: T) -> Self {
+    fn from(component: C) -> Self {
         Add::new(component)
     }
 }
@@ -485,8 +487,9 @@ impl<C: Component> Template for Add<C> {
     fn initialize(state: Self::Input, context: InitializeContext) -> Self::State {
         context
             .segment()
-            .component_store(state.identifier())
-            .unwrap()
+            .store(state.identifier())
+            .cloned()
+            .expect("Expected store since it was declared above.")
     }
 
     fn static_count(_: &Self::State, _: CountContext) -> Result<bool> {

@@ -1,6 +1,7 @@
 use crate::{
     entity::Entity,
     error::{Error, Result},
+    resource::Resource,
 };
 use entia_core::{Maybe, Wrap};
 use std::{
@@ -15,8 +16,9 @@ use std::{
 
 type Module = dyn Any + Send + Sync;
 
-#[derive(Debug, Default)]
-pub(crate) struct Metas {
+#[derive(Debug)]
+pub struct Metas {
+    entity: Arc<Meta>,
     metas: Vec<Arc<Meta>>,
     indices: HashMap<TypeId, usize>,
 }
@@ -35,10 +37,6 @@ pub struct Meta {
     modules: HashMap<TypeId, Box<Module>>,
 }
 
-pub trait Describe: Send + Sync + 'static {
-    fn describe() -> Meta;
-}
-
 #[derive(Debug, Clone)]
 pub(crate) struct Defaulter {
     pub default: unsafe fn(target: (NonNull<()>, usize), count: usize),
@@ -55,28 +53,12 @@ pub(crate) struct Formatter {
     pub format: unsafe fn(source: NonNull<()>, index: usize) -> String,
 }
 
-impl<T: Send + Sync + 'static> Describe for T {
-    fn describe() -> Meta {
-        let mut modules: Vec<Box<dyn Any + Send + Sync>> = Vec::new();
-        if let Some(module) = Wrap::<Defaulter, Self>::default().maybe() {
-            modules.push(Box::new(module));
-        }
-        if let Some(module) = Wrap::<Cloner, Self>::default().maybe() {
-            modules.push(Box::new(module));
-        }
-        if let Some(module) = Wrap::<Formatter, Self>::default().maybe() {
-            modules.push(Box::new(module));
-        }
-        Meta::new::<Self, _>(modules)
-    }
-}
-
 impl Metas {
-    pub fn entity(&mut self) -> Arc<Meta> {
-        self.get_or_add::<Entity>()
+    pub fn entity(&self) -> Arc<Meta> {
+        self.entity.clone()
     }
 
-    pub fn get<T: Describe>(&self) -> Result<Arc<Meta>> {
+    pub fn get<T: Send + Sync + 'static>(&self) -> Result<Arc<Meta>> {
         self.get_with(TypeId::of::<T>())
     }
 
@@ -87,20 +69,16 @@ impl Metas {
         }
     }
 
-    pub fn get_or_add<T: Describe>(&mut self) -> Arc<Meta> {
-        self.get_or_add_with(TypeId::of::<T>(), T::describe)
-    }
-
-    pub fn get_or_add_with<M: FnOnce() -> Meta>(
+    pub fn get_or_add<T: Send + Sync + 'static>(
         &mut self,
-        identifier: TypeId,
-        meta: M,
+        add: impl FnOnce() -> Meta,
     ) -> Arc<Meta> {
+        let identifier = TypeId::of::<T>();
         match self.get_with(identifier) {
             Ok(meta) => meta,
             Err(_) => {
-                let meta = Arc::new(meta());
-                assert_eq!(meta.identifier(), identifier);
+                let meta = Arc::new(add());
+                assert!(meta.is::<T>());
                 self.indices.insert(identifier, self.metas.len());
                 self.metas.push(meta.clone());
                 meta
@@ -108,6 +86,21 @@ impl Metas {
         }
     }
 }
+
+impl Default for Metas {
+    fn default() -> Self {
+        let entity = Arc::new(crate::meta!(Entity));
+        let metas = vec![entity.clone()];
+        let indices = [(entity.identifier(), 0)].into();
+        Self {
+            entity,
+            metas,
+            indices,
+        }
+    }
+}
+
+impl Resource for Metas {}
 
 impl Deref for Metas {
     type Target = [Arc<Meta>];
@@ -170,6 +163,11 @@ impl Meta {
     }
 
     #[inline]
+    pub fn is<T: Send + Sync + 'static>(&self) -> bool {
+        self.identifier == TypeId::of::<T>()
+    }
+
+    #[inline]
     pub const fn name(&self) -> &'static str {
         self.name
     }
@@ -186,8 +184,8 @@ impl Meta {
         self.reset();
     }
 
-    pub fn default<T: 'static>(&self) -> Option<T> {
-        if TypeId::of::<T>() == self.identifier() {
+    pub fn default<T: Send + Sync + 'static>(&self) -> Option<T> {
+        if self.is::<T>() {
             let defaulter = self.defaulter.as_ref()?;
             Some(unsafe {
                 let mut target = MaybeUninit::<T>::uninit();
@@ -319,22 +317,17 @@ macro_rules! meta {
         use $crate::core::Maybe;
 
         let mut modules: std::vec::Vec<
-            Box<dyn std::any::Any + std::marker::Send + std::marker::Sync + 'static>,
+            std::boxed::Box<dyn std::any::Any + std::marker::Send + std::marker::Sync + 'static>,
         > = std::vec::Vec::new();
-
-        type Defaulter<T> = $crate::core::Wrap<$crate::meta::Defaulter, T>;
-        if let Some(module) = Defaulter::<$t>::default().maybe() {
+        if let Some(module) = $crate::core::Wrap::<$crate::meta::Defaulter, $t>::default().maybe() {
             modules.push(std::boxed::Box::new(module));
         }
-        type Cloner<T> = $crate::core::Wrap<$crate::meta::Cloner, T>;
-        if let Some(module) = Cloner::<$t>::default().maybe() {
+        if let Some(module) = $crate::core::Wrap::<$crate::meta::Cloner, $t>::default().maybe() {
             modules.push(std::boxed::Box::new(module));
         }
-        type Formatter<T> = $crate::core::Wrap<$crate::meta::Formatter, T>;
-        if let Some(module) = Formatter::<$t>::default().maybe() {
+        if let Some(module) = $crate::core::Wrap::<$crate::meta::Formatter, $t>::default().maybe() {
             modules.push(std::boxed::Box::new(module));
         }
-
         $crate::meta::Meta::new::<$t, _>(modules)
     }};
 }

@@ -124,23 +124,20 @@ unsafe impl Resolve for Inner {
                     }
                 }
 
-                let segment = &mut segments[datum.segment_index as usize];
+                let segment = &mut segments[datum.segment as usize];
                 // TODO: There may be a way to batch these removals.
-                if segment.remove_at(datum.store_index as usize) {
-                    let entity = *unsafe {
-                        segment
-                            .entity_store()
-                            .get::<Entity>(datum.store_index as usize)
-                    };
+                if segment.remove_at(datum.store as usize) {
+                    let entity =
+                        *unsafe { segment.entity_store().get::<Entity>(datum.store as usize) };
                     if !entities
                         .get_datum_at_mut(entity.index())
                         .expect("Entity must be valid.")
-                        .update(datum.store_index, datum.segment_index)
+                        .update(datum.store, datum.segment)
                     {
                         return Err(Error::FailedToUpdate {
                             entity: entity.index(),
-                            store: datum.store_index,
-                            segment: datum.segment_index,
+                            store: datum.store,
+                            segment: datum.segment,
                         });
                     }
                 }

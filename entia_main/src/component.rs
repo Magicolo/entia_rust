@@ -3,7 +3,7 @@ use crate::{
     error::Result,
     inject::{Adapt, Context},
     item::{At, Item},
-    meta::{Describe, Meta},
+    meta::Meta,
     segment::{Segment, Segments},
     store::Store,
 };
@@ -21,8 +21,11 @@ pub struct Write<T> {
 }
 pub struct Read<T>(Write<T>);
 
-pub trait Component: Describe {}
-impl<T: Describe> Component for T {}
+pub trait Component: Sized + Send + Sync + 'static {
+    fn meta() -> Meta {
+        crate::meta!(Self)
+    }
+}
 
 impl<T> Write<T> {
     #[inline]
@@ -53,7 +56,7 @@ impl<C: Component> Item for Write<C> {
         _: Context<Self::State, A>,
     ) -> Result<Self::State> {
         Ok(Self {
-            store: segment.component_store(TypeId::of::<C>())?,
+            store: segment.store(TypeId::of::<C>())?.clone(),
             segment: segment.identifier(),
             _marker: PhantomData,
         })

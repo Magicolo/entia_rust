@@ -3,7 +3,7 @@ use crate::{
     identify,
     meta::Meta,
 };
-use std::{any::TypeId, cell::Cell, ptr::NonNull, slice::from_raw_parts_mut, sync::Arc};
+use std::{cell::Cell, ptr::NonNull, slice::from_raw_parts_mut, sync::Arc};
 
 pub struct Store {
     identifier: usize,
@@ -40,7 +40,7 @@ impl Store {
     /// In order to be consistent with the requirements of 'Meta::new', 'T' is required to be 'Send + Sync'.
     #[inline]
     pub fn data<T: Send + Sync + 'static>(&self) -> *mut T {
-        debug_assert_eq!(TypeId::of::<T>(), self.meta().identifier());
+        debug_assert!(self.meta().is::<T>());
         self.data.get().as_ptr().cast()
     }
 
@@ -164,7 +164,8 @@ impl Store {
         self.data.set(NonNull::dangling());
     }
 
-    pub unsafe fn resize(&self, old_capacity: usize, new_capacity: usize) {
+    pub unsafe fn grow(&self, old_capacity: usize, new_capacity: usize) {
+        debug_assert!(old_capacity < new_capacity);
         let meta = self.meta();
         let old_pointer = self.data.get();
         let new_pointer = (self.meta().allocate)(new_capacity);

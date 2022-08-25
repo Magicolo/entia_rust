@@ -43,11 +43,19 @@ impl<'a> Family<'a> {
     }
 
     #[inline]
-    pub fn children(&self) -> impl DoubleEndedIterator<Item = Family<'a>> {
+    pub fn children(&self) -> impl FullIterator<Item = Family<'a>> {
         let Self(entity, entities) = *self;
         entities
             .children(entity)
             .map(move |child| Self(child, entities))
+    }
+
+    #[inline]
+    pub fn siblings(&self) -> impl FullIterator<Item = Family<'a>> {
+        let Self(entity, entities) = *self;
+        entities
+            .siblings(entity)
+            .map(move |sibling| Self(sibling, entities))
     }
 
     #[inline]
@@ -64,14 +72,6 @@ impl<'a> Family<'a> {
         entities
             .descendants(entity)
             .map(move |child| Self(child, entities))
-    }
-
-    #[inline]
-    pub fn siblings(&self) -> impl DoubleEndedIterator<Item = Family<'a>> {
-        let Self(entity, entities) = *self;
-        entities
-            .siblings(entity)
-            .map(move |sibling| Self(sibling, entities))
     }
 
     #[inline]

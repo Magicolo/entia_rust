@@ -4,13 +4,17 @@ use crate::{
     error::Result,
     identify,
     inject::{Adapt, Context, Get, Inject},
-    meta::Describe,
+    meta::Meta,
+    resource::Resource,
     resource::{Read, Write},
 };
 use std::{collections::VecDeque, iter::FusedIterator, marker::PhantomData};
 
-pub trait Message: Clone + Describe {}
-impl<T: Clone + Describe> Message for T {}
+pub trait Message: Clone + Send + Sync + 'static {
+    fn meta() -> Meta {
+        crate::meta!(Self)
+    }
+}
 
 struct Queue<T> {
     identifier: usize,
@@ -21,6 +25,8 @@ struct Queue<T> {
 struct Inner<T> {
     pub queues: Vec<Queue<T>>,
 }
+
+impl<T: Send + Sync + 'static> Resource for Inner<T> {}
 
 impl<T: Send + Sync + 'static> Default for Inner<T> {
     fn default() -> Self {

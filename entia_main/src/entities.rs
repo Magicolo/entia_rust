@@ -1,15 +1,24 @@
 use entia_core::FullIterator;
+use parking_lot::Mutex;
 
-use crate::entity::Entity;
+use crate::{entity::Entity, resource::Resource};
 use std::{
+    iter::FusedIterator,
     mem::replace,
-    sync::atomic::{AtomicI64, AtomicU32, Ordering},
+    sync::atomic::{AtomicI64, AtomicU64, Ordering},
 };
 
 pub struct Entities {
-    free: (Vec<u32>, AtomicI64),
-    data: (Vec<Datum>, AtomicU32),
+    free: (Vec<Entity>, AtomicI64),
+    data: (Vec<Datum>, AtomicU64),
+    // TODO: A overflow vector that store newly created entities.
+    // over: Mutex<Vec<Datum>>,
 }
+
+pub struct Children<'a>(u32, u32, u32, &'a Entities);
+pub struct Siblings<'a>(u32, Children<'a>);
+
+impl Resource for Entities {}
 
 impl Default for Entities {
     fn default() -> Self {
@@ -20,17 +29,13 @@ impl Default for Entities {
 #[derive(Clone)]
 pub struct Datum {
     // TODO: 'generation' doesn't strictly need to be stored in 'Datum'.
-    // An entity could be validated against '*world.segments.get(segment_index)?.stores[0].at::<Entity>(store_index) == entity'.
-    // Maybe 'root' or 'state' flags could take the spot of 'generation'?
+    // An entity could be validated against `segments.get(segment)?.entity_store().get::<Entity>(store).generation() == entity.generation()`.
     pub(crate) generation: u32,
-    pub(crate) store_index: u32,
-    // TODO: use the last 8 bits of this index to store 'state' information.
-    // - This will be used to determine the validity of the datum in a more reliable way.
-    // - If the determinant bits are used for state and that a valid datum has the state bits set to 0, the bounds check
-    // for segments will also be a validity check. 'world.segments.get(index)' will need to be used everywhere.
-    // - What happens when the number of segments overflows u24::MAX?
-    pub(crate) segment_index: u32,
+    pub(crate) segment: u32,
+    pub(crate) store: u32,
+
     pub(crate) parent: u32,
+    pub(crate) children: u32,
     pub(crate) first_child: u32,
     pub(crate) last_child: u32,
     pub(crate) previous_sibling: u32,
@@ -40,9 +45,10 @@ pub struct Datum {
 impl Datum {
     pub const DEFAULT: Datum = Datum {
         generation: 0,
-        store_index: u32::MAX,
-        segment_index: u32::MAX,
+        store: u32::MAX,
+        segment: u32::MAX,
         parent: u32::MAX,
+        children: 0,
         first_child: u32::MAX,
         last_child: u32::MAX,
         previous_sibling: u32::MAX,
@@ -52,8 +58,8 @@ impl Datum {
     #[inline]
     pub fn update(&mut self, store_index: u32, segment_index: u32) -> bool {
         if self.initialized() {
-            self.store_index = store_index;
-            self.segment_index = segment_index;
+            self.store = store_index;
+            self.segment = segment_index;
             true
         } else {
             false
@@ -67,12 +73,12 @@ impl Datum {
 
     #[inline]
     pub const fn initialized(&self) -> bool {
-        self.store_index < u32::MAX && self.segment_index < u32::MAX
+        self.store < u32::MAX && self.segment < u32::MAX
     }
 
     #[inline]
     pub const fn released(&self) -> bool {
-        self.store_index == u32::MAX && self.segment_index == u32::MAX
+        self.store == u32::MAX && self.segment == u32::MAX
     }
 
     #[inline]
@@ -95,6 +101,7 @@ impl Entities {
         Self {
             free: (Vec::with_capacity(capacity), 0.into()),
             data: (Vec::with_capacity(capacity), 0.into()),
+            // over: Mutex::new(Vec::new()),
         }
     }
 
@@ -103,50 +110,55 @@ impl Entities {
             return 0;
         }
 
+        let mut done = 0;
         let count = entities.len() as i64;
         let last = self.free.1.fetch_sub(count, Ordering::Relaxed);
-        let count = count.min(last).max(0) as usize;
-        for i in 0..count {
-            let index = last as usize - i - 1;
-            let free = self.free.0[index];
-            // TODO: What to do if there is an overflow?
-            // Overflow could be ignored since it is highly unlikely that entities of early generations are still stored somewhere,
-            // but this fact could be exploited...
-            let datum = &self.data.0[free as usize];
-            entities[i] = Entity::new(free, datum.generation + 1);
+        if last > 0 {
+            let count = count.min(last);
+            for &entity in self.free.0[(last - count) as usize..last as usize].iter() {
+                // It is technically possible that an entity reaches generation `u32::MAX`; in this case, its index is abandoned.
+                if entity.generation() < u32::MAX {
+                    entities[done] = Entity::new(entity.index(), entity.generation() + 1);
+                    done += 1;
+                }
+            }
+
+            if done == entities.len() {
+                return done;
+            }
         }
 
-        let remaining = entities.len() - count;
-        if remaining == 0 {
-            return count;
-        }
-
-        // TODO: What to do if 'index + remaining >= u32::MAX'?
+        let remain = entities.len() - done;
+        let mut index = self.data.1.fetch_add(remain as _, Ordering::Relaxed);
+        // Since all indices use `u32` for compactness, this index must remain under `u32::MAX`.
         // Note that 'u32::MAX' is used as a sentinel so it must be an invalid entity index.
-        let index = self.data.1.fetch_add(remaining as u32, Ordering::Relaxed);
-        for i in 0..remaining {
-            entities[count + i] = Entity::new(index + i as u32, 0);
+        assert!(index < u32::MAX as _);
+
+        while let Some(entity) = entities.get_mut(done) {
+            *entity = Entity::new(index as _, 0);
+            done += 1;
+            index += 1;
         }
-        count
+
+        done
     }
 
     pub(crate) fn resolve(&mut self) {
         let reserved = *self.data.1.get_mut() as usize;
         self.data.0.resize(reserved, Datum::DEFAULT);
-        let free = self.free.1.get_mut();
-        let count = (*free).max(0) as usize;
-        self.free.0.truncate(count);
-        *free = self.free.0.len() as i64;
     }
 
     pub(crate) fn release(&mut self, entities: impl IntoIterator<Item = Entity>) {
+        let count = self.free.1.get_mut();
+        self.free.0.truncate((*count).max(0) as usize);
+
         let index = self.free.0.len();
-        let indices = entities.into_iter().map(|entity| entity.index());
-        self.free.0.extend(indices);
+        self.free.0.extend(entities);
+        *count = self.free.0.len() as i64;
+
         for &free in &self.free.0[index..] {
-            self.data.0[free as usize].update(u32::MAX, u32::MAX);
+            self.data.0[free.index() as usize].update(u32::MAX, u32::MAX);
         }
-        *self.free.1.get_mut() = self.free.0.len() as i64;
     }
 
     #[inline]
@@ -181,23 +193,79 @@ impl Entities {
         self.data.0.get_mut(index as usize)
     }
 
+    // #[inline]
+    // pub(crate) fn with_datum<T>(
+    //     &self,
+    //     entity: Entity,
+    //     with: impl FnOnce(&Datum) -> T,
+    // ) -> Option<T> {
+    //     let index = entity.index() as usize;
+    //     if index < self.data.0.len() {
+    //         let datum = unsafe { self.data.0.get_unchecked(index) };
+    //         if datum.valid(entity.generation()) {
+    //             Some(with(datum))
+    //         } else {
+    //             None
+    //         }
+    //     } else {
+    //         let index = index - self.data.0.len();
+    //         let data = self.over.lock();
+    //         Some(with(data.get(index)?))
+    //     }
+    // }
+
+    // #[inline]
+    // pub(crate) fn with_datum_mut<T>(
+    //     &mut self,
+    //     entity: Entity,
+    //     with: impl FnOnce(&mut Datum) -> T,
+    // ) -> Option<T> {
+    //     let index = entity.index() as usize;
+    //     if index < self.data.0.len() {
+    //         let datum = unsafe { self.data.0.get_unchecked_mut(index) };
+    //         if datum.valid(entity.generation()) {
+    //             Some(with(datum))
+    //         } else {
+    //             None
+    //         }
+    //     } else {
+    //         let index = index - self.data.0.len();
+    //         let data = self.over.get_mut();
+    //         Some(with(data.get_mut(index)?))
+    //     }
+    // }
+
+    // #[inline]
+    // pub(crate) fn with_datum_at<T>(&self, index: u32, with: impl FnOnce(&Datum) -> T) -> Option<T> {
+    //     let index = index as usize;
+    //     if index < self.data.0.len() {
+    //         Some(with(unsafe { self.data.0.get_unchecked(index) }))
+    //     } else {
+    //         let index = index - self.data.0.len();
+    //         let data = self.over.lock();
+    //         Some(with(data.get(index)?))
+    //     }
+    // }
+
+    // #[inline]
+    // pub(crate) fn with_datum_at_mut<T>(
+    //     &mut self,
+    //     index: u32,
+    //     with: impl FnOnce(&mut Datum) -> T,
+    // ) -> Option<T> {
+    //     let index = index as usize;
+    //     if index < self.data.0.len() {
+    //         Some(with(unsafe { self.data.0.get_unchecked_mut(index) }))
+    //     } else {
+    //         let index = index - self.data.0.len();
+    //         let data = self.over.get_mut();
+    //         Some(with(data.get_mut(index)?))
+    //     }
+    // }
+
     #[inline]
     pub fn has(&self, entity: Entity) -> bool {
         self.get_datum(entity).is_some()
-    }
-
-    pub fn roots(&self) -> impl DoubleEndedIterator<Item = Entity> + '_ {
-        self.data
-            .0
-            .iter()
-            .enumerate()
-            .filter_map(move |(index, datum)| {
-                let entity = datum.entity(index as u32);
-                match self.parent(entity) {
-                    Some(_) => None,
-                    None => Some(entity),
-                }
-            })
     }
 
     pub fn root(&self, mut entity: Entity) -> Entity {
@@ -218,53 +286,20 @@ impl Entities {
         Some(parent.entity(datum.parent))
     }
 
-    pub fn children(&self, entity: Entity) -> impl DoubleEndedIterator<Item = Entity> + '_ {
-        struct Children<'a>(u32, u32, &'a Entities);
-
-        impl Iterator for Children<'_> {
-            type Item = Entity;
-
-            #[inline]
-            fn next(&mut self) -> Option<Self::Item> {
-                let datum = self.2.get_datum_at(self.0)?;
-                let entity = datum.entity(self.0);
-                self.0 = if self.0 == self.1 {
-                    u32::MAX
-                } else {
-                    datum.next_sibling
-                };
-                Some(entity)
-            }
-        }
-
-        impl DoubleEndedIterator for Children<'_> {
-            #[inline]
-            fn next_back(&mut self) -> Option<Self::Item> {
-                let datum = self.2.get_datum_at(self.1)?;
-                let entity = datum.entity(self.1);
-                self.1 = if self.0 == self.1 {
-                    u32::MAX
-                } else {
-                    datum.previous_sibling
-                };
-                Some(entity)
-            }
-        }
-
+    pub fn children(&self, entity: Entity) -> Children {
         let index = self
             .get_datum(entity)
-            .map_or((u32::MAX, u32::MAX), |datum| {
-                (datum.first_child, datum.last_child)
+            .map_or((u32::MAX, u32::MAX, 0), |datum| {
+                (datum.first_child, datum.last_child, datum.children)
             });
-        Children(index.0, index.1, self)
+        Children(index.0, index.1, index.2, self)
     }
 
-    pub fn siblings(&self, entity: Entity) -> impl DoubleEndedIterator<Item = Entity> + '_ {
-        self.parent(entity)
-            .map(|parent| self.children(parent))
-            .into_iter()
-            .flatten()
-            .filter(move |&child| child != entity)
+    pub fn siblings(&self, entity: Entity) -> Siblings {
+        self.parent(entity).map_or(
+            Siblings(u32::MAX, Children(u32::MAX, u32::MAX, 0, self)),
+            |parent| Siblings(entity.index(), self.children(parent)),
+        )
     }
 
     pub fn ancestors(&self, entity: Entity) -> impl FullIterator<Item = Entity> {
@@ -376,14 +411,12 @@ impl Entities {
     pub fn adopt_at(&mut self, parent: Entity, child: Entity, index: usize) -> Option<()> {
         if index == 0 {
             self.adopt_first(parent, child)
-        } else if index > u32::MAX as usize {
-            self.adopt_last(parent, child)
         } else {
-            let sibling = self.children(parent).nth(index);
-            if let Some(sibling) = sibling {
-                self.adopt_before(sibling, child)
-            } else {
+            let mut children = self.children(parent);
+            if index >= children.len() {
                 self.adopt_last(parent, child)
+            } else {
+                self.adopt_before(children.nth(index)?, child)
             }
         }
     }
@@ -392,6 +425,7 @@ impl Entities {
         self.detach_checked(parent, child)?;
 
         let parent_datum = self.get_datum_at_mut(parent.index()).unwrap();
+        parent_datum.children += 1;
         let first_child = parent_datum.first_child;
         parent_datum.first_child = child.index();
         if parent_datum.last_child == u32::MAX {
@@ -414,6 +448,7 @@ impl Entities {
         self.detach_checked(parent, child)?;
 
         let parent_datum = self.get_datum_at_mut(parent.index()).unwrap();
+        parent_datum.children += 1;
         let last_child = parent_datum.last_child;
         parent_datum.last_child = child.index();
         if parent_datum.first_child == u32::MAX {
@@ -437,6 +472,7 @@ impl Entities {
         self.detach_checked(parent, child)?;
 
         let parent_datum = self.get_datum_at_mut(parent.index()).unwrap();
+        parent_datum.children += 1;
         // No need to check 'last_child == u32::MAX' since this 'parent' must have at least one child (the 'sibling').
         if parent_datum.first_child == sibling.index() {
             parent_datum.first_child = child.index();
@@ -461,6 +497,7 @@ impl Entities {
         self.detach_checked(parent, child)?;
 
         let parent_datum = self.get_datum_at_mut(parent.index()).unwrap();
+        parent_datum.children += 1;
         // No need to check 'first_child == u32::MAX' since this 'parent' must have at least one child (the 'sibling').
         if parent_datum.last_child == sibling.index() {
             parent_datum.last_child = child.index();
@@ -501,6 +538,7 @@ impl Entities {
     pub fn reject_all(&mut self, parent: Entity) -> Option<usize> {
         let parent_datum = self.get_datum_mut(parent)?;
         let first_child = parent_datum.first_child;
+        parent_datum.children = 0;
         parent_datum.first_child = u32::MAX;
         parent_datum.last_child = u32::MAX;
 
@@ -560,6 +598,8 @@ impl Entities {
         next_sibling: u32,
     ) -> Option<()> {
         let parent = self.get_datum_at_mut(parent)?;
+        debug_assert!(parent.children > 0);
+        parent.children -= 1;
         if parent.first_child == child {
             parent.first_child = next_sibling;
         }
@@ -578,3 +618,87 @@ impl Entities {
         Some(())
     }
 }
+
+impl Iterator for Children<'_> {
+    type Item = Entity;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.2 == 0 {
+            return None;
+        } else {
+            self.2 -= 1;
+        }
+
+        let datum = self.3.get_datum_at(self.0)?;
+        let entity = datum.entity(self.0);
+        self.0 = datum.next_sibling;
+        Some(entity)
+    }
+}
+
+impl DoubleEndedIterator for Children<'_> {
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if self.2 == 0 {
+            return None;
+        } else {
+            self.2 -= 1;
+        }
+
+        let datum = self.3.get_datum_at(self.1)?;
+        let entity = datum.entity(self.1);
+        self.1 = datum.previous_sibling;
+        Some(entity)
+    }
+}
+
+impl ExactSizeIterator for Children<'_> {
+    #[inline]
+    fn len(&self) -> usize {
+        self.2 as usize
+    }
+}
+
+impl FusedIterator for Children<'_> {}
+
+impl Iterator for Siblings<'_> {
+    type Item = Entity;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        let entity = self.1.next()?;
+        if entity.index() == self.0 {
+            self.0 = u32::MAX;
+            self.1.next()
+        } else {
+            Some(entity)
+        }
+    }
+}
+
+impl DoubleEndedIterator for Siblings<'_> {
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        let entity = self.1.next_back()?;
+        if entity.index() == self.0 {
+            self.0 = u32::MAX;
+            self.1.next_back()
+        } else {
+            Some(entity)
+        }
+    }
+}
+
+impl ExactSizeIterator for Siblings<'_> {
+    #[inline]
+    fn len(&self) -> usize {
+        if self.0 == u32::MAX {
+            self.1.len()
+        } else {
+            self.1.len() - 1
+        }
+    }
+}
+
+impl FusedIterator for Siblings<'_> {}

@@ -2,14 +2,14 @@ use crate::{
     entity::Entity,
     error::{Error, Result},
     identify,
-    meta::Meta,
+    meta::{Meta, Metas},
+    resource::Resource,
     store::Store,
 };
 use entia_core::{utility::next_power_of_2, Flags, FullIterator, IntoFlags};
 use std::{
     any::TypeId,
     collections::HashSet,
-    iter::once,
     mem::replace,
     ops::{Deref, DerefMut},
     sync::{
@@ -22,6 +22,7 @@ use std::{
 pub enum Flag {
     None = 0,
     Clone = 1 << 0,
+    Default = 1 << 1,
 }
 
 #[derive(Default)]
@@ -30,15 +31,18 @@ pub struct Segments {
     segments: Vec<Segment>,
 }
 
+impl Resource for Segments {}
+
 // The 'entity_store' must be kept separate from the 'component_stores' to prevent undesired behavior that may arise
 // from using queries such as '&mut Entity' or templates such as 'Add<Entity>'.
 pub struct Segment {
     identifier: usize,
     index: usize,
     count: usize,
+    flags: Flags<Flag>,
     entity_store: Arc<Store>,
-    component_stores: Box<[Arc<Store>]>,
-    component_types: HashSet<TypeId>,
+    stores: Box<[Arc<Store>]>,
+    types: HashSet<TypeId>,
     reserved: AtomicUsize,
     capacity: usize,
 }
@@ -50,19 +54,22 @@ impl Segments {
 
     pub fn get_or_add<I: IntoIterator<Item = Arc<Meta>>>(
         &mut self,
-        entity_meta: Arc<Meta>,
         component_metas: I,
+        metas: &Metas,
     ) -> &mut Segment {
-        let mut component_metas: Vec<_> = component_metas.into_iter().collect();
-        let mut component_types = HashSet::new();
+        let mut metas: Vec<_> = [metas.entity()]
+            .into_iter()
+            .chain(component_metas)
+            .collect();
+        let mut types = HashSet::new();
         // Ensures there are no duplicates.
-        component_metas.retain(|meta| component_types.insert(meta.identifier()));
+        metas.retain(|meta| types.insert(meta.identifier()));
 
-        let index = match self.get_index(&component_types) {
+        let index = match self.get_index(&types) {
             Some(index) => index,
             None => {
                 let index = self.segments.len();
-                let segment = Segment::new(index, 0, entity_meta, component_types, component_metas);
+                let segment = Segment::new(index, 0, types, metas);
                 self.segments.push(segment);
                 index
             }
@@ -73,7 +80,7 @@ impl Segments {
     fn get_index(&self, types: &HashSet<TypeId>) -> Option<usize> {
         self.segments
             .iter()
-            .position(|segment| segment.component_types() == types)
+            .position(|segment| segment.types() == types)
     }
 }
 
@@ -97,25 +104,36 @@ impl Segment {
     pub(super) fn new(
         index: usize,
         capacity: usize,
-        entity_meta: Arc<Meta>,
-        component_types: HashSet<TypeId>,
-        mut component_metas: Vec<Arc<Meta>>,
+        types: HashSet<TypeId>,
+        mut metas: Vec<Arc<Meta>>,
     ) -> Self {
-        assert_eq!(entity_meta.identifier(), TypeId::of::<Entity>());
-        component_metas.retain(|meta| component_types.contains(&meta.identifier()));
+        metas.retain(|meta| types.contains(&meta.identifier()));
 
-        let entity_store = Arc::new(unsafe { Store::new(entity_meta.clone(), capacity) });
-        let component_stores: Box<_> = component_metas
+        let mut flags = Flags::new(0);
+        if metas.iter().all(|meta| meta.cloner.is_some()) {
+            flags |= Flag::Clone;
+        }
+        if metas.iter().all(|meta| meta.defaulter.is_some()) {
+            flags |= Flag::Default;
+        }
+
+        let component_stores: Box<_> = metas
             .into_iter()
             .map(|meta| Arc::new(unsafe { Store::new(meta.clone(), capacity) }))
             .collect();
+        let entity_store = component_stores
+            .iter()
+            .find(|store| store.meta().is::<Entity>())
+            .cloned()
+            .expect("Entity store is required.");
         Self {
             identifier: identify(),
             index,
             count: 0,
-            component_types,
+            flags,
+            types,
             entity_store,
-            component_stores,
+            stores: component_stores,
             reserved: 0.into(),
             capacity: 0,
         }
@@ -137,15 +155,30 @@ impl Segment {
     }
 
     #[inline]
-    pub const fn component_types(&self) -> &HashSet<TypeId> {
-        &self.component_types
+    pub const fn types(&self) -> &HashSet<TypeId> {
+        &self.types
     }
 
-    #[inline]
-    pub fn component_metas(&self) -> impl FullIterator<Item = Arc<Meta>> + '_ {
-        self.component_stores
+    pub fn entity_store(&self) -> &Arc<Store> {
+        &self.entity_store
+    }
+
+    pub fn metas(&self) -> impl FullIterator<Item = Arc<Meta>> + '_ {
+        self.stores.iter().map(|store| Arc::clone(store.meta()))
+    }
+
+    pub fn stores(&self) -> impl FullIterator<Item = &Store> {
+        self.stores.iter().map(AsRef::as_ref)
+    }
+
+    pub fn store(&self, identifier: TypeId) -> Result<&Arc<Store>> {
+        self.stores
             .iter()
-            .map(|store| Arc::clone(store.meta()))
+            .find(|store| store.meta().identifier() == identifier)
+            .ok_or(Error::MissingStore {
+                identifier,
+                segment: self.index,
+            })
     }
 
     pub fn remove_at(&mut self, index: usize) -> bool {
@@ -174,29 +207,6 @@ impl Segment {
         self.count = 0;
     }
 
-    pub fn entity_store(&self) -> Arc<Store> {
-        self.entity_store.clone()
-    }
-
-    pub fn component_stores(&self) -> impl FullIterator<Item = &Store> {
-        self.component_stores.iter().map(AsRef::as_ref)
-    }
-
-    pub fn component_store(&self, identifier: TypeId) -> Result<Arc<Store>> {
-        self.component_stores
-            .iter()
-            .find(|store| store.meta().identifier() == identifier)
-            .cloned()
-            .ok_or(Error::MissingStore {
-                identifier,
-                segment: self.index,
-            })
-    }
-
-    pub fn stores(&self) -> impl Iterator<Item = &Store> {
-        once(self.entity_store.as_ref()).chain(self.component_stores())
-    }
-
     pub fn reserve(&self, count: usize) -> (usize, usize) {
         let index = self.count + self.reserved.fetch_add(count, Ordering::Relaxed);
         if index + count > self.capacity {
@@ -209,10 +219,10 @@ impl Segment {
     pub fn resolve(&mut self) {
         self.count += replace(self.reserved.get_mut(), 0);
 
-        if self.capacity < self.count {
+        if self.count > self.capacity {
             let capacity = next_power_of_2(self.count as u32 - 1) as usize;
             for store in self.stores() {
-                unsafe { store.resize(self.capacity, capacity) };
+                unsafe { store.grow(self.capacity, capacity) };
             }
             self.capacity = capacity;
         }

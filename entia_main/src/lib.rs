@@ -1,3 +1,5 @@
+#![feature(type_alias_impl_trait)]
+
 pub mod add;
 pub mod component;
 pub mod create;
@@ -104,7 +106,7 @@ pub use crate::{
     world::World,
 };
 pub(crate) use entia_macro::{tuples_16 as tuples, tuples_with_16 as tuples_with};
-pub use entia_main_derive::{Filter, Template};
+pub use entia_main_derive::{Component, Filter, Message, Resource, Template};
 
 pub fn identify() -> usize {
     static COUNTER: AtomicUsize = AtomicUsize::new(1);
@@ -126,27 +128,14 @@ pub mod pouahl {
         },
     };
 
-    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-    pub struct Entity(u32, u32);
+    #[derive(Clone)]
+    pub struct Entity(Arc<Datum>);
 
-    impl Entity {
-        pub const NULL: Entity = Entity(u32::MAX, u32::MAX);
-
-        #[inline]
-        pub const fn generation(&self) -> u32 {
-            self.0
-        }
-
-        #[inline]
-        pub const fn index(&self) -> u32 {
-            self.1
-        }
-    }
-
-    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    #[derive(Clone)]
     pub struct Datum {
+        index: u32,
         generation: u32,
-        segment: u32,
+        segment: Arc<Segment>,
         store: u32,
     }
 

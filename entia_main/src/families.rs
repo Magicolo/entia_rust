@@ -7,11 +7,12 @@ use crate::{
     family::Family,
     inject::{Adapt, Context, Get, Inject},
     resource::{Read, Write},
+    segment::Segments,
 };
 use entia_core::FullIterator;
 
-pub struct Families<'a>(&'a Entities);
-pub struct State(Read<Entities>);
+pub struct Families<'a>(&'a Entities, &'a Segments);
+pub struct State(Read<Entities>, Read<Segments>);
 
 impl<'a> Families<'a> {
     #[inline]
@@ -19,15 +20,18 @@ impl<'a> Families<'a> {
         Family::new(entity, self.0)
     }
 
-    // TODO: This read over all 'Datum' allows to observe entities that are not fully initialized from 'Create' in a
-    // non-deterministic way and possibly data-racy way.
-    // - Can be fixed by adding a validation step: 'datum.store < world.segments[datum.segment].count'
-    #[inline]
     pub fn roots(&self) -> impl DoubleEndedIterator<Item = Family<'a>> {
+        // Read entities through segments to ensure that partially initialized entities are not observable.
         let entities = self.0;
-        entities
-            .roots()
-            .map(move |entity| Family::new(entity, entities))
+        self.1
+            .iter()
+            .flat_map(|segment| unsafe {
+                segment.entity_store().get_all::<Entity>(segment.count())
+            })
+            .filter_map(move |&mut entity| match entities.parent(entity) {
+                Some(_) => None,
+                None => Some(Family::new(entity, entities)),
+            })
     }
 }
 
@@ -39,10 +43,10 @@ unsafe impl Inject for Families<'_> {
         _: Self::Input,
         mut context: Context<Self::State, A>,
     ) -> Result<Self::State> {
-        Ok(State(Read::initialize(
-            None,
-            context.map(|State(state)| state),
-        )?))
+        Ok(State(
+            Read::initialize(None, context.map(|State(state, _)| state))?,
+            Read::initialize(None, context.map(|State(_, state)| state))?,
+        ))
     }
 
     fn depend(State(state): &Self::State) -> Vec<Dependency> {
@@ -55,7 +59,7 @@ impl<'a> Get<'a> for State {
 
     #[inline]
     unsafe fn get(&'a mut self) -> Self::Item {
-        Families(self.0.get())
+        Families(self.0.get(), self.1.get())
     }
 }
 

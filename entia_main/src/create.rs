@@ -153,7 +153,7 @@ impl<T: Template> Inner<T> {
         match self.reserve(count, entities, segments) {
             (_, true) => apply(
                 &self.initial_state,
-                self.initial_roots.drain(..),
+                &mut self.initial_roots,
                 &self.entity_roots,
                 &self.entity_instances,
                 &self.entity_indices,
@@ -233,10 +233,9 @@ where
         let mut segment_to_index = HashMap::new();
         let mut metas_to_segment = HashMap::new();
         let mut segment_indices = Vec::with_capacity(segment_metas.len());
-        let entity_meta = metas.entity();
 
-        for (i, metas) in segment_metas.into_iter().enumerate() {
-            let segment = segments.get_or_add(entity_meta.clone(), metas).index();
+        for (i, component_metas) in segment_metas.into_iter().enumerate() {
+            let segment = segments.get_or_add(component_metas, &metas).index();
             let index = match segment_to_index.get(&segment) {
                 Some(&index) => index,
                 None => {
@@ -331,7 +330,7 @@ unsafe impl<T: Template> Resolve for Outer<T> {
         let inner = &mut self.inner;
         let segments = &mut self.segments;
 
-        for defer in items {
+        for mut defer in items {
             let multiplier = defer.entity_instances.len() / defer.entity_indices.len();
             for segment_indices in defer.segment_indices[defer.index..].iter() {
                 let segment_count = segment_indices.count * multiplier;
@@ -351,7 +350,7 @@ unsafe impl<T: Template> Resolve for Outer<T> {
 
             apply(
                 &inner.initial_state,
-                defer.initial_roots,
+                &mut defer.initial_roots,
                 &defer.entity_roots,
                 &defer.entity_instances,
                 &defer.entity_indices,
@@ -380,14 +379,14 @@ unsafe impl<T: Template> Resolve for Outer<T> {
 
 fn apply<T: Template>(
     initial_state: &<Spawn<T> as Template>::State,
-    initial_roots: impl IntoIterator<Item = Spawn<T>>,
+    initial_roots: &mut Vec<Spawn<T>>,
     entity_roots: &[(usize, usize)],
     entity_instances: &[Entity],
     entity_indices: &[EntityIndices],
     segment_indices: &[SegmentIndices],
     initialize: &mut Vec<(u32, Datum)>,
 ) {
-    for (root, &entity_root) in initial_roots.into_iter().zip(entity_roots) {
+    for (root, &entity_root) in initial_roots.drain(..).zip(entity_roots) {
         root.apply(
             initial_state,
             ApplyContext::new(

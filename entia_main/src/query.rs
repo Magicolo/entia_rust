@@ -6,13 +6,13 @@ use crate::{
     filter::Filter,
     inject::{Adapt, Context, Get, Inject},
     item::{At, Item},
+    resource::Resource,
     resource::{Read, Write},
     segment::Segments,
 };
 use std::{
     any::type_name,
     fmt::{self},
-    iter,
     marker::PhantomData,
     ops::{DerefMut, RangeFull},
 };
@@ -34,6 +34,8 @@ pub struct Inner<S, F> {
     pub(crate) states: Vec<(S, usize)>,
     _marker: PhantomData<fn(F)>,
 }
+
+impl<S: Send + Sync + 'static, F: 'static> Resource for Inner<S, F> {}
 
 impl<S, F: 'static> Default for Inner<S, F> {
     fn default() -> Self {
@@ -117,15 +119,28 @@ impl<'a, I: Item, F: 'static> Get<'a> for State<I, F> {
     }
 }
 
+macro_rules! iter {
+    ($s:expr, $at:ident, [$($mut:tt)?]) => {{
+        let segments = $s.segments;
+        $s.inner.states.iter().flat_map(move |(state, segment)| {
+            // SAFETY: The 'segment' index has already been checked to be in range and the 'world.segments' vector never shrinks..
+            let segment = unsafe { segments.get_unchecked(*segment) };
+            state.get(segment).into_iter().flat_map(|$($mut)? state| {
+                (0..segment.count()).map(move |index| unsafe { I::State::$at(& $($mut)? state, index) })
+            })
+        })
+    }};
+}
+
 macro_rules! iterator {
-    ($t:ident, $at:ident, $chunks:ident, $iter:ident, $each:ident, $get:ident, $item:ident, [$($mut:tt)?]) => {
+    ($at:ident, $chunks:ident, $iter:ident, $each:ident, $get:ident, $item:ident, [$($mut:tt)?]) => {
         impl<'a, I: Item, F> Query<'a, I, F> {
             #[inline]
-            pub fn $iter<'b>(&'b $($mut)? self) -> $t<'a, 'b, I, F> where 'a: 'b {
-                self.into_iter()
+            pub fn $iter(& $($mut)? self) -> impl DoubleEndedIterator<Item = <I::State as At<'a>>::$item> {
+                iter!(self, $at, [$($mut)?])
             }
 
-            pub fn $chunks(& $($mut)? self) -> impl Iterator<Item = <I::State as At<'_, RangeFull>>::$item>
+            pub fn $chunks(& $($mut)? self) -> impl DoubleEndedIterator<Item = <I::State as At<RangeFull>>::$item>
             where
                 I::State: for<'b> At<'b, RangeFull>
             {
@@ -136,7 +151,7 @@ macro_rules! iterator {
                 })
             }
 
-            pub fn $each<E: FnMut(<I::State as At<'a>>::$item)>(& $($mut)? self, mut each: E) {
+            pub fn $each<E: FnMut(<I::State as At>::$item)>(& $($mut)? self, mut each: E) {
                 for (state, segment) in &self.inner.states {
                     // SAFETY: The 'segment' index has already been checked to be in range and the 'world.segments' vector never shrinks.
                     let segment = unsafe { self.segments.get_unchecked(*segment) };
@@ -152,69 +167,26 @@ macro_rules! iterator {
 
             pub fn $get<E: Into<Entity>>(& $($mut)? self, entity: E) -> Option<<I::State as At<'_>>::$item> {
                 let datum = self.entities.get_datum(entity.into())?;
-                let index = self.inner.segments[datum.segment_index as usize];
+                let index = self.inner.segments[datum.segment as usize];
                 let (state, segment) = &self.inner.states.get(index)?;
                 // SAFETY: The 'segment' index has already been checked to be in range and the 'world.segments' vector never shrinks.
                 let segment = unsafe { self.segments.get_unchecked(*segment) };
                 let $($mut)? state = state.get(segment)?;
                 // SAFETY: 'entities.get_datum' validates that the 'store_index' is valid and is therefore safe to use.
-                Some(unsafe { I::State::$at(& $($mut)? state, datum.store_index as usize) })
+                Some(unsafe { I::State::$at(& $($mut)? state, datum.store as usize) })
             }
         }
 
-        pub struct $t<'a, 'b, I: Item, F> {
-            index: usize,
-            count: usize,
-            segment: usize,
-            query: &'b $($mut)? Query<'a, I, F>,
-            state: Option<<I::State as At<'a>>::State>,
-        }
-
-        impl<'a: 'b, 'b, I: Item, F> IntoIterator for &'b $($mut)? Query<'a, I, F> {
+        impl<'a, I: Item, F> IntoIterator for & $($mut)? Query<'a, I, F> {
             type Item = <I::State as At<'a>>::$item;
-            type IntoIter = $t<'a, 'b, I, F>;
+            type IntoIter = impl DoubleEndedIterator<Item = <I::State as At<'a>>::$item>;
 
             #[inline]
             fn into_iter(self) -> Self::IntoIter {
-                $t {
-                    index: 0,
-                    count: 0,
-                    segment: 0,
-                    query: self,
-                    state: None,
-               }
-            }
-        }
-
-        impl<'a: 'b, 'b, I: Item, F> iter::Iterator for $t<'a, 'b, I, F> {
-            type Item = <I::State as At<'a>>::$item;
-
-            fn next(&mut self) -> Option<Self::Item> {
-                loop {
-                    if self.index < self.count {
-                        // SAFETY: In order to pass the 'self.index < self.count' check, 'self.state' had to be set.
-                        // This holds as long as 'self.count' was initialized to 0.
-                        let $($mut)? state = unsafe { self.state.as_mut().unwrap_unchecked() };
-                        // SAFETY: 'self.index' has been checked to be in range.
-                        let item = unsafe { I::State::$at(& $($mut)? state, self.index) };
-                        self.index += 1;
-                        break Some(item);
-                    } else {
-                        let (state, segment) = self.query.inner.states.get(self.segment)?;
-                        // SAFETY: The 'segment' index has already been checked to be in range and the 'world.segments' vector never shrinks..
-                        let segment = unsafe { self.query.segments.get_unchecked(*segment) };
-                        self.segment += 1;
-                        // The segment may be skipped.
-                        if let Some(state) = state.get(segment) {
-                            self.index = 0;
-                            self.count = segment.count();
-                            self.state = Some(state);
-                        }
-                    }
-                }
+                iter!(self, $at, [$($mut)?])
             }
         }
     };
 }
-iterator!(IteratorRef, at_ref, chunks, iter, each, get, Ref, []);
-iterator!(IteratorMut, at_mut, chunks_mut, iter_mut, each_mut, get_mut, Mut, [mut]);
+iterator!(at_ref, chunks, iter, each, get, Ref, []);
+iterator!(at_mut, chunks_mut, iter_mut, each_mut, get_mut, Mut, [mut]);

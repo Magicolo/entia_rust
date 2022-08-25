@@ -2,6 +2,7 @@ use crate::{
     depend::Dependency,
     error::{Error, Result},
     identify,
+    resource::Resource,
     inject::{Adapt, Context, Get, Inject},
     resource::{Read, Write},
 };
@@ -74,6 +75,8 @@ impl Default for Outer {
     }
 }
 
+impl Resource for Outer {}
+
 #[allow(type_alias_bounds)]
 type Triple<R: Resolve> = (R, Vec<(usize, usize)>, VecDeque<R::Item>);
 
@@ -107,17 +110,17 @@ impl Resolver {
 
     #[inline]
     pub fn post(&mut self) -> Result {
-        (self.post)(&mut self.state)
+        (self.post)(self.state.as_mut())
     }
 
     #[inline]
     pub fn resolve(&mut self, count: usize) -> Result {
-        (self.resolve)(&mut self.state, count)
+        (self.resolve)(self.state.as_mut(), count)
     }
 
     #[inline]
     pub fn depend(&self) -> Vec<Dependency> {
-        (self.depend)(&self.state)
+        (self.depend)(self.state.as_ref())
     }
 
     #[inline]

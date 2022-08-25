@@ -1,6 +1,6 @@
 use std::{any::TypeId, marker::PhantomData};
 
-use crate::{segment::Segment, tuples};
+use crate::{component::Component, segment::Segment, tuples};
 
 pub trait Filter {
     fn filter(segment: &Segment) -> bool;
@@ -11,9 +11,9 @@ pub struct Has<T>(PhantomData<T>);
 #[derive(Copy, Clone, Debug)]
 pub struct Not<F>(PhantomData<F>);
 
-impl<T: Send + Sync + 'static> Filter for Has<T> {
+impl<T: Component> Filter for Has<T> {
     fn filter(segment: &Segment) -> bool {
-        segment.component_types().contains(&TypeId::of::<T>())
+        segment.types().contains(&TypeId::of::<T>())
     }
 }
 
