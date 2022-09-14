@@ -1,5 +1,5 @@
 use crate::{
-    depend::Dependency,
+    depend::{Dependency, Order},
     error::Result,
     inject::{Adapt, Context},
     item::{At, Item},
@@ -81,10 +81,10 @@ impl Item for Entity {
 
     fn depend(state: &Self::State) -> Vec<Dependency> {
         vec![
-            Dependency::read::<Segments>(),
-            Dependency::read_at(state.segment),
-            Dependency::read::<Entity>(),
-            Dependency::write_at(state.store.identifier()),
+            Dependency::read::<Segments>(Order::Relax),
+            Dependency::read_at(state.segment, Order::Strict),
+            Dependency::read::<Entity>(Order::Strict),
+            Dependency::read_at(state.store.identifier(), Order::Strict),
         ]
     }
 }

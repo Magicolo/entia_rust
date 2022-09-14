@@ -1,5 +1,5 @@
 use crate::{
-    depend::{Conflict, Dependency, Scope},
+    depend::{Conflict, Dependency},
     error::{Error, Result},
     identify,
     run::{as_mut, Run},
@@ -360,10 +360,7 @@ impl<I: Inject> Injector<I> {
                 }
 
                 for run in self.pre.iter().chain(self.post.iter()) {
-                    conflict
-                        .detect(Scope::Inner, run.dependencies(), true)
-                        .map_err(Error::Depend)?;
-                    conflict.clear();
+                    conflict.detect_inner(run.dependencies(), true)?;
                 }
             } else {
                 break;
@@ -375,9 +372,7 @@ impl<I: Inject> Injector<I> {
         }
 
         self.dependencies = I::depend(&self.state);
-        conflict
-            .detect(Scope::Inner, &self.dependencies, true)
-            .map_err(Error::Depend)?;
+        conflict.detect_inner(&self.dependencies, true)?;
 
         // Only commit the new version if scheduling and dependency analysis succeed.
         self.version = version;

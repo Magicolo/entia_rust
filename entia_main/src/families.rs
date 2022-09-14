@@ -49,8 +49,11 @@ unsafe impl Inject for Families<'_> {
         ))
     }
 
-    fn depend(State(state): &Self::State) -> Vec<Dependency> {
-        Read::<Entities>::depend(state)
+    fn depend(State(entities, segments): &Self::State) -> Vec<Dependency> {
+        let mut dependencies = Vec::new();
+        dependencies.extend(Read::depend(entities));
+        dependencies.extend(Read::depend(segments));
+        dependencies
     }
 }
 

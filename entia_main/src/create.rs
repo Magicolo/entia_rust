@@ -1,6 +1,6 @@
 use crate::{
     defer::{self, Resolve},
-    depend::Dependency,
+    depend::{Dependency, Order},
     entities::{Datum, Entities},
     entity::Entity,
     error::Result,
@@ -299,10 +299,21 @@ where
             ..
         } = state.as_ref();
         let mut dependencies = defer::Defer::depend(state);
-        dependencies.extend(Read::depend(&entities.read()));
-        dependencies.extend(Read::depend(&segments.read()));
+        dependencies.extend(
+            Read::depend(&entities.read())
+                .into_iter()
+                .map(|dependency| dependency.relax()),
+        );
+        dependencies.extend(
+            Read::depend(&segments.read())
+                .into_iter()
+                .map(|dependency| dependency.relax()),
+        );
         for &SegmentIndices { segment, .. } in inner.segment_indices.iter() {
-            dependencies.push(Dependency::read_at(segments[segment].identifier()));
+            dependencies.push(Dependency::read_at(
+                segments[segment].identifier(),
+                Order::Relax,
+            ));
         }
         dependencies
     }
@@ -368,10 +379,22 @@ unsafe impl<T: Template> Resolve for Outer<T> {
             segments,
             ..
         } = self;
-        let mut dependencies = Write::depend(entities);
-        dependencies.extend(Read::depend(&segments.read()));
+        let mut dependencies = Vec::new();
+        dependencies.extend(
+            Write::depend(entities)
+                .into_iter()
+                .map(|dependency| dependency.relax()),
+        );
+        dependencies.extend(
+            Read::depend(&segments.read())
+                .into_iter()
+                .map(|dependency| dependency.relax()),
+        );
         for &SegmentIndices { segment, .. } in inner.segment_indices.iter() {
-            dependencies.push(Dependency::write_at(segments[segment].identifier()));
+            dependencies.push(Dependency::write_at(
+                segments[segment].identifier(),
+                Order::Relax,
+            ));
         }
         dependencies
     }

@@ -176,6 +176,8 @@ pub mod emit {
 }
 
 pub mod receive {
+    use crate::depend::Order;
+
     use super::*;
 
     pub struct Receive<'a, T, K = keep::All>(&'a mut VecDeque<T>, PhantomData<K>);
@@ -260,7 +262,10 @@ pub mod receive {
 
         fn depend(State { inner, queue, .. }: &Self::State) -> Vec<Dependency> {
             let mut dependencies = Read::depend(&inner.read());
-            dependencies.push(Dependency::write_at(inner.queues[*queue].identifier));
+            dependencies.push(Dependency::write_at(
+                inner.queues[*queue].identifier,
+                Order::Strict,
+            ));
             dependencies
         }
     }

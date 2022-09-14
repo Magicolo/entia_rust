@@ -1,5 +1,5 @@
 use crate::{
-    depend::Dependency,
+    depend::{Dependency, Order},
     error::Result,
     inject::{Adapt, Context, Get},
     meta::Meta,
@@ -69,8 +69,8 @@ unsafe impl<R: Resource> Inject for Write<R> {
 
     fn depend(state: &Self::State) -> Vec<Dependency> {
         vec![
-            Dependency::write::<R>(),
-            Dependency::write_at(state.store().identifier()),
+            Dependency::write::<R>(Order::Strict),
+            Dependency::write_at(state.store().identifier(), Order::Strict),
         ]
     }
 }
@@ -148,8 +148,8 @@ unsafe impl<R: Resource> Inject for Read<R> {
 
     fn depend(state: &Self::State) -> Vec<Dependency> {
         vec![
-            Dependency::read::<R>(),
-            Dependency::read_at(state.store().identifier()),
+            Dependency::read::<R>(Order::Strict),
+            Dependency::read_at(state.store().identifier(), Order::Strict),
         ]
     }
 }

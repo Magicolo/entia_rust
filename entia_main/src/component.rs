@@ -1,5 +1,5 @@
 use crate::{
-    depend::Dependency,
+    depend::{Dependency, Order},
     error::Result,
     inject::{Adapt, Context},
     item::{At, Item},
@@ -64,10 +64,10 @@ impl<C: Component> Item for Write<C> {
 
     fn depend(state: &Self::State) -> Vec<Dependency> {
         vec![
-            Dependency::read::<Segments>(),
-            Dependency::read_at(state.segment),
-            Dependency::read::<C>(),
-            Dependency::write_at(state.store.identifier()),
+            Dependency::read::<Segments>(Order::Relax),
+            Dependency::read_at(state.segment, Order::Strict),
+            Dependency::read::<C>(Order::Strict),
+            Dependency::write_at(state.store.identifier(), Order::Strict),
         ]
     }
 }
@@ -136,10 +136,10 @@ impl<C: Component> Item for Read<C> {
 
     fn depend(Self(state): &Self::State) -> Vec<Dependency> {
         vec![
-            Dependency::read::<Segments>(),
-            Dependency::read_at(state.segment),
-            Dependency::read::<C>(),
-            Dependency::read_at(state.store.identifier()),
+            Dependency::read::<Segments>(Order::Relax),
+            Dependency::read_at(state.segment, Order::Strict),
+            Dependency::read::<C>(Order::Strict),
+            Dependency::read_at(state.store.identifier(), Order::Strict),
         ]
     }
 }

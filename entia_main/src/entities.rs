@@ -1,5 +1,4 @@
 use entia_core::FullIterator;
-use parking_lot::Mutex;
 
 use crate::{entity::Entity, resource::Resource};
 use std::{
@@ -145,7 +144,21 @@ impl Entities {
 
     pub(crate) fn resolve(&mut self) {
         let reserved = *self.data.1.get_mut() as usize;
+        dbg!(
+            "BEGIN",
+            reserved,
+            self.data.0.len(),
+            self.data.0.capacity(),
+            std::thread::current().id()
+        );
         self.data.0.resize(reserved, Datum::DEFAULT);
+        dbg!(
+            "END",
+            reserved,
+            self.data.0.len(),
+            self.data.0.capacity(),
+            std::thread::current().id()
+        );
     }
 
     pub(crate) fn release(&mut self, entities: impl IntoIterator<Item = Entity>) {

@@ -1,14 +1,15 @@
 use crate::{
-    depend::Dependency,
+    depend::{Dependency, Order},
     error::{Error, Result},
     identify,
-    resource::Resource,
     inject::{Adapt, Context, Get, Inject},
+    resource::Resource,
     resource::{Read, Write},
 };
 use entia_core::FullIterator;
 use std::{
     any::Any,
+    cmp::max,
     collections::{HashMap, HashSet, VecDeque},
     iter::once,
     marker::PhantomData,
@@ -202,11 +203,12 @@ where
 
             // Accumulate the dependencies of previous resolvers (including self) because some of their items may be resolved by this run.
             let mut dependencies = Read::depend(&outer.read());
-            dependencies.push(Dependency::write_at(inner.identifier));
+            dependencies.push(Dependency::write_at(inner.identifier, Order::Strict));
             merge(
                 &mut dependencies,
                 inner.resolvers[..=state.resolver].iter().map(|resolver| {
-                    once(Dependency::write_at(resolver.identifier)).chain(resolver.depend())
+                    once(Dependency::write_at(resolver.identifier, Order::Strict))
+                        .chain(resolver.depend())
                 }),
             );
 
@@ -287,8 +289,8 @@ where
         let inner = &state.outer.inners[state.inner];
         let resolver = &inner.resolvers[state.resolver];
         let mut dependencies = Read::depend(&state.outer.read());
-        dependencies.push(Dependency::read_at(inner.identifier));
-        dependencies.push(Dependency::write_at(resolver.identifier));
+        dependencies.push(Dependency::read_at(inner.identifier, Order::Strict));
+        dependencies.push(Dependency::write_at(resolver.identifier, Order::Strict));
         dependencies
     }
 }
@@ -333,27 +335,47 @@ fn merge<D: IntoIterator<Item = Dependency>, I: IntoIterator<Item = D>>(
     dependencies: &mut Vec<Dependency>,
     inputs: I,
 ) {
-    let mut reads = HashSet::new();
-    let mut writes = HashSet::new();
+    let mut reads = HashMap::new();
+    let mut writes = HashMap::new();
     let mut current = HashSet::new();
     for input in inputs {
         current.clear();
         for dependency in input {
             match dependency {
-                Dependency::Read(identifier) if current.insert(identifier) => {
-                    if writes.contains(&identifier) {
-                        reads.remove(&identifier);
-                    } else {
-                        reads.insert(identifier);
+                Dependency::Read(key, order) if current.insert(key) => match writes.get_mut(&key) {
+                    Some(write) => {
+                        *write = match reads.remove(&key) {
+                            Some(read) => max(max(order, read), *write),
+                            None => max(order, *write),
+                        }
                     }
-                }
-                Dependency::Write(identifier) if current.insert(identifier) => {
-                    writes.insert(identifier);
+                    None => match reads.insert(key, order) {
+                        Some(read) if read > order => {
+                            reads.insert(key, read);
+                        }
+                        Some(_) | None => {}
+                    },
+                },
+                Dependency::Write(key, order) if current.insert(key) => {
+                    match writes.insert(key, order) {
+                        Some(write) if write > order => {
+                            writes.insert(key, write);
+                        }
+                        Some(_) | None => {}
+                    }
                 }
                 dependency => dependencies.push(dependency),
             }
         }
     }
-    dependencies.extend(reads.into_iter().map(Dependency::Read));
-    dependencies.extend(writes.into_iter().map(Dependency::Write));
+    dependencies.extend(
+        reads
+            .into_iter()
+            .map(|pair| Dependency::Read(pair.0, pair.1)),
+    );
+    dependencies.extend(
+        writes
+            .into_iter()
+            .map(|pair| Dependency::Write(pair.0, pair.1)),
+    );
 }

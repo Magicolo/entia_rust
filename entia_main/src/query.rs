@@ -1,5 +1,5 @@
 use crate::{
-    depend::Dependency,
+    depend::{Dependency, Order},
     entities::Entities,
     entity::Entity,
     error::Result,
@@ -99,7 +99,10 @@ unsafe impl<I: Item + 'static, F: Filter + 'static> Inject for Query<'_, I, F> {
         dependencies.extend(Read::depend(&state.entities));
         dependencies.extend(Read::depend(&state.segments));
         for (item, segment) in state.inner.states.iter() {
-            dependencies.push(Dependency::read_at(state.segments[*segment].identifier()));
+            dependencies.push(Dependency::read_at(
+                state.segments[*segment].identifier(),
+                Order::Strict,
+            ));
             dependencies.extend(I::depend(item));
         }
         dependencies
