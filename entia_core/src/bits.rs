@@ -78,20 +78,14 @@ impl Bits {
     pub fn set(&mut self, index: usize, value: bool) -> bool {
         if value {
             self.ensure(index + 1);
-            let bucket = &mut self.buckets[index / Self::SIZE];
+            let bucket = unsafe { self.buckets.get_unchecked_mut(index / Self::SIZE) };
             let bit = 1 << (index % Self::SIZE);
-            let previous = *bucket;
-            let current = previous | bit;
-            *bucket = current;
-            previous != current
-        } else if index < self.capacity() {
-            let bucket = &mut self.buckets[index / Self::SIZE];
+            Self::map(bucket, |bucket| bucket | bit)
+        } else if let Some(bucket) = self.buckets.get_mut(index / Self::SIZE) {
             let bit = 1 << (index % Self::SIZE);
-            let previous = *bucket;
-            let current = previous & !bit;
-            *bucket = current;
+            let change = Self::map(bucket, |bucket| bucket & !bit);
             self.shrink();
-            previous != current
+            change
         } else {
             false
         }
@@ -177,6 +171,13 @@ impl Bits {
         if shrink {
             self.shrink();
         }
+    }
+
+    fn map(bucket: &mut Bucket, map: impl FnOnce(Bucket) -> Bucket) -> bool {
+        let old = *bucket;
+        let new = map(old);
+        *bucket = new;
+        old != new
     }
 }
 

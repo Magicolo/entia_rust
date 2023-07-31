@@ -291,7 +291,7 @@ impl<'a> ApplyContext<'a> {
     }
 
     #[inline]
-    pub fn with<'b>(&'b mut self, entity_index: usize, store_index: usize) -> ApplyContext {
+    pub fn with(&mut self, entity_index: usize, store_index: usize) -> ApplyContext {
         let mut context = self.owned();
         context.entity_index = entity_index;
         context.store_index = store_index;

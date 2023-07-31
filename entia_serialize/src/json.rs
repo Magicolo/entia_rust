@@ -17,7 +17,7 @@ pub enum Node {
     Null,
     Boolean(bool),
     Integer(isize),
-    Floating(f64),
+    Number(f64),
     String(String),
     Array(Vec<Node>),
     Object(Vec<(Node, Node)>),
@@ -30,7 +30,7 @@ impl Node {
             Node::Null => Some(false),
             Node::Boolean(value) => Some(*value),
             Node::Integer(value) => Some(*value != 0),
-            Node::Floating(value) => Some(*value != 0.),
+            Node::Number(value) => Some(*value != 0.),
             Node::String(value) if value.eq_ignore_ascii_case("true") => Some(true),
             Node::String(value) if value.eq_ignore_ascii_case("false") => Some(false),
             _ => None,
@@ -63,20 +63,20 @@ impl Node {
             Node::Boolean(true) => Some(1),
             Node::Boolean(false) => Some(0),
             Node::Integer(value) => Some(*value),
-            Node::Floating(value) => Some(*value as isize),
+            Node::Number(value) => Some(*value as isize),
             Node::String(value) => value.parse().ok(),
             _ => None,
         }
     }
 
     #[inline]
-    pub fn floating(&self) -> Option<f64> {
+    pub fn number(&self) -> Option<f64> {
         match self {
             Node::Null => Some(0.),
             Node::Boolean(true) => Some(1.),
             Node::Boolean(false) => Some(0.),
             Node::Integer(value) => Some(*value as f64),
-            Node::Floating(value) => Some(*value),
+            Node::Number(value) => Some(*value),
             Node::String(value) => value.parse().ok(),
             _ => None,
         }
@@ -181,7 +181,7 @@ pub mod node {
         }
         #[inline]
         fn f64(self) -> Result<f64, Self::Error> {
-            Ok(self.0.floating().unwrap_or_default())
+            Ok(self.0.number().unwrap_or_default())
         }
         #[inline]
         fn list(self) -> Result<Self::List, Self::Error> {
