@@ -1,6 +1,7 @@
 pub mod append;
 pub mod array;
 pub mod bits;
+pub mod borrow;
 pub mod call;
 pub mod change;
 pub mod each;

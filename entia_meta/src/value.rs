@@ -162,7 +162,7 @@ impl Value {
     }
 }
 
-impl Deref for Value {
+impl<T: 'static> Deref for Value<T> {
     type Target = dyn Any;
 
     #[inline]
@@ -191,7 +191,7 @@ impl Deref for Value {
     }
 }
 
-impl DerefMut for Value {
+impl<T: 'static> DerefMut for Value<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         match self {

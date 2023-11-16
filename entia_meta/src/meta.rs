@@ -132,7 +132,7 @@ impl<T: 'static> Meta<&'static Structure> for Vec<T> {
                 &[
                     Field {
                         access: Access::Private,
-                        name: "buff",
+                        name: "buf",
                         attributes: &[],
                         meta: None,
                         get: None,

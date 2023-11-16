@@ -24,7 +24,6 @@ pub struct Runner {
     version: usize,
     systems: Vec<System>,
     control: bool,
-    index: AtomicUsize,
     runs: Runs,
     conflict: Conflict,
     pool: ThreadPool,
@@ -119,7 +118,6 @@ impl Runner {
             version: 0,
             systems: systems.into_iter().collect(),
             control: false,
-            index: 0.into(),
             runs: vec![],
             conflict: Conflict::default(),
             pool: ThreadPoolBuilder::new()
@@ -193,26 +191,25 @@ impl Runner {
 
         let Self {
             control,
-            index,
             runs,
             pool,
             ..
         } = self;
 
         *control = control.not();
-        *index.get_mut() = 0;
 
+        let index = AtomicUsize::new(0);
         let mut success = AtomicBool::new(true);
         let control = *control;
         pool.scope(|scope| {
             for _ in 0..pool.current_num_threads() {
                 scope.spawn(|_| {
-                    success.fetch_and(Self::progress(index, runs, control), Ordering::Relaxed);
+                    success.fetch_and(Self::progress(&index, runs, control), Ordering::Relaxed);
                 });
             }
         });
 
-        if *success.get_mut() {
+        if success.into_inner() {
             Ok(())
         } else {
             Error::all(
@@ -224,10 +221,10 @@ impl Runner {
         }
     }
 
-    /// The synchronisation mechanism is in 2 parts:
+    /// The synchronization mechanism is in 2 parts:
     /// 1. An `AtomicUsize` is used to reserve an index in the `runs` vector. It ensures that each run is executed only once.
     /// 2. A `Mutex` around the run and its state that will force the blocked threads to wait until this run is done. This choice
-    /// of synchronisation prevents many sneaky interleavings of threads and is very straightfoward to implement.
+    /// of synchronization prevents sneaky interleaving of threads and is very straightforward to implement.
     /// - This mechanism can not produce a dead lock as long as the `blockers` are all indices `< index` (which they are by design).
     /// Since runs are executed in order, for any index that is reserved, all indices smaller than that index represent a run that
     /// is done or in progress (not idle) which is important to prevent a spin loop when waiting for `blockers` to finish.
@@ -419,7 +416,7 @@ impl Runner {
     // }
 
     fn schedule(&mut self) -> Result {
-        // TODO: This algorithm scales poorly (n^2 / 2, where n is the number of runs) and alot of the work is redundant
+        // TODO: This algorithm scales poorly (n^2 / 2, where n is the number of runs) and a lot of the work is redundant
         // as shown by the refining part. This could be optimized.
         let mut runs = &mut self.runs[..];
         while let Some((tail, rest)) = runs.split_last_mut() {
